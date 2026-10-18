@@ -1,0 +1,9 @@
+[package]
+name = "af_economy"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall economy and rules: placement, construction, production queues, research, ages, techs, upgrades, trickle income, victory."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

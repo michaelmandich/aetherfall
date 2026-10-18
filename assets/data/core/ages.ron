@@ -1,0 +1,38 @@
+// Aetherfall core content: the five ages and the story of the fallen star.
+// Shared framework authored by the lead designer; factions pick from it.
+// Schema: crates/af_data/src/schema.rs. Design notes: docs/design/game-design.md.
+// Keep ids stable: engine code and faction files reference them.
+(
+    ages: [
+        (
+            index: 1,
+            id: "hearth",
+            name: "Hearth Age",
+            description: "Clans settle around hearth and field: timber halls, palisades, bronze-tipped spears. Nobody is looking at the sky yet, though the old women say a new red star rises each autumn.",
+        ),
+        (
+            index: 2,
+            id: "banner",
+            name: "Banner Age",
+            description: "Lords raise banners and stone walls. Iron mail, knights and crossbows. Astronomers chart the red star as it swells night after night, and the first scouts find strange violet crystals where its light falls hardest.",
+        ),
+        (
+            index: 3,
+            id: "starfall",
+            name: "Starfall Age",
+            description: "The star falls. It breaks over the heart of the land and leaves the Starfall Crater: aether crystals, vents that breathe light, and meteors of adamant. Aether makes powder burn hotter, clockwork move on its own and balloons rise without fire. Whoever holds the crater holds the future.",
+        ),
+        (
+            index: 4,
+            id: "engine",
+            name: "Engine Age",
+            description: "Aether-fired boilers drive the forges. Thinking engines of brass and quartz compute firing tables; knights in steam-plate carry rifles; landships and walkers march beside the pikes. The banners are older than the guns beneath them.",
+        ),
+        (
+            index: 5,
+            id: "ascendant",
+            name: "Ascendant Age",
+            description: "The crystals answer back. Adamant hulls, personal shields, beams of starlight and craft that hover and fly. Heralds still sound trumpets over plasma turrets: the knights have found the spaceship.",
+        ),
+    ],
+)

@@ -1,0 +1,8 @@
+[package]
+name = "af_geom"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall 2D geometry on the ground plane: oriented boxes, SAT, distances, picking rays, the navigation grid and pathfinding. No Bevy ECS."
+
+[dependencies]
+bevy_math = { workspace = true }

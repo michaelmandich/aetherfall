@@ -1,0 +1,9 @@
+[package]
+name = "af_ai"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall computer opponents: economy, building, research, armies, attacks, defence."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

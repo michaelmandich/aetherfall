@@ -1,0 +1,9 @@
+[package]
+name = "af_behavior"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall unit behaviour: unit commands, order state machines, gathering, building, repair, chasing, stances, healing."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

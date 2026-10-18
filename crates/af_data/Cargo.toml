@@ -1,0 +1,14 @@
+[package]
+name = "af_data"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall content schema: resources, ages, terrain, weapons, units, buildings, techs, factions. Loaded from RON, resolved to typed ids, validated."
+
+[dependencies]
+serde = { workspace = true }
+ron = { workspace = true }
+
+[dev-dependencies]
+# tests/geometry.rs checks the content against the real nav grid.
+af_geom = { workspace = true }
+bevy_math = { workspace = true }

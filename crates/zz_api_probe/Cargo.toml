@@ -1,0 +1,9 @@
+[package]
+name = "zz_api_probe"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Compile-verified probe of the Bevy 0.19.1 API surface (see docs/bevy-0.19-notes.md)."
+
+[dependencies]
+bevy = { workspace = true }

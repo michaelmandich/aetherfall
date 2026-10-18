@@ -1,0 +1,9 @@
+/target
+*.log
+/screenshots/
+/out/
+
+# Local credentials and environment overrides.
+.env
+.env.*
+*.key

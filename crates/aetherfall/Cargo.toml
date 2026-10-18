@@ -1,0 +1,20 @@
+[package]
+name = "aetherfall"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall: a box-graphics RTS. The game binary: app wiring, CLI, headless simulation harness."
+default-run = "aetherfall"
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }
+af_map = { workspace = true }
+af_movement = { workspace = true }
+af_behavior = { workspace = true }
+af_combat = { workspace = true }
+af_economy = { workspace = true }
+af_fog = { workspace = true }
+af_ai = { workspace = true }
+af_input = { workspace = true }
+af_ui = { workspace = true }
+af_render = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "af_map"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall map generation and match setup (terrain, resources, start positions, initial spawns, teardown)."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

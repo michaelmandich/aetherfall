@@ -1,0 +1,78 @@
+// Aetherfall core content: terrain types (mobility is the bit set in schema MoveFlag).
+// Shared framework authored by the lead designer; factions pick from it.
+// Schema: crates/af_data/src/schema.rs. Design notes: docs/design/game-design.md.
+// Keep ids stable: engine code and faction files reference them.
+(
+    terrain: [
+        (
+            id: "grass",
+            name: "Grassland",
+            color: (0.36, 0.55, 0.27),
+            height: 0.0,
+            passable: [Foot, Mounted, Wheeled, Tracked, Hover],
+            speed: 1.0,
+            speed_by: [],
+            buildable: true,
+        ),
+        (
+            id: "sand",
+            name: "Dunes",
+            color: (0.86, 0.78, 0.52),
+            height: 0.05,
+            passable: [Foot, Mounted, Wheeled, Tracked, Hover],
+            speed: 0.7,
+            speed_by: [(Foot, 0.9), (Tracked, 0.85), (Hover, 1.0), (Dunerunner, 1.0)],
+            buildable: true,
+        ),
+        (
+            id: "shallow_water",
+            name: "Shallows",
+            color: (0.35, 0.6, 0.72),
+            height: -0.25,
+            passable: [Foot, Mounted, Tracked, Hover, Amphibious],
+            speed: 0.55,
+            speed_by: [(Tracked, 0.6), (Amphibious, 0.9), (Hover, 0.8)],
+            buildable: false,
+        ),
+        (
+            id: "deep_water",
+            name: "Deep Water",
+            color: (0.12, 0.26, 0.52),
+            height: -0.6,
+            passable: [Hover, Amphibious],
+            speed: 0.7,
+            speed_by: [(Amphibious, 0.7), (Hover, 0.8)],
+            buildable: false,
+        ),
+        (
+            id: "marsh",
+            name: "Marsh",
+            color: (0.36, 0.42, 0.28),
+            height: -0.08,
+            passable: [Foot, Mounted, Tracked, Hover, Marshwalker],
+            speed: 0.6,
+            speed_by: [(Hover, 0.8), (Marshwalker, 1.0)],
+            buildable: false,
+        ),
+        (
+            id: "thicket",
+            name: "Bramble Thicket",
+            color: (0.2, 0.36, 0.16),
+            height: 1.2,
+            passable: [Foot, Forestwalker],
+            speed: 0.5,
+            speed_by: [(Forestwalker, 1.1)],
+            buildable: false,
+        ),
+        (
+            id: "cliff",
+            name: "Rocky Highland",
+            color: (0.5, 0.46, 0.42),
+            height: 5.0,
+            passable: [Climber],
+            speed: 0.6,
+            speed_by: [],
+            buildable: false,
+        ),
+    ],
+)

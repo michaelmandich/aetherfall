@@ -1,0 +1,9 @@
+[package]
+name = "af_ui"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall UI: skirmish menu, HUD, resource bar, selection panel, command card, minimap, notices, game over."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "af_fog"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall fog of war: per-team visibility and exploration."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

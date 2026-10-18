@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[workspace.dependencies]
+bevy = "0.19"
+bevy_math = "0.19"
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+
+af_data = { path = "crates/af_data" }
+af_geom = { path = "crates/af_geom" }
+af_core = { path = "crates/af_core" }
+af_map = { path = "crates/af_map" }
+af_movement = { path = "crates/af_movement" }
+af_behavior = { path = "crates/af_behavior" }
+af_combat = { path = "crates/af_combat" }
+af_economy = { path = "crates/af_economy" }
+af_fog = { path = "crates/af_fog" }
+af_ai = { path = "crates/af_ai" }
+af_input = { path = "crates/af_input" }
+af_ui = { path = "crates/af_ui" }
+af_render = { path = "crates/af_render" }
+
+# --- Dev iteration speed (Bevy's recommended profile) ---
+# Our own crates stay lightly optimized so rebuilds are fast, while
+# dependencies (Bevy, ...) are fully optimized once and cached, so the game
+# still runs smoothly in debug builds.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

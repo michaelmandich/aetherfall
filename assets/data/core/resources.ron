@@ -1,0 +1,64 @@
+// Aetherfall core content: the eight resources, in UI order.
+// Shared framework authored by the lead designer; factions pick from it.
+// Schema: crates/af_data/src/schema.rs. Design notes: docs/design/game-design.md.
+// Keep ids stable: engine code and faction files reference them.
+(
+    resources: [
+        (
+            id: "food",
+            name: "Food",
+            color: (0.88, 0.32, 0.3),
+            tier: 1,
+            description: "Grain, berries, herds and fish. Feeds every army in every age.",
+        ),
+        (
+            id: "wood",
+            name: "Wood",
+            color: (0.55, 0.4, 0.22),
+            tier: 1,
+            description: "Felled from oak, pine and palm. Halls, bows, siege frames, palisades.",
+        ),
+        (
+            id: "stone",
+            name: "Stone",
+            color: (0.66, 0.66, 0.64),
+            tier: 1,
+            description: "Quarried from outcrops. Walls, towers, castles and town centres.",
+        ),
+        (
+            id: "copper",
+            name: "Copper",
+            color: (0.93, 0.55, 0.22),
+            tier: 1,
+            description: "The first metal: bronze spear-heads, then gears, boilers and wiring.",
+        ),
+        (
+            id: "iron",
+            name: "Iron",
+            color: (0.45, 0.55, 0.68),
+            tier: 2,
+            description: "Steel for blades and plate, later hulls, rails and engine blocks.",
+        ),
+        (
+            id: "silicon",
+            name: "Silicon",
+            color: (0.82, 0.93, 0.98),
+            tier: 3,
+            description: "Quartz sand from the dunes. Lenses, glass and the thinking engines of the Engine Age.",
+        ),
+        (
+            id: "aether",
+            name: "Aether",
+            color: (0.75, 0.45, 1.0),
+            tier: 2,
+            description: "Glowing crystal from the fallen star. It stores light and will; every machine past the Starfall Age drinks it.",
+        ),
+        (
+            id: "adamant",
+            name: "Adamant",
+            color: (1.0, 0.86, 0.3),
+            tier: 4,
+            description: "Star-metal from the meteor shards: light, unbreakable, mythic. Hulls, shields and titans.",
+        ),
+    ],
+)

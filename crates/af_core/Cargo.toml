@@ -1,0 +1,10 @@
+[package]
+name = "af_core"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall shared ECS contract: components, resources, messages, system sets, spawn helpers, rules, spatial index."
+
+[dependencies]
+bevy = { workspace = true }
+af_data = { workspace = true }
+af_geom = { workspace = true }

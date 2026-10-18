@@ -1,0 +1,9 @@
+[package]
+name = "af_combat"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall combat: target acquisition, weapons (melee, bolts, arcs, cannons, beams, bombs, homing, spray, nova, chain), projectiles, damage, shields, death."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

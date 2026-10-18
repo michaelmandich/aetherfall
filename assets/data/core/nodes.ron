@@ -1,0 +1,103 @@
+// Aetherfall core content: resource nodes placed by the map generator.
+// Shared framework authored by the lead designer; factions pick from it.
+// Schema: crates/af_data/src/schema.rs. Design notes: docs/design/game-design.md.
+// Keep ids stable: engine code and faction files reference them.
+//
+// Amounts are sized to the map generator's counts (docs/design/game-design.md 4.2 and the
+// pacing model in 4.5): each start gets 6-8 berry bushes (about 2100 food, enough to reach
+// the Banner Age before farming), 2-3 stone outcrops (the only stone on the map), 2-3 copper,
+// iron and quartz-sand deposits, and 3 aether crystals toward the crater.
+(
+    nodes: [
+        (
+            id: "oak",
+            name: "Oak",
+            resource: "wood",
+            amount: 130,
+            size: (1.0, 5.0, 1.0),
+            color: (0.22, 0.42, 0.16),
+        ),
+        (
+            id: "pine",
+            name: "Pine",
+            resource: "wood",
+            amount: 120,
+            size: (0.9, 6.0, 0.9),
+            color: (0.13, 0.33, 0.2),
+        ),
+        (
+            id: "palm",
+            name: "Palm",
+            resource: "wood",
+            amount: 100,
+            size: (0.8, 5.5, 0.8),
+            color: (0.45, 0.6, 0.25),
+        ),
+        (
+            id: "berry_bush",
+            name: "Berry Bush",
+            resource: "food",
+            amount: 300,
+            size: (1.4, 1.0, 1.4),
+            color: (0.55, 0.15, 0.35),
+        ),
+        (
+            id: "stone_outcrop",
+            name: "Stone Outcrop",
+            resource: "stone",
+            amount: 1000,
+            size: (2.4, 1.6, 2.4),
+            color: (0.62, 0.62, 0.6),
+        ),
+        (
+            id: "copper_vein",
+            name: "Copper Vein",
+            resource: "copper",
+            amount: 800,
+            size: (2.2, 1.3, 2.2),
+            color: (0.85, 0.5, 0.25),
+        ),
+        (
+            id: "iron_vein",
+            name: "Iron Vein",
+            resource: "iron",
+            amount: 900,
+            size: (2.2, 1.4, 2.2),
+            color: (0.38, 0.4, 0.46),
+        ),
+        (
+            id: "silicon_deposit",
+            name: "Quartz Sand",
+            resource: "silicon",
+            amount: 800,
+            size: (2.4, 0.9, 2.4),
+            color: (0.88, 0.9, 0.86),
+        ),
+        (
+            id: "aether_crystal",
+            name: "Aether Crystal",
+            resource: "aether",
+            amount: 400,
+            size: (1.4, 2.6, 1.4),
+            color: (0.75, 0.45, 1.0),
+        ),
+        (
+            id: "aether_vent",
+            name: "Aether Vent",
+            resource: "aether",
+            amount: 6000,
+            size: (3.0, 0.4, 3.0),
+            color: (0.55, 0.3, 0.9),
+            blocking: false,
+            requires_building: "aether_extractor",
+        ),
+        (
+            id: "adamant_meteor",
+            name: "Adamant Meteor",
+            resource: "adamant",
+            amount: 1600,
+            size: (3.0, 2.2, 3.0),
+            color: (0.95, 0.85, 0.45),
+        ),
+    ],
+)

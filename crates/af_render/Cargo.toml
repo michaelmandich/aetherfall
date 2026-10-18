@@ -1,0 +1,9 @@
+[package]
+name = "af_render"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall box renderer: terrain, units, buildings, nodes, weapons, projectiles/FX, health bars, selection, fog, ghosts."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "af_input"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall player input: RTS camera, picking, selection, control groups, commands, placement modes, hotkeys."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }

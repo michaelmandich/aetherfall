@@ -1,0 +1,9 @@
+[package]
+name = "af_movement"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall movement: nav obstacle sync, path service, steering, collisions (boxes never overlap)."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }
