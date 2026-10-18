@@ -30,7 +30,12 @@ cargo run -p aetherfall -- --quick --spectate --players 6 --reveal --speed 4
 
 `cargo run -p aetherfall -- --help` lists every option. The first build
 compiles Bevy (about 5 minutes); later builds are incremental. Build output
-lives in `C:/Users/meman/cargo-targets/aetherfall`, outside OneDrive.
+goes to `target/` by default. For faster linking on Windows, or to move the
+build folder (for example out of a OneDrive- or Dropbox-synced folder), copy
+`.cargo/config.example.toml` to `.cargo/config.toml` and edit it; that file
+is per machine and git ignores it. On Windows keep the clone (or the build
+folder) at a short path: Bevy's build paths are long, and the MSVC linker
+fails with LNK1104 once a path passes 260 characters.
 
 In a match the top bar shows your resources, population (used / capacity:
 build houses for more), age, clock and game speed. Hover any command card

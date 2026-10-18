@@ -1,4 +1,7 @@
 /target
+
+# Per-machine Cargo settings (copy .cargo/config.example.toml).
+/.cargo/config.toml
 *.log
 /screenshots/
 /out/

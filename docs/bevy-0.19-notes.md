@@ -1011,7 +1011,7 @@ pub(crate) fn get_base_path() -> PathBuf {
 
 The asset folder is `<base>/<AssetPlugin::file_path>` and `file_path` defaults to `"assets"`.
 `CARGO_MANIFEST_DIR` under `cargo run -p aetherfall` is `crates/aetherfall`, not the workspace
-root, which is why `.cargo/config.toml` sets `BEVY_ASSET_ROOT = "."` (relative to the workspace root).
+root, which is why `.cargo/config.example.toml` sets `BEVY_ASSET_ROOT = "."` (relative to the workspace root) for machines that build outside the project.
 A shipped exe with neither variable set looks next to the executable.
 
 ---

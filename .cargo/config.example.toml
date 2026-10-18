@@ -1,0 +1,21 @@
+# Optional local Cargo settings. Copy this file to `.cargo/config.toml`
+# (which git ignores, so each machine keeps its own) and edit to taste.
+# Without it the project builds with Cargo's defaults: output in `target/`.
+
+# Put the build output somewhere else. Useful when the project sits in a
+# synced folder (OneDrive, Dropbox): `target/` grows to many GB, and syncing
+# it is slow and causes file-lock build failures. Use an absolute path
+# outside the synced folder.
+# [build]
+# target-dir = "C:/Users/<you>/cargo-targets/aetherfall"
+
+# rust-lld ships with the Rust toolchain and links Bevy much faster than
+# MSVC link.exe.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+# Pin the content root for cargo-launched runs. Needed only when target-dir
+# is outside the project: the game otherwise finds `assets/` by walking up
+# from the working directory and from the executable's folder.
+[env]
+BEVY_ASSET_ROOT = { value = ".", relative = true }

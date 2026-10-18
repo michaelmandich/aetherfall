@@ -70,5 +70,6 @@ cargo run -p aetherfall -- --quick --spectate --players 4 --reveal --screenshot 
 cargo test --workspace
 ```
 
-The build directory is `C:/Users/meman/cargo-targets/aetherfall` (see
-`.cargo/config.toml`), outside OneDrive.
+Build output goes to `target/` unless a per-machine `.cargo/config.toml`
+says otherwise (see `.cargo/config.example.toml`: faster linking on Windows,
+and a build folder outside a synced project folder).
