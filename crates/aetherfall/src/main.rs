@@ -28,19 +28,26 @@
 //!
 //! Dev and screenshot tooling (windowed; times are sim seconds):
 //!   --screenshot PATH       save one screenshot and exit
-//!   --screenshot-at S       ... after S seconds (default 10; alias --shot-at)
+//!   --screenshot-at S       ... after S seconds (default 10; alias --shot-at;
+//!                           +S: S seconds after the --select pick is made)
 //!   --shots PREFIX          a series instead: PREFIX_<i>_<t>s.png, the first at
 //!                           --shot-at, then every --shot-every S (default 60),
 //!                           --shot-count N of them (default 1); exits after the last
 //!   --menu                  stay on the menu while taking screenshots (times
 //!                           are then real seconds)
-//!   --camera SPOT[,DIST]    frame the view once the map exists: x,z or
+//!   --camera SPOT[,DIST[,TURN]]  frame the view once the map exists: x,z or
 //!                           crater | centre | start | p<N>, optionally at
-//!                           DIST metres (25-150)
+//!                           DIST metres (5-150; the wheel zooms 25-150) and
+//!                           seen from TURN degrees round (clockwise from above)
 //!   --select WHAT           select once, after --select-at S (default 1), and
 //!                           look at it unless --camera is given: hall | worker
 //!                           | workers | army | foundation | busy (longest
-//!                           queue) | building:<id> | unit:<id>
+//!                           queue) | building:<id> | unit:<id> | doing:<what>
+//!                           (one unit busy so: idle, gather, forage, farm,
+//!                           chop, mine, dig, chip, smash, build, repair, heal,
+//!                           fight) | carrying:<resource|any> (one worker
+//!                           taking a load home)
+//!   --follow                keep the camera on the --select pick
 //!   --place BUILDING        hold the local player in placement mode for a
 //!                           building id (walls: a line ending at the cursor)
 //!   --hover LABEL           keep the UI buttons with this label hovered (tooltips)
@@ -55,6 +62,10 @@
 //!   --autoplay              the AI plays the local player's slot (its HUD shows)
 //!   --pause-at S            pause the game at S seconds (shots still due are
 //!                           then taken, paused, one a frame)
+//!   --frame-stats S         log frame times (mean, percentiles, fps) and unit
+//!                           counts every S real seconds
+//!   --no-models             draw every unit as boxes (no glTF models)
+//!   --no-vsync              present frames as fast as they are made
 //!   --script "STEPS"        play the match from a script: steps `<S> <action>`
 //!                           separated by `;`, where an action is
 //!                             key <combo>        Q, 1, ctrl+1, shift+R, Esc, Space, F1...
@@ -65,18 +76,21 @@
 //!                             select <what>      as --select
 //!                             camera <spot>      as --camera
 //!                             defeat <player>    delete all that player owns
+//!                             damage <what> <f>  set what `select` would pick to
+//!                                                fraction f of its hit points
 //!                             shot <path>        a screenshot (exits after the last)
 //!                           e.g. --script "1 select workers; 1.5 key Z; 2 key W;
 //!                                2.5 move 700,500; 2.6 click; 3 shot house.png"
 
 mod dev;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use aetherfall::*;
 use af_core::prelude::*;
 use bevy::prelude::*;
-use bevy::window::{PresentMode, WindowResolution};
+use bevy::window::WindowResolution;
 
 #[derive(Debug, Default)]
 struct Args {
@@ -176,7 +190,13 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    let data = match GameData::load_default() {
+    // The content and every other asset (models) come from the same
+    // `assets/` folder, wherever the game finds it.
+    let Some(data_dir) = af_data::find_data_dir() else {
+        eprintln!("aetherfall: could not find an `assets/data` folder (run from the project, or set BEVY_ASSET_ROOT to it)");
+        return AppExit::error();
+    };
+    let data = match GameData::load_dir(&data_dir) {
         Ok(d) => Arc::new(d),
         Err(e) => {
             eprintln!("aetherfall: game content failed to load\n{e}");
@@ -190,7 +210,12 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    if args.headless { run_headless_cli(data, setup, &args) } else { run_windowed(data, setup, args) }
+    if args.headless {
+        run_headless_cli(data, setup, &args)
+    } else {
+        let assets = data_dir.parent().unwrap_or(&data_dir).to_path_buf();
+        run_windowed(data, setup, args, &assets)
+    }
 }
 
 fn run_headless_cli(data: Arc<GameData>, setup: MatchSetup, args: &Args) -> AppExit {
@@ -210,7 +235,8 @@ fn run_headless_cli(data: Arc<GameData>, setup: MatchSetup, args: &Args) -> AppE
     AppExit::Success
 }
 
-fn run_windowed(data: Arc<GameData>, mut setup: MatchSetup, args: Args) -> AppExit {
+/// `assets`: the asset folder (the one holding the content folder).
+fn run_windowed(data: Arc<GameData>, mut setup: MatchSetup, args: Args, assets: &Path) -> AppExit {
     let dev = match args.dev.plan(&data, &mut setup) {
         Ok(plan) => plan,
         Err(e) => {
@@ -220,15 +246,24 @@ fn run_windowed(data: Arc<GameData>, mut setup: MatchSetup, args: Args) -> AppEx
     };
     let mut app = App::new();
     app.set_error_handler(bevy::ecs::error::warn);
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Aetherfall".into(),
-            resolution: WindowResolution::new(1600, 900),
-            present_mode: PresentMode::AutoVsync,
-            ..default()
-        }),
-        ..default()
-    }));
+    // Left alone, Bevy looks for `assets/` under BEVY_ASSET_ROOT, else
+    // CARGO_MANIFEST_DIR (`crates/aetherfall` under `cargo run`), else next
+    // to the executable. Point it at the folder the content came from, so
+    // a fresh clone needs no per-machine BEVY_ASSET_ROOT.
+    let assets = AssetPlugin { file_path: assets.to_string_lossy().into_owned(), ..default() };
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Aetherfall".into(),
+                    resolution: WindowResolution::new(1600, 900),
+                    present_mode: dev.present_mode(),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(assets),
+    );
     app.insert_state(if args.quick { GameState::Playing } else { GameState::Menu });
     app.insert_resource(Data(data));
     app.insert_resource(setup);

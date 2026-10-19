@@ -2,6 +2,8 @@
 // Shared framework authored by the lead designer; factions pick from it.
 // Schema: crates/af_data/src/schema.rs. Design notes: docs/design/game-design.md.
 // Keep ids stable: engine code and faction files reference them.
+// `work` is how workers gather it from nodes (animation and tool, see
+// docs/art/peasant.md); resource-field buildings (farms) are always `Farm`.
 (
     resources: [
         (
@@ -10,6 +12,7 @@
             color: (0.88, 0.32, 0.3),
             tier: 1,
             description: "Grain, berries, herds and fish. Feeds every army in every age.",
+            work: Forage,
         ),
         (
             id: "wood",
@@ -17,6 +20,7 @@
             color: (0.55, 0.4, 0.22),
             tier: 1,
             description: "Felled from oak, pine and palm. Halls, bows, siege frames, palisades.",
+            work: Chop,
         ),
         (
             id: "stone",
@@ -24,6 +28,7 @@
             color: (0.66, 0.66, 0.64),
             tier: 1,
             description: "Quarried from outcrops. Walls, towers, castles and town centres.",
+            work: Mine,
         ),
         (
             id: "copper",
@@ -31,6 +36,7 @@
             color: (0.93, 0.55, 0.22),
             tier: 1,
             description: "The first metal: bronze spear-heads, then gears, boilers and wiring.",
+            work: Mine,
         ),
         (
             id: "iron",
@@ -38,6 +44,7 @@
             color: (0.45, 0.55, 0.68),
             tier: 2,
             description: "Steel for blades and plate, later hulls, rails and engine blocks.",
+            work: Mine,
         ),
         (
             id: "silicon",
@@ -45,6 +52,7 @@
             color: (0.82, 0.93, 0.98),
             tier: 3,
             description: "Quartz sand from the dunes. Lenses, glass and the thinking engines of the Engine Age.",
+            work: Dig,
         ),
         (
             id: "aether",
@@ -52,6 +60,7 @@
             color: (0.75, 0.45, 1.0),
             tier: 2,
             description: "Glowing crystal from the fallen star. It stores light and will; every machine past the Starfall Age drinks it.",
+            work: Chip,
         ),
         (
             id: "adamant",
@@ -59,6 +68,7 @@
             color: (1.0, 0.86, 0.3),
             tier: 4,
             description: "Star-metal from the meteor shards: light, unbreakable, mythic. Hulls, shields and titans.",
+            work: Smash,
         ),
     ],
 )

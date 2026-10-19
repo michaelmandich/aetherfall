@@ -11,6 +11,7 @@ use crate::assets::{BoxPart, Painter, PartQuery, no_shadows, node};
 use crate::entities::{BoxVisual, Ground};
 use crate::fog::{BuildingView, viewing_team};
 use crate::look::{Look, health_color};
+use crate::model::ModelUnit;
 use crate::parts::{BarSpec, Part, min_line_width, outline_boxes, segment_transform};
 use crate::scene::RenderScene;
 
@@ -80,12 +81,12 @@ pub(crate) fn update_bars(
     cursor: Res<CursorWorld>,
     rig: Res<CameraRig>,
     camera: Query<(&GlobalTransform, Has<RtsCamera>), With<Camera3d>>,
-    actors: Query<(Entity, &Health, Option<&Shield>, Option<&BuildingView>, &Footprint, &Transform, Has<Selected>, Option<&BarParts>), With<BoxVisual>>,
+    actors: Query<(Entity, &Health, Option<&Shield>, Option<&BuildingView>, &Footprint, &Transform, Has<Selected>, Option<&BarParts>, Option<&ModelUnit>), With<BoxVisual>>,
     mut parts: PartQuery,
 ) {
     let cam = camera_rotation(&camera, &rig);
     let min_height = min_line_width(rig.distance);
-    for (e, health, shield, view, fp, tf, selected, bars) in &actors {
+    for (e, health, shield, view, fp, tf, selected, bars, model) in &actors {
         let shield = shield.filter(|s| s.max > 0.0).map(|s| (s.hp / s.max).clamp(0.0, 1.0));
         let (hp, progress, shield, fp) = match view {
             Some(v) => (v.hp, v.construction, shield.filter(|_| v.live), &v.footprint),
@@ -107,8 +108,10 @@ pub(crate) fn update_bars(
         }
         let spec = BarSpec::for_footprint(fp, min_height);
         if let Ok((mut root, _, _)) = parts.get_mut(bars.root) {
-            // Straight above the entity, facing the camera whatever way the entity is turned.
-            root.set_if_neq(Transform { rotation: tf.rotation.inverse() * cam, ..spec.root() });
+            // Straight above the entity (its model, where it is drawn off
+            // the unit), facing the camera whatever way the entity is turned.
+            let at = spec.root().translation + model.map_or(Vec3::ZERO, ModelUnit::body_offset);
+            root.set_if_neq(Transform { translation: at, rotation: tf.rotation.inverse() * cam, ..spec.root() });
         }
         let rows = [
             (ROW_PROGRESS, progress.map(|p| (p, BAR_PROGRESS))),
@@ -179,7 +182,10 @@ pub(crate) fn update_outlines(
     local: Res<LocalPlayer>,
     players: Res<Players>,
     ground: Ground,
-    mut marked: Query<(Entity, Option<&Owner>, &Position, &Transform, &Footprint, Option<&BuildingView>, Has<Selected>, &mut OutlineParts), With<BoxVisual>>,
+    mut marked: Query<
+        (Entity, Option<&Owner>, &Position, &Transform, &Footprint, Option<&BuildingView>, Has<Selected>, &mut OutlineParts, Option<&ModelUnit>),
+        With<BoxVisual>,
+    >,
     unmarked: Query<(&Footprint, Option<&BuildingView>, &Position, &Transform), (With<BoxVisual>, Without<OutlineParts>)>,
     selected_new: Query<Entity, (With<Selected>, With<BoxVisual>, Without<OutlineParts>)>,
     mut parts: PartQuery,
@@ -195,7 +201,7 @@ pub(crate) fn update_outlines(
             commands.entity(e).try_insert(outline);
         }
     }
-    for (e, owner, pos, body, fp, view, selected, mut outline) in &mut marked {
+    for (e, owner, pos, body, fp, view, selected, mut outline, model) in &mut marked {
         let half = view.map_or(fp, |v| &v.footprint).half;
         // Re-laid when the footprint changes or the zoom moves the least width by a tenth.
         if half != outline.half || (outline.width - width).abs() > width * 0.1 {
@@ -217,11 +223,10 @@ pub(crate) fn update_outlines(
         let look = alpha.map(|a| Look::unlit(relation_color(&players, local.0, owner.map(|o| o.0)), a));
         if let Ok((mut tf, mut vis, _)) = parts.get_mut(outline.root) {
             vis.set_if_neq(if look.is_some() { Visibility::Inherited } else { Visibility::Hidden });
-            // Flyers: the outline stays on the ground under them.
-            let y = ground.surface(pos.0) - body.translation.y;
-            if tf.translation.y != y {
-                tf.translation.y = y;
-            }
+            // Flyers: the outline stays on the ground under them. A model
+            // drawn off its unit (stepped up to its work) takes it along.
+            let at = model.map_or(Vec3::ZERO, ModelUnit::body_offset).with_y(ground.surface(pos.0) - body.translation.y);
+            tf.set_if_neq(Transform { translation: at, ..*tf });
         }
         let Some(look) = look.filter(|l| outline.look != Some(*l)) else { continue };
         outline.look = Some(look);

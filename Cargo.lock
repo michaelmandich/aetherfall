@@ -208,6 +208,8 @@ version = "0.1.0"
 dependencies = [
  "af_core",
  "bevy",
+ "ron",
+ "serde",
 ]
 
 [[package]]

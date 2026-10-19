@@ -203,7 +203,13 @@ pub(crate) fn build(packs: Vec<(String, ContentPack)>) -> Result<GameData, DataE
     let resources: Vec<ResourceDef> = resources
         .into_iter()
         .map(|(src, d)| {
-            check_color(&mut ctx, &format!("{src}: resource `{}`", d.id), &d.color);
+            let what = format!("{src}: resource `{}`", d.id);
+            check_color(&mut ctx, &what, &d.color);
+            if d.work == WorkStyle::Farm {
+                ctx.err(format!(
+                    "{what}: work `Farm` is how resource-field buildings are worked; give its nodes a hand style (Forage, Chop, Mine, Dig, Chip or Smash)"
+                ));
+            }
             d
         })
         .collect();

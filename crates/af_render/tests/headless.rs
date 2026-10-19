@@ -84,7 +84,7 @@ fn builds_scene_terrain_and_entity_visuals() {
     let tf = app.world().get::<Transform>(w.own_unit).unwrap();
     assert_eq!(tf.translation, Vec3::new(10.0, 0.0, 10.0));
     let peasant = app.world().get::<Unit>(w.own_unit).unwrap().kind;
-    assert_eq!(visual(app, w.own_unit).sig, VisualSig::Unit { kind: peasant, shield: false });
+    assert_eq!(visual(app, w.own_unit).sig, VisualSig::Unit { kind: peasant, shield: false, model: false });
     assert_eq!(visual(app, w.own_unit).weapons.len(), 1, "the work axe");
     assert!(visual(app, w.foundation).progress.is_some());
 }
@@ -104,7 +104,7 @@ fn units_follow_the_sim_and_rebuild_on_upgrade() {
     let old_root = visual(app, w.own_unit).root;
     app.world_mut().get_mut::<Unit>(w.own_unit).unwrap().kind = militia;
     run_ticks(app, 1);
-    assert_eq!(visual(app, w.own_unit).sig, VisualSig::Unit { kind: militia, shield: false });
+    assert_eq!(visual(app, w.own_unit).sig, VisualSig::Unit { kind: militia, shield: false, model: false });
     assert!(app.world().get_entity(old_root).is_err(), "old visual despawned");
 
     // A tech grants a shield: the unit gets a shell, shown while it holds.

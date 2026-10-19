@@ -65,8 +65,9 @@ impl ControlGroups {
 /// A stand-in for the mouse: while it holds a position (logical window
 /// pixels, like `Window::cursor_position`), af_input reads the cursor from
 /// it instead of the window, and af_ui treats it as pointing at the world,
-/// not the HUD. For tooling that must frame a screenshot without the real
-/// mouse interfering (edge scrolling, hover), or that points at a spot on
+/// not the HUD, and the real mouse wheel does not zoom. For tooling that
+/// must frame a screenshot without the real mouse interfering (edge
+/// scrolling, wheel zoom, hover), or that points at a spot on
 /// purpose (a placement ghost). Absent or `None` in normal play.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CursorOverride(pub Option<Vec2>);

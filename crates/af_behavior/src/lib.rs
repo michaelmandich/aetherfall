@@ -15,12 +15,16 @@
 //!      AttackMove, Patrol, Hold), `gather` (Gather, ReturnCargo), `build`
 //!      (Build, Repair);
 //!   3. `heal`, then `idle` (stances, retaliation) for units without a
-//!      task, and finally the `Idle` marker.
+//!      task, then the `Idle` marker;
+//!   4. `activity`: the shared `Activity` (gathering in which style,
+//!      building, repairing, healing, fighting, or none) from what the
+//!      brains did this tick.
 //!
 //! Each order system only acts on units whose [`Brain`] is in sync with the
 //! front order, so an order popped by one system starts cleanly on the next
 //! tick.
 
+mod activity;
 mod brain;
 mod build;
 mod fight;
@@ -59,6 +63,7 @@ impl Plugin for BehaviorPlugin {
                     heal::run_healers,
                     idle::run_idle_stances,
                     idle::mark_idle,
+                    activity::update_activity,
                 )
                     .chain()
                     .in_set(SimSet::Orders),

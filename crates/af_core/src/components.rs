@@ -359,6 +359,33 @@ pub struct SquadMember {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Idle;
 
+/// What a unit is busy with this tick, for animation (af_render) and
+/// anyone else who asks. Written only by af_behavior, at the end of
+/// `SimSet::Orders`; every unit spawns with the default `Idle`.
+///
+/// It names the task, not the movement: walking is read from `Velocity`
+/// and the load from `Gatherer`. So a worker walking to its tree or
+/// carrying wood home is `Idle` until it stands at the tree, chopping.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Activity {
+    /// Nothing below (standing, or walking somewhere).
+    #[default]
+    Idle,
+    /// Harvesting at a node, in the style of its resource
+    /// (`ResourceDef::work`), or working a resource-field building
+    /// (always `WorkStyle::Farm`).
+    Gather(WorkStyle),
+    /// Constructing a foundation, at it.
+    Build,
+    /// Repairing a building or machine, at it.
+    Repair,
+    /// Mending an ally in reach.
+    Heal,
+    /// Engaged with a hostile: chasing it, or attacking (the windup is in
+    /// `Weapons`).
+    Fight,
+}
+
 /// A worker's carried load and gathering memory. Written by af_behavior.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Gatherer {

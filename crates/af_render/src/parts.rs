@@ -286,65 +286,121 @@ pub fn progress_transform(full: &Part, progress: f32) -> Transform {
     Transform::from_translation(Vec3::new(full.center.x, y0 + height * 0.5, full.center.z)).with_scale(Vec3::new(full.size.x, height, full.size.z))
 }
 
+/// What a resource node is drawn as, by its resource and shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeShape {
+    /// Wood, tall and slim: trunk and a two-tier canopy.
+    TallTree,
+    /// Wood: trunk and canopy.
+    Tree,
+    /// Food: a bush with berries.
+    Bush,
+    /// Aether that needs a building: a glowing pad.
+    Vent,
+    /// Aether: a glowing crystal with shards.
+    Crystal,
+    /// Adamant: a charred meteor with glowing ore.
+    Meteor,
+    /// Anything else: an ore heap with chunks.
+    Heap,
+}
+
+impl NodeShape {
+    fn of(data: &GameData, def: &NodeDef) -> NodeShape {
+        let [w, h, d] = def.size.map(|v| v.max(0.05));
+        match data.resource(def.resource_id).id.as_str() {
+            "wood" if h / w.max(d) > 5.0 => NodeShape::TallTree,
+            "wood" => NodeShape::Tree,
+            "food" => NodeShape::Bush,
+            "aether" if def.requires_building.is_some() => NodeShape::Vent,
+            "aether" => NodeShape::Crystal,
+            "adamant" => NodeShape::Meteor,
+            _ => NodeShape::Heap,
+        }
+    }
+
+    /// The share of the footprint's width and depth its base box covers.
+    fn base(self) -> f32 {
+        match self {
+            NodeShape::TallTree => 0.3,
+            NodeShape::Tree => 0.35,
+            NodeShape::Bush | NodeShape::Vent => 1.0,
+            NodeShape::Crystal => 0.55,
+            NodeShape::Meteor => 0.85,
+            NodeShape::Heap => 0.8,
+        }
+    }
+}
+
+/// Half extents (x, z) of the box a node stands on, the trunk, bush,
+/// crystal or rock a worker works at, at full size (scale it by
+/// [`node_scale`]): the first part of [`node_layout`].
+pub fn node_base_half(data: &GameData, def: &NodeDef) -> Vec2 {
+    let [w, _, d] = def.size.map(|v| v.max(0.05));
+    Vec2::new(w, d) * NodeShape::of(data, def).base() * 0.5
+}
+
 /// The boxes of a resource node, chosen by the node's resource and shape:
 /// wood is a tree (trunk + canopy, two-tier when tall and slim), food a
 /// bush with berries, aether a glowing crystal (a glowing pad for vents
 /// that need a building), adamant a charred meteor with glowing ore,
-/// anything else an ore heap with chunks.
+/// anything else an ore heap with chunks. The first part is the base
+/// ([`node_base_half`]).
 pub fn node_layout(data: &GameData, def: &NodeDef) -> Vec<Part> {
     let [w, h, d] = def.size.map(|v| v.max(0.05));
     let c = def.color;
-    let resource = data.resource(def.resource_id).id.as_str();
-    match resource {
-        "wood" => {
+    let shape = NodeShape::of(data, def);
+    let (bw, bd) = (w * shape.base(), d * shape.base());
+    match shape {
+        NodeShape::TallTree | NodeShape::Tree => {
             let trunk = Look::lit(mix(c, BARK, 0.8));
-            if h / w.max(d) > 5.0 {
+            if shape == NodeShape::TallTree {
                 vec![
-                    Part::column(0.0, 0.0, w * 0.3, d * 0.3, 0.0, h * 0.35, trunk),
+                    Part::column(0.0, 0.0, bw, bd, 0.0, h * 0.35, trunk),
                     Part::column(0.0, 0.0, w, d, h * 0.35, h * 0.7, Look::lit(c)),
                     Part::column(0.0, 0.0, w * 0.6, d * 0.6, h * 0.7, h, Look::lit(lighten(c, 0.08))),
                 ]
             } else {
-                vec![Part::column(0.0, 0.0, w * 0.35, d * 0.35, 0.0, h * 0.4, trunk), Part::column(0.0, 0.0, w, d, h * 0.4, h, Look::lit(c))]
+                vec![Part::column(0.0, 0.0, bw, bd, 0.0, h * 0.4, trunk), Part::column(0.0, 0.0, w, d, h * 0.4, h, Look::lit(c))]
             }
         }
-        "food" => {
+        NodeShape::Bush => {
             let top = h * 0.7;
             let s = w.min(d) * 0.2;
             let berry = Look::lit(c);
-            let mut parts = vec![Part::column(0.0, 0.0, w, d, 0.0, top, Look::lit(mix(c, LEAF, 0.7)))];
+            let mut parts = vec![Part::column(0.0, 0.0, bw, bd, 0.0, top, Look::lit(mix(c, LEAF, 0.7)))];
             for (x, z) in [(-0.25, -0.2), (0.25, -0.15), (0.0, 0.25)] {
                 parts.push(Part::column(x * w, z * d, s, s, top, top + s, berry));
             }
             parts
         }
-        "aether" if def.requires_building.is_some() => vec![
-            Part::column(0.0, 0.0, w, d, 0.0, h, Look::glow(scale(c, 0.7))),
+        NodeShape::Vent => vec![
+            Part::column(0.0, 0.0, bw, bd, 0.0, h, Look::glow(scale(c, 0.7))),
             Part::column(0.0, 0.0, w * 0.4, d * 0.4, h, h * 1.6, Look::glow(lighten(c, 0.3))),
         ],
-        "aether" => {
+        NodeShape::Crystal => {
             let shard = Look::glow(lighten(c, 0.2));
             vec![
-                Part::column(0.0, 0.0, w * 0.55, d * 0.55, 0.0, h, Look::glow(c)),
+                Part::column(0.0, 0.0, bw, bd, 0.0, h, Look::glow(c)),
                 Part::column(-0.39 * w, 0.2 * d, w * 0.22, d * 0.22, 0.0, h * 0.5, shard),
                 Part::column(0.39 * w, -0.2 * d, w * 0.22, d * 0.22, 0.0, h * 0.6, shard),
             ]
         }
-        "adamant" => {
+        NodeShape::Meteor => {
             // A fallen star: a charred rock with glowing ore breaking out of
             // its top (a heap in the ore's own colour would read as sand).
             let top = h * 0.7;
             let ore = Look::glow(c);
             vec![
-                Part::column(0.0, 0.0, w * 0.85, d * 0.85, 0.0, top, Look::lit(mix(c, METEOR_ROCK, 0.8))),
+                Part::column(0.0, 0.0, bw, bd, 0.0, top, Look::lit(mix(c, METEOR_ROCK, 0.8))),
                 Part::column(0.12 * w, -0.08 * d, w * 0.34, d * 0.34, top, h, ore),
                 Part::column(-0.22 * w, 0.18 * d, w * 0.2, d * 0.2, top, top + h * 0.15, ore),
             ]
         }
-        _ => {
+        NodeShape::Heap => {
             let top = h * 0.75;
             vec![
-                Part::column(0.0, 0.0, w * 0.8, d * 0.8, 0.0, top, Look::lit(c)),
+                Part::column(0.0, 0.0, bw, bd, 0.0, top, Look::lit(c)),
                 Part::column(0.15 * w, -0.1 * d, w * 0.3, d * 0.3, top, h, Look::lit(lighten(c, 0.2))),
                 Part::column(-0.2 * w, 0.15 * d, w * 0.22, d * 0.22, top, top + h * 0.2, Look::lit(scale(c, 0.8))),
             ]
@@ -595,6 +651,10 @@ mod tests {
                 assert!(p.center.x.abs() + p.size.x * 0.5 <= def.size[0] * 0.5 + 1e-4, "{} stays in its footprint", def.id);
                 assert!(p.center.z.abs() + p.size.z * 0.5 <= def.size[2] * 0.5 + 1e-4, "{} stays in its footprint", def.id);
             }
+            // The base box workers work at is the first part, centred on the node.
+            let base = &parts[0];
+            assert_eq!((base.center.x, base.center.z), (0.0, 0.0), "{}", def.id);
+            assert!((base.size.xz() * 0.5 - node_base_half(&data, def)).length() < 1e-5, "{}", def.id);
         }
         assert_eq!(node_scale(100.0, 100.0), 1.0);
         assert!((node_scale(0.0, 100.0) - 0.7).abs() < 1e-6);

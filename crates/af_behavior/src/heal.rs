@@ -61,6 +61,7 @@ pub(crate) fn run_healers(
         if !m.brain.synced(m.orders) {
             continue;
         }
+        m.brain.mending = false;
         // Idle healers roam to patients. Holding, following, fighting,
         // attack-moving and patrolling ones mend whoever is in reach without
         // leaving their order (fight.rs keeps steering them, and an
@@ -141,6 +142,7 @@ pub(crate) fn run_healers(
         };
         if in_reach {
             p.health.hp = (p.health.hp + heal.rate * SIM_DT).min(p.health.max);
+            m.brain.mending = true;
         }
     }
 }

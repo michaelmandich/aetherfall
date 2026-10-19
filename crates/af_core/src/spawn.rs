@@ -39,6 +39,7 @@ pub fn spawn_unit(commands: &mut Commands, data: &GameData, player: &PlayerState
         if def.gatherer.is_some() { Stance::Passive } else { Stance::Aggressive },
         PathState::default(),
         Idle,
+        Activity::Idle,
     ));
     if st.shield_max > 0.0 {
         let s = def.shield.as_ref();

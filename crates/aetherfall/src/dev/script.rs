@@ -12,6 +12,7 @@
 //! | `select <what>` | selects, as `--select` (without moving the camera) |
 //! | `camera <spot>[,dist]` | frames the view, as `--camera` |
 //! | `defeat <player>` | deletes everything that player owns (to end a match) |
+//! | `damage <what> <fraction>` | sets what `select <what>` would pick to that fraction of its hit points (a building to repair) |
 //! | `shot <path>` | takes a screenshot (the run exits after the last one) |
 //!
 //! Keys and clicks act on the frame after the one that taps them is due,
@@ -39,6 +40,8 @@ pub(super) enum Step {
     Select(Pick),
     Camera(CameraArg),
     Defeat(u8),
+    /// Hit points of the picked entities set to this fraction of their most.
+    Damage(Pick, f32),
     Shot(PathBuf),
 }
 
@@ -110,8 +113,16 @@ pub(super) fn parse(data: &GameData, script: &str) -> Result<Vec<(f32, Step)>, S
             "select" => Step::Select(Pick::parse(data, arg)?),
             "camera" => Step::Camera(CameraArg::parse(arg)?),
             "defeat" => Step::Defeat(super::number("--script defeat", arg)?),
+            "damage" => {
+                let (what, fraction) = arg.rsplit_once(' ').ok_or_else(|| err("want `damage <what> <fraction>`"))?;
+                let fraction: f32 = super::number("--script damage", fraction)?;
+                if !(0.0..=1.0).contains(&fraction) || fraction == 0.0 {
+                    return Err(err("the fraction of hit points left must be in (0, 1]"));
+                }
+                Step::Damage(Pick::parse(data, what.trim())?, fraction)
+            }
             "shot" if !arg.is_empty() => Step::Shot(PathBuf::from(arg)),
-            _ => return Err(err("unknown action (key, move, click, down, up, press, select, camera, defeat, shot)")),
+            _ => return Err(err("unknown action (key, move, click, down, up, press, select, camera, defeat, damage, shot)")),
         };
         steps.push((at, step));
     }
@@ -268,8 +279,8 @@ pub(super) fn script_input(
 }
 
 /// Update, between af_input and af_ui: the due steps that act on the game
-/// (presses, selections, camera, defeats); a press ends the frame's turn so
-/// the HUD sees one press at a time.
+/// (presses, selections, camera, defeats, damage); a press ends the frame's
+/// turn so the HUD sees one press at a time.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn script_world(
     mut commands: Commands,
@@ -283,6 +294,7 @@ pub(super) fn script_world(
     mut rig: ResMut<CameraRig>,
     mut inbox: ResMut<CommandInbox>,
     owned: Query<(Entity, &Owner), (Or<(With<Unit>, With<Building>)>, Without<Dead>)>,
+    mut health: Query<&mut Health, Without<Dead>>,
 ) {
     while let Some(step) = script.due(clock.elapsed).filter(|s| !s.is_input()).cloned() {
         match step {
@@ -306,6 +318,15 @@ pub(super) fn script_world(
                 let entities: Vec<Entity> = owned.iter().filter(|(_, o)| o.0 == player).map(|(e, _)| e).collect();
                 info!("script: defeating player {p} ({} entities)", entities.len());
                 inbox.push(PlayerCommand::new(player, entities, CommandKind::Delete));
+            }
+            Step::Damage(pick, fraction) => {
+                let picked = super::pick_entities(pick, &picks.candidates(local.0.unwrap_or(PlayerId(0))));
+                for e in &picked {
+                    if let Ok(mut h) = health.get_mut(*e) {
+                        h.hp = h.max * fraction;
+                    }
+                }
+                info!("script: damaged {} ({pick:?}) to {:.0}%", picked.len(), fraction * 100.0);
             }
             _ => unreachable!("only world steps get here"),
         }
@@ -335,6 +356,8 @@ mod tests {
         assert_eq!(steps[3].1, Step::Move(Vec2::new(800.0, 450.0)));
         assert_eq!(steps[4].1, Step::Click { button: MouseButton::Right, mods: vec![KeyCode::ShiftLeft] });
         assert_eq!(shots(&steps), vec![(4.0, PathBuf::from("a.png"))]);
+        let damage = parse(&data, "1 damage building:house 0.4").unwrap();
+        assert_eq!(damage[0].1, Step::Damage(Pick::Building(data.building_id("house").unwrap()), 0.4));
     }
 
     #[test]
@@ -350,7 +373,7 @@ mod tests {
         assert_eq!(key("."), Some((vec![], KeyCode::Period)));
         assert_eq!(key("F1"), Some((vec![], KeyCode::F1)));
         assert_eq!(key("hyper+q"), None);
-        for bad in ["key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3"] {
+        for bad in ["key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3", "1 damage hall", "1 damage hall 0", "1 damage hall 1.5", "1 damage nothing 0.5"] {
             assert!(parse(&data, bad).is_err(), "{bad}");
         }
         assert!(parse(&data, " ; ;").unwrap().is_empty());

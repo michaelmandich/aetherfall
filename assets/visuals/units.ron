@@ -1,0 +1,7 @@
+// Units drawn with a 3D model instead of boxes: unit id -> model manifest.
+// Paths are relative to assets/. A manifest is written by the art build
+// (see docs/art/peasant.md); a unit whose manifest or model is missing or
+// fails to load keeps its boxes. Read by af_render at startup.
+{
+    "peasant": "models/peasant/peasant.model.ron",
+}

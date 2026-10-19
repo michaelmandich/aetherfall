@@ -11,7 +11,8 @@ use crate::cursor::mouse_position;
 
 /// Vertical field of view of the RTS camera, degrees.
 pub const FOV_DEG: f32 = 32.0;
-/// Closest zoom (metres from the focus).
+/// Closest zoom of the mouse wheel (metres from the focus). A rig set
+/// closer from elsewhere (dev close-ups) stays there until the wheel turns.
 pub const MIN_DISTANCE: f32 = 25.0;
 /// Farthest zoom (metres from the focus).
 pub const MAX_DISTANCE: f32 = 150.0;
@@ -210,11 +211,13 @@ pub(crate) fn camera_control(
         focus += grab_offset(&rig, dragged, w.height());
     }
 
+    // A stand-in mouse keeps the real wheel out too.
     let notches = match scroll.unit {
+        _ if stand_in.is_some() => 0.0,
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
     };
-    let distance = if cursor.over_ui { rig.distance } else { zoomed(rig.distance, notches) };
+    let distance = if cursor.over_ui || notches == 0.0 { rig.distance } else { zoomed(rig.distance, notches) };
 
     let focus = clamp_to_map(focus, map.as_deref());
     if focus != rig.focus || distance != rig.distance {

@@ -7,7 +7,8 @@ computers, shields and beams.
 
 **Everything is a box** for now: the map, terrain, buildings, units, weapons,
 projectiles. Boxes are placed freely (any position, any angle) but never
-overlap. Real graphics come later and only replace the renderer crate.
+overlap. Real graphics come one model at a time and only touch the renderer
+crate; the first is the peasant (see Models below).
 
 ## Play
 
@@ -125,6 +126,31 @@ cargo run -p af_data --example check -- --summary
 
 The checker reports unknown references, bad ranges, missing drop sites or
 age-ups, and prints every faction's roster per age.
+
+## Models
+
+The **peasant** (every faction's worker) is an animated 3D model: 23 clips
+(idle, walking, carrying, each kind of gathering, building, repairing,
+fighting, dying...), the tool or load in its hands, and a sash in its
+owner's colour. Every other unit is still boxes; the box stays each unit's
+collision shape.
+
+* `assets/visuals/units.ron` lists the units drawn with a model, each with
+  its manifest (`assets/models/peasant/peasant.model.ron`, next to
+  `peasant.glb`). A unit missing from it, or whose model fails to load,
+  is drawn as boxes.
+* The model is built by a Blender script from the rigged source in
+  `art/peasant/source/`; nothing in `assets/models/` is edited by hand:
+
+  ```bash
+  "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/peasant/build_peasant.py
+  ```
+
+* To add a model for another unit, follow the contract in
+  [docs/art/peasant.md](docs/art/peasant.md) (clip names, props, manifest)
+  and the pipeline in [art/peasant/README.md](art/peasant/README.md), then
+  add the unit to `assets/visuals/units.ron`.
+* `cargo run -p aetherfall -- --no-models` draws everything as boxes.
 
 ## Code
 

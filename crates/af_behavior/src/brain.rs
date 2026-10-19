@@ -52,6 +52,8 @@ pub struct Brain {
     pub(crate) drop_site: Option<Entity>,
     /// Ally a healer is mending.
     pub(crate) heal_target: Option<Entity>,
+    /// The healer mended `heal_target` this tick (it is in reach).
+    pub(crate) mending: bool,
     /// Patrolling from `b` back to `a`.
     pub(crate) patrol_back: bool,
     /// Path failures in a row for the current order.

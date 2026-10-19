@@ -1,0 +1,33 @@
+// Written by art/peasant/build_peasant.py; do not edit by hand.
+// Clip durations in seconds; speed = ground speed in m/s at playback
+// rate 1 (model scale 1); hit = impact time in seconds; reach = how far
+// ahead the work lands in metres (model scale 1).
+(
+    model: "models/peasant/peasant.glb",
+    height: 1.650,
+    clips: {
+        "Acknowledge": (duration: 0.8000, looping: false),
+        "Attack": (duration: 1.0000, looping: false, hit: 0.5000),
+        "Build": (duration: 1.2000, looping: true, hit: 0.3333, reach: 0.700),
+        "CarryIdle": (duration: 2.0000, looping: true),
+        "CarryWalk": (duration: 1.1000, looping: true, speed: 1.349),
+        "Cheer": (duration: 2.0000, looping: false),
+        "Chip": (duration: 1.2000, looping: true, reach: 0.550),
+        "Chop": (duration: 1.6000, looping: true, hit: 0.9667, reach: 1.300),
+        "CombatIdle": (duration: 1.5000, looping: true),
+        "Death": (duration: 1.5000, looping: false),
+        "Dig": (duration: 1.8000, looping: true, hit: 0.2333, reach: 1.100),
+        "Drop": (duration: 0.7000, looping: false),
+        "Farm": (duration: 2.0000, looping: true, reach: 1.120),
+        "Forage": (duration: 2.0000, looping: true, reach: 0.550),
+        "HitReact": (duration: 0.4000, looping: false),
+        "Idle": (duration: 3.0000, looping: true),
+        "IdleFidget": (duration: 3.0000, looping: false),
+        "Mine": (duration: 1.5000, looping: true, hit: 0.8000, reach: 1.100),
+        "Repair": (duration: 1.4000, looping: true, hit: 0.3667, reach: 0.620),
+        "Run": (duration: 0.6333, looping: true, speed: 4.549),
+        "Smash": (duration: 2.0000, looping: true, hit: 1.4000, reach: 1.250),
+        "Spawn": (duration: 1.0000, looping: false),
+        "Walk": (duration: 1.0333, looping: true, speed: 1.429),
+    },
+)

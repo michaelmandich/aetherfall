@@ -56,3 +56,28 @@ fn duplicate_ids_are_reported() {
     let err = GameData::from_packs(vec![("a.ron".into(), a), ("b.ron".into(), b)]).unwrap_err();
     assert!(err.to_string().contains("duplicate unit id `peasant`"), "{err}");
 }
+
+#[test]
+fn work_style_defaults_to_forage_and_parses() {
+    let d = minimal();
+    // The fixture declares no work style.
+    assert_eq!(d.resource(d.resource_id("food").unwrap()).work, WorkStyle::Forage);
+    let text = include_str!("fixtures/minimal.ron")
+        .replace(r#"(id: "wood", name: "Wood", color: (0.55, 0.38, 0.2))"#, r#"(id: "wood", name: "Wood", color: (0.55, 0.38, 0.2), work: Chop)"#);
+    let pack = GameData::parse_pack("chop.ron", &text).unwrap_or_else(|e| panic!("{e}"));
+    let d = GameData::from_packs(vec![("chop.ron".into(), pack)]).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(d.resource(d.resource_id("wood").unwrap()).work, WorkStyle::Chop);
+}
+
+#[test]
+fn farm_is_not_a_resource_work_style() {
+    let text = include_str!("fixtures/minimal.ron")
+        .replace(r#"(id: "food", name: "Food", color: (0.85, 0.3, 0.3))"#, r#"(id: "food", name: "Food", color: (0.85, 0.3, 0.3), work: Farm)"#);
+    assert!(text.contains("work: Farm"), "fixture edited");
+    let pack = GameData::parse_pack("farm.ron", &text).unwrap();
+    let err = GameData::from_packs(vec![("farm.ron".into(), pack)]).unwrap_err().to_string();
+    assert!(err.contains("resource `food`: work `Farm`"), "{err}");
+    let unknown = include_str!("fixtures/minimal.ron")
+        .replace(r#"(id: "food", name: "Food", color: (0.85, 0.3, 0.3))"#, r#"(id: "food", name: "Food", color: (0.85, 0.3, 0.3), work: Juggle)"#);
+    assert!(GameData::parse_pack("juggle.ron", &unknown).is_err(), "unknown styles do not parse");
+}

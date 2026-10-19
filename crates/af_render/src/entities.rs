@@ -7,10 +7,13 @@
 //! rebuilt. Despawning the sim entity takes everything with it.
 //!
 //! Buildings are drawn from their [`BuildingView`] (live state, or how the
-//! local team last saw an enemy building that is out of sight).
+//! local team last saw an enemy building that is out of sight). Units whose
+//! type has a model are drawn with it instead of body boxes (see
+//! [`crate::model`]).
 
 use af_core::ext::render::ground_height;
 use af_core::prelude::*;
+use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -19,6 +22,7 @@ use af_core::ext::fog::SeenBy;
 use crate::assets::{Painter, PartQuery, node};
 use crate::fog::{BuildingView, Viewer, node_in_sight};
 use crate::look::Look;
+use crate::model::{ModelLibrary, ModelRoot, ModelUnit};
 use crate::motion::{WeaponAnim, attack_phase, ground_transform, lerp_pos, lerp_yaw};
 use crate::parts::{Part, SHIELD, SHIELD_ALPHA, UnitTraits, WeaponMount, building_layout, node_layout, node_scale, progress_transform, shadow_y, unit_layout};
 
@@ -31,7 +35,8 @@ const SHIELD_FLASH: f32 = 0.35;
 /// upgrades, finished construction, a shield granted by a tech).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisualSig {
-    Unit { kind: UnitTypeId, shield: bool },
+    /// `model`: drawn with its type's model rather than boxes.
+    Unit { kind: UnitTypeId, shield: bool, model: bool },
     Building { kind: BuildingTypeId, foundation: bool, shield: bool },
     Node(NodeTypeId),
 }
@@ -144,8 +149,28 @@ impl Builder<'_, '_, '_, '_> {
     }
 }
 
-/// Build (or rebuild after an upgrade) unit visuals.
-#[allow(clippy::type_complexity)]
+/// What [`attach_units`] builds a unit's visuals from.
+#[derive(QueryData)]
+pub(crate) struct UnitLook {
+    entity: Entity,
+    unit: &'static Unit,
+    owner: &'static Owner,
+    pose: (&'static PrevPosition, &'static Position, &'static PrevFacing, &'static Facing),
+    altitude: &'static Altitude,
+    mobile: Option<&'static Mobile>,
+    footprint: &'static Footprint,
+    shield: Has<Shield>,
+    gatherer: Has<Gatherer>,
+    visual: Option<&'static BoxVisual>,
+}
+
+/// Build unit visuals, and rebuild them after an upgrade, a granted shield,
+/// or once the unit's model has loaded (every unit is looked at then).
+///
+/// A unit whose type has a loaded model gets the model's scene (a
+/// [`ModelRoot`], scaled to its box height) instead of its body, weapon and
+/// cargo boxes; it keeps its shield shell and flyer shadow.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn attach_units(
     mut commands: Commands,
     mut painter: Painter,
@@ -153,38 +178,56 @@ pub(crate) fn attach_units(
     players: Res<Players>,
     fixed: Res<Time<Fixed>>,
     ground: Ground,
-    units: Query<
-        (Entity, &Unit, &Owner, (&PrevPosition, &Position, &PrevFacing, &Facing), (&Altitude, Option<&Mobile>), Has<Shield>, Has<Gatherer>, Option<&BoxVisual>),
-        (Or<(Without<BoxVisual>, Changed<Unit>, Added<Shield>)>, Without<Dead>),
-    >,
+    models: Option<Res<ModelLibrary>>,
+    fresh: Query<UnitLook, (Or<(Without<BoxVisual>, Changed<Unit>, Added<Shield>)>, Without<Dead>)>,
+    all: Query<UnitLook, Without<Dead>>,
 ) {
     let t = fixed.overstep_fraction();
-    for (e, unit, owner, (pp, p, pf, f), (alt, mobile), shield, gatherer, old) in &units {
-        let sig = VisualSig::Unit { kind: unit.kind, shield };
+    let everyone = models.as_ref().is_some_and(|m| m.is_changed());
+    let models = models.as_deref();
+    let mut build = |u: UnitLookItem| {
+        let (e, kind, shield) = (u.entity, u.unit.kind, u.shield);
+        let model = models.and_then(|m| m.ready(kind));
+        let sig = VisualSig::Unit { kind, shield, model: model.is_some() };
+        let old = u.visual;
         if old.is_some_and(|v| v.sig == sig) {
-            continue;
+            return;
         }
-        let def = data.unit(unit.kind);
-        let layout = unit_layout(&data, def, owner_color(&players, owner.0), UnitTraits { gatherer, shield, altitude: alt.0 });
+        let def = data.unit(kind);
+        let traits = UnitTraits { gatherer: u.gatherer, shield, altitude: u.altitude.0 };
+        let layout = unit_layout(&data, def, owner_color(&players, u.owner.0), traits);
         let mut b = Builder { commands: &mut commands, painter: &mut painter };
         let root = b.root(e, old, Transform::IDENTITY);
-        b.parts(root, &layout.parts);
-        let weapons = b.weapons(root, &layout.weapons);
-        let visual = BoxVisual {
-            root,
-            sig,
-            weapons,
-            shield: b.part(root, layout.shield, true),
-            cargo: b.part(root, layout.cargo, true),
-            shadow: b.part(root, layout.shadow, false),
-            progress: None,
+        let (weapons, cargo) = match model {
+            Some((id, m, loaded)) => {
+                let scale = Vec3::splat(m.scale_for(u.footprint.height));
+                let scene = (WorldAssetRoot(loaded.scene.clone()), Transform::from_scale(scale), Visibility::Hidden);
+                let model_root = b.commands.spawn((scene, ModelRoot { unit: e, model: id }, ChildOf(root))).id();
+                b.commands.entity(e).try_insert(ModelUnit::new(e, id, model_root));
+                (Vec::new(), None)
+            }
+            None => {
+                b.parts(root, &layout.parts);
+                if old.is_some() {
+                    b.commands.entity(e).try_remove::<ModelUnit>();
+                }
+                (b.weapons(root, &layout.weapons), b.part(root, layout.cargo, true))
+            }
         };
+        let visual =
+            BoxVisual { root, sig, weapons, shield: b.part(root, layout.shield, true), cargo, shadow: b.part(root, layout.shadow, false), progress: None };
         let mut ec = commands.entity(e);
         if old.is_none() {
+            let (pp, p, pf, f) = u.pose;
             let at = lerp_pos(pp.0, p.0, t);
-            ec.try_insert((ground_transform(at, ground.unit_base(at, alt.0, mobile), lerp_yaw(pf.0, f.0, t)), Visibility::Inherited));
+            ec.try_insert((ground_transform(at, ground.unit_base(at, u.altitude.0, u.mobile), lerp_yaw(pf.0, f.0, t)), Visibility::Inherited));
         }
         ec.try_insert(visual);
+    };
+    if everyone {
+        all.iter().for_each(&mut build);
+    } else {
+        fresh.iter().for_each(&mut build);
     }
 }
 

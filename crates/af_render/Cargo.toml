@@ -2,8 +2,11 @@
 name = "af_render"
 version.workspace = true
 edition.workspace = true
-description = "Aetherfall box renderer: terrain, units, buildings, nodes, weapons, projectiles/FX, health bars, selection, fog, ghosts."
+description = "Aetherfall renderer: boxes for terrain, units, buildings, nodes, weapons, projectiles/FX, health bars, selection, fog, ghosts; animated glTF models for the units that have one."
 
 [dependencies]
 bevy = { workspace = true }
 af_core = { workspace = true }
+# assets/visuals/units.ron and the model manifests it names.
+serde = { workspace = true }
+ron = { workspace = true }

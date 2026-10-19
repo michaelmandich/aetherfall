@@ -281,6 +281,12 @@ fn arrows_pan_and_wheel_zooms_within_limits() {
     m.app.world_mut().insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -2.0) });
     m.step();
     assert!(m.rig().distance > af_input::MIN_DISTANCE);
+
+    // A distance set from elsewhere (a dev close-up) holds until the wheel turns.
+    m.app.world_mut().insert_resource(AccumulatedMouseScroll::default());
+    m.app.world_mut().resource_mut::<CameraRig>().distance = 8.0;
+    m.step();
+    assert_eq!(m.rig().distance, 8.0);
 }
 
 #[test]
@@ -1083,6 +1089,11 @@ fn a_cursor_stand_in_replaces_the_mouse() {
     // `screen_of` aims half a metre above the ground, so the ray lands a little past it.
     assert!(cursor.ground.is_some_and(|g| g.distance(target) < 4.0), "{:?}", cursor.ground);
     assert_eq!(m.rig().focus, focus, "no edge scrolling from the real mouse");
+    let distance = m.rig().distance;
+    m.app.world_mut().insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -3.0) });
+    m.step();
+    assert_eq!(m.rig().distance, distance, "no zooming by the real wheel");
+    m.app.world_mut().insert_resource(AccumulatedMouseScroll::default());
     // Without a stand-in the real mouse is read again.
     m.app.world_mut().insert_resource(af_core::ext::input::CursorOverride(None));
     m.step();

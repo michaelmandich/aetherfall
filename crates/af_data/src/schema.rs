@@ -241,6 +241,37 @@ pub struct ResourceDef {
     pub tier: u8,
     #[serde(default)]
     pub description: String,
+    /// How a worker gathers it from a resource node (animation and tool).
+    /// Never [`WorkStyle::Farm`]: that is how every resource-field
+    /// building is worked, whatever it yields.
+    #[serde(default)]
+    pub work: WorkStyle,
+}
+
+/// The way a worker gathers: which work animation it plays and which tool
+/// it holds (see `docs/art/peasant.md`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WorkStyle {
+    /// Picking by hand into a basket (berries, fish).
+    #[default]
+    Forage,
+    /// Working a field with a hoe. Reserved for resource-field buildings.
+    Farm,
+    /// Felling with an axe (trees).
+    Chop,
+    /// Swinging a pickaxe (stone and ore).
+    Mine,
+    /// Shovelling (sand).
+    Dig,
+    /// Crouched chisel-and-mallet work (crystal).
+    Chip,
+    /// Heavy sledgehammer blows (meteor metal).
+    Smash,
+}
+
+impl WorkStyle {
+    pub const ALL: [WorkStyle; 7] =
+        [WorkStyle::Forage, WorkStyle::Farm, WorkStyle::Chop, WorkStyle::Mine, WorkStyle::Dig, WorkStyle::Chip, WorkStyle::Smash];
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
