@@ -98,7 +98,7 @@ else (and every effect) stays boxes.
   its standing height, and per clip its duration and optional `speed`,
   `hit` and `reach`. The contract (clip names, props, conventions) is
   `docs/art/peasant.md`; the scripted Blender pipeline is
-  `art/peasant/README.md`.
+  `art/units/README.md`.
 * **Loading** (`af_render::model::library`): at startup, from the asset
   folder the content came from (`main.rs` points Bevy's asset root there,
   so no `BEVY_ASSET_ROOT` is needed). A unit is boxes until its model has
@@ -124,9 +124,11 @@ else (and every effect) stays boxes.
 * **Corpses:** a dying unit's model is detached as a corpse (no entity is
   spawned inside the sim tick), plays Death, lies still, then sinks.
 
-To give another unit a model: build it with the art pipeline (its own
-`art/<unit>/`, following `docs/art/peasant.md`), then add a line to
-`assets/visuals/units.ron`.
+To give another unit a model: configure it in the art pipeline
+(`art/units/<unit>/unit.py`; "Adding a unit" in `art/units/README.md`),
+build it with `art/units/build_unit.py --unit <unit>`, then add a line to
+`assets/visuals/units.ron`. A unit model without bones or clips (a
+vehicle, siege engine or beast built rigid) is drawn as it is.
 
 ### Static building and node models
 
