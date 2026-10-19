@@ -246,6 +246,67 @@ fn a_foundation_rises_out_of_the_ground_as_it_is_built() {
 }
 
 #[test]
+fn models_stand_on_the_sand_their_footprint_overlaps() {
+    let mut t = setup(true);
+    let app = &mut t.app;
+    let data = test_data();
+    let sand = data.terrain_id("sand").unwrap();
+    let top = af_render::terrain::flat_top(data.terrain_def(sand));
+    assert!(top > 0.0, "sand is drawn proud of the ground units walk on");
+    {
+        let mut nav = app.world_mut().resource_mut::<Nav>();
+        for y in 0..64 {
+            for x in 41..64 {
+                nav.set_terrain(IVec2::new(x, y), sand.0);
+            }
+        }
+    }
+    let house = data.building_id("house").unwrap();
+    let pine = data.node_id("pine").unwrap();
+    let own = t.players[0];
+    // A 4 m house centred on grass with its east metre on sand; one whose
+    // footprint only touches the sand's edge; a foundation and a pine on sand.
+    let (straddling, touching, site, tree) = with_commands(app, |c, d, p| {
+        (
+            spawn_building(c, d, p.get(own), house, Vec2::new(40.0, 20.0), 0.0, true),
+            spawn_building(c, d, p.get(own), house, Vec2::new(39.0, 30.0), 0.0, true),
+            spawn_building(c, d, p.get(own), house, Vec2::new(50.0, 20.0), 0.0, false),
+            spawn_node(c, d, pine, Vec2::new(50.0, 40.0), 0.0, None),
+        )
+    });
+    run_ticks(app, 2);
+    let fitted = |m: &StaticVisual| {
+        let model = app.world().resource::<StaticLibrary>().model(m.model).clone();
+        let mesh = model.variant(m.variant).unwrap().clone();
+        let yaw = if model.manifest.random_yaw { hashed_yaw(tf(app, tree).translation.xz()) } else { 0.0 };
+        let target = if model.manifest.id == "pine" { size("pine") } else { size("house") };
+        (fit_transform(model.manifest.fit, mesh.min, mesh.max, target, yaw), mesh.full_height())
+    };
+    for e in [straddling, touching, site, tree] {
+        assert_eq!(tf(app, e).translation.y, 0.0, "the entity stays on the ground units walk on");
+    }
+    let lifted = |m: &StaticVisual| m.rest.translation.y - fitted(m).0.translation.y;
+    let on_edge = drawn(app, straddling);
+    assert!((lifted(&on_edge) - top).abs() < 1e-5, "up on the sand its east side stands in: {}", lifted(&on_edge));
+    assert_eq!(tf(app, on_edge.instance), on_edge.rest);
+    assert!(lifted(&drawn(app, touching)).abs() < 1e-6, "a footprint flush with the sand stays on the grass");
+    let pine_model = drawn(app, tree);
+    assert!((lifted(&pine_model) - top).abs() < 1e-5);
+    // A foundation on sand starts with its top level with the ground, so
+    // none of it (the banner's tip included) shows before building starts.
+    let foundation = drawn(app, site);
+    let (fit, full) = fitted(&foundation);
+    assert!((foundation.height - (top + fit.scale.y * full)).abs() < 1e-5, "{}", foundation.height);
+    let start = tf(app, foundation.instance);
+    assert!((start.translation.y - (foundation.rest.translation.y - foundation.height)).abs() < 1e-5);
+    app.world_mut().entity_mut(site).remove::<UnderConstruction>();
+    run_ticks(app, 1);
+    let built = drawn(app, site);
+    assert_eq!(built.rest, foundation.rest);
+    assert_eq!(tf(app, built.instance), built.rest, "built: on the sand");
+}
+
+#[test]
 fn an_enemy_foundation_in_the_fog_rises_as_far_as_it_was_seen() {
     let mut t = setup(true);
     let app = &mut t.app;

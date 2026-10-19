@@ -13,7 +13,7 @@ use af_core::prelude::*;
 use bevy::prelude::*;
 
 use super::library::{StaticId, StaticLibrary};
-use super::place::{STUMP_HOLD, STUMP_SINK, fall_direction, fall_pose, sink_drop, tipped};
+use super::place::{STUMP_HOLD, STUMP_SINK, base_centre, fall_direction, fall_pose, sink_drop, tipped};
 use super::{StaticVisual, spawn_instance, stump_transform};
 use crate::assets::{BoxPart, Painter};
 use crate::entities::BoxVisual;
@@ -129,7 +129,8 @@ pub(crate) fn fell_tree(
     let feller = nearest(pos.0, gathering.map(|(p, _)| p.0)).or_else(|| nearest(pos.0, workers.iter().map(|(p, _)| p.0).filter(|p| p.distance(pos.0) <= FELLER_REACH)));
     let size = tree.size() * rest.scale;
     let stump = model.stump().map(|s| (sv.model, frame.mul_transform(stump_transform(&sv.rest, tree, s))));
-    let fall = FallingTree { age: 0.0, rest, pivot: body.translation, dir: fall_direction(pos.0, feller), depth: size.x.max(size.z) + 0.3, stump };
+    let pivot = rest.transform_point(base_centre(tree.min, tree.max));
+    let fall = FallingTree { age: 0.0, rest, pivot, dir: fall_direction(pos.0, feller), depth: size.x.max(size.z) + 0.3, stump };
     let at = clock.map_or(0.0, |c| c.elapsed);
     debug!("{}: a tree felled at {} ({at:.1} s), falling toward {}", model.source, pos.0, fall.dir);
     if let Some(oldest) = remnants.fell(sv.instance) {

@@ -120,9 +120,14 @@ generated, `units.ron` is hand-written):
   runs, the same for every player, independent of the simulation).
 - `random_yaw`: the model turns by a position hash (visual only; the box and
   collisions do not turn).
+- Ground: the model stands on the drawn terrain. Sand is drawn 5 cm above
+  the ground units walk on, so a model whose footprint overlaps any sand
+  stands on the sand, and its paving or field is never buried.
 - Construction: the model rises out of the ground with build progress (it is
-  drawn sunk by `(1 - progress) x height`; the opaque terrain hides the
-  buried part), over the foundation outline.
+  drawn sunk by `(1 - progress) x height`, `height` being how high its top
+  stands, banner included; the opaque terrain hides the buried part), over
+  the foundation outline. A flat model with a tall banner (the farm) shows
+  little but the flag until late in the build.
 - Upgrades (house -> manor, wall tiers, tower tiers): the model swaps when
   the building's type changes.
 - Depletion: ore, crystal and bush models shrink toward 70 % as the node
@@ -148,9 +153,15 @@ Engine details (`af_render::registry`, `af_render::statics`):
 - Fitting uses the manifest's `min`/`max`. The engine warns when the
   meshes (the `Team_banner` node left out, as the bounds leave it out)
   stray from them by more than 5 cm plus 5 % of the model's size.
-- Construction buries the whole model at 0 %, the banner included, so the
-  flag rises first; the foundation's pad and scaffold stay. A foundation
-  drawn from fog memory rises as far as it was seen.
+- A model stands on the highest drawn flat terrain that its type's box
+  footprint overlaps (`Ground::model_lift`; a cell counts once the
+  footprint reaches 2 cm into it). The entity itself stays on the ground
+  units walk on (y = 0 on grass and sand), so picking and aiming are
+  unchanged. Fog memory and felled trees stand on the same spot.
+- Construction buries the whole model at 0 %, the banner and the lift onto
+  sand included, so the flag rises first; the foundation's pad and
+  scaffold stay. A foundation drawn from fog memory rises as far as it was
+  seen.
 - Weapon boxes and shield shells stay boxes on a modelled building, and
   placement ghosts stay boxes.
 - Trees (a stump in the manifest, or `pine`, `oak`, `palm`) keep their

@@ -276,7 +276,8 @@ pub(crate) fn update_fog_memories(
         let root = commands.spawn((ground_transform(g.pos, ground.at(g.pos), g.facing), Visibility::Inherited, FogMemory, RenderScene)).id();
         match model.and_then(|(_, m)| m.variant_at(g.pos).map(|(_, mesh)| (m, mesh))) {
             Some((m, mesh)) => {
-                spawn_instance(&mut commands, &mut painter, &mut tints, mesh, rest_transform(m, mesh, size, g.pos), owner, ChildOf(root));
+                let lift = ground.model_lift(&Obb::from_size(g.pos, size, g.facing));
+                spawn_instance(&mut commands, &mut painter, &mut tints, mesh, rest_transform(m, mesh, size, g.pos, lift), owner, ChildOf(root));
             }
             None => {
                 for p in &parts {

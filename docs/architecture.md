@@ -152,13 +152,18 @@ whose source was deleted). Engine: `af_render::statics`.
   variant, and for `random_yaw` a turn, come from a hash of the position
   (`statics::place`): stable between runs, the same for every player,
   independent of the simulation. The `Team` material takes the owner's
-  colour. Outlines, bars, fog, fog memory (live and of dead entities) and
-  rally flags work as for boxes; placement ghosts stay boxes.
+  colour. The model stands on the highest drawn flat terrain that its box
+  footprint overlaps (`entities::Ground::model_lift`: sand is drawn 5 cm
+  above the ground units walk on), while the entity stays on that ground.
+  Outlines, bars, fog, fog memory (live and of dead entities) and rally
+  flags work as for boxes; placement ghosts stay boxes.
 * **Construction:** the foundation's pad and scaffold stay, and the model
-  is drawn sunk by `(1 - progress) x height`, rising as it is built (the
-  opaque terrain hides the buried part); a foundation drawn from fog
-  memory rises as far as it was seen. Completion and upgrades rebuild the
-  visual with the new type's model, or boxes if it has none.
+  is drawn sunk by `(1 - progress) x height`, rising as it is built
+  (`height`: how high its top stands, banner and lift onto sand included,
+  so nothing shows at 0 %; the opaque terrain hides the buried part); a
+  foundation drawn from fog memory rises as far as it was seen. Completion
+  and upgrades rebuild the visual with the new type's model, or boxes if
+  it has none.
 * **Depletion:** non-tree nodes shrink toward 70 % as before. Trees
   (manifests with a stump, or `pine`, `oak`, `palm`) keep their size; when
   one's wood runs out where the local team sees it, an observer detaches
