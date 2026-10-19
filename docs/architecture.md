@@ -21,7 +21,7 @@ that turns sim state into boxes, so "real graphics" later means replacing
 | `af_ai` | computer players (only via `PlayerCommand`s) | af_core |
 | `af_input` | camera, picking, selection, control groups, commands, placement modes, hotkeys | af_core |
 | `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over | af_core |
-| `af_render` | box visuals for terrain, entities, weapons, FX, bars, selection, fog, ghosts; animated glTF models for the units listed in `assets/visuals/units.ron` | af_core, serde, ron |
+| `af_render` | box visuals for terrain, entities, weapons, FX, bars, selection, fog, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
 | `aetherfall` | the binary: wiring, CLI, headless harness, screenshot mode | all |
 
 Crates never depend on each other sideways; they communicate only through
@@ -58,6 +58,14 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   (`af_core::sim_ids`), so client-side spawns (visuals, UI) never shift the
   ids the simulation sees; the same seed replays identically headless or
   windowed (`crates/aetherfall/tests/determinism.rs`).
+  Known gap (found 2026-10-19): some sim system depends on the order in
+  which it visits units, and adding a client-only component to a unit
+  (`Selected`, `BoxVisual`, a model marker) moves it to another archetype
+  and changes that order. In a headless test, marking every other unit
+  with an empty component at tick 90 changes the match within four
+  minutes; marking nodes or buildings does not. So a windowed match can
+  drift from its headless replay (and `--select` changes a match). The
+  determinism tests do not cover it yet.
 * Invariants: `crates/aetherfall/tests/invariants.rs` runs AI matches and
   checks every tick that no boxes overlap (> 0.1 m is a hard failure), that
   nothing is stuck, NaN, leaking or mis-counted. Long sweeps:
@@ -71,11 +79,21 @@ Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 
 ## Visual models
 
-Units listed in the visual registry are drawn with animated glTF models;
-every other unit, and every building, node and effect, stays boxes.
+Units listed in the visual registry are drawn with animated glTF models,
+buildings and resource nodes listed there with static ones; everything
+else (and every effect) stays boxes.
 
-* **Registry:** `assets/visuals/units.ron` maps unit ids to model
-  manifests (`{"peasant": "models/peasant/peasant.model.ron"}`).
+* **Registry** (`af_render::registry`): every `*.ron` in `assets/visuals/`,
+  merged in file-name order, each with optional sections
+  `(units: {...}, buildings: {...}, nodes: {...})` mapping game ids to
+  manifests. `units.ron` is hand-written; `static.ron` is written by the
+  static art build. An id listed twice keeps its first entry and a file
+  that does not parse is skipped, both with a warning. `--visuals DIR`
+  merges `assets/DIR/*.ron` on top (its entries win), to try models
+  without touching the shipped registry.
+
+### Animated unit models
+
 * **Manifest:** written by the art build next to its glTF file: the model,
   its standing height, and per clip its duration and optional `speed`,
   `hit` and `reach`. The contract (clip names, props, conventions) is
@@ -110,11 +128,59 @@ To give another unit a model: build it with the art pipeline (its own
 `art/<unit>/`, following `docs/art/peasant.md`), then add a line to
 `assets/visuals/units.ron`.
 
+### Static building and node models
+
+Contract: `docs/art/static-models.md`; pipeline: `art/static/` (drop a GLB
+into `art/static/source/`, run the build; `-- --prune` takes out models
+whose source was deleted). Engine: `af_render::statics`.
+
+* **Manifest** (`statics::manifest`): kind, id, `fit`, `random_yaw`, the
+  variants (each a GLB with its bounds) and an optional stump; settings
+  left out take the contract's defaults. A bad variant or stump only loses
+  itself.
+* **Loading** (`statics::library`): every variant and stump loads through
+  the asset server; once a model's files have all finished, each scene is
+  flattened into its mesh primitives (node transforms multiplied out,
+  baked emission switched off, the boxes' low reflectance applied so
+  models and boxes sit in the same light, the `Team` material marked),
+  shared by every instance so Bevy batches them. A building or node is boxes until
+  its model is ready, then rebuilt; a model with no loadable variant
+  leaves its type as boxes, with a warning.
+* **Drawing:** the model replaces the body boxes in the visual root
+  (weapon boxes and the shield shell stay), fitted to the type's box by
+  the manifest's bounds (`Box` per axis, `Footprint`, `Height`). The
+  variant, and for `random_yaw` a turn, come from a hash of the position
+  (`statics::place`): stable between runs, the same for every player,
+  independent of the simulation. The `Team` material takes the owner's
+  colour. Outlines, bars, fog, fog memory (live and of dead entities) and
+  rally flags work as for boxes; placement ghosts stay boxes.
+* **Construction:** the foundation's pad and scaffold stay, and the model
+  is drawn sunk by `(1 - progress) x height`, rising as it is built (the
+  opaque terrain hides the buried part); a foundation drawn from fog
+  memory rises as far as it was seen. Completion and upgrades rebuild the
+  visual with the new type's model, or boxes if it has none.
+* **Depletion:** non-tree nodes shrink toward 70 % as before. Trees
+  (manifests with a stump, or `pine`, `oak`, `palm`) keep their size; when
+  one's wood runs out where the local team sees it, an observer detaches
+  its model (no spawn inside the sim tick), which falls away from the
+  worker gathering it (else a hashed direction) over 1.2 s, lies, sinks
+  and goes; its stump stands 90 s, then sinks (`statics::fall`; at most
+  32 falling trees and 200 stumps).
+* **Cost:** nothing runs per frame for a model at rest: foundations move
+  when their progress changes, nodes shrink only when their amount or
+  sighting changes, and only the oldest standing stump is looked at.
+  Measured with the placeholder set (6 AI players at x8, about 2,300
+  buildings and nodes drawn as models, no vsync, RTX 4070 Ti): 3.4 ms a
+  frame against 2.4 ms with `--no-models`, at the start zoom and fully
+  zoomed out alike.
+
 Dev flags for checking models in the real game (`--help`): `--select
 doing:<activity>` / `carrying:<resource>` with `--follow` and
 `--camera SPOT,DIST,TURN` (close-ups down to 5 m), `--shot-at +S` (shots
-timed from the pick), and `--no-models`, `--no-vsync` and `--frame-stats S`
-(performance).
+timed from the pick), `--visuals DIR` (extra registry files, such as the
+art pipeline's placeholders: `--visuals visuals-placeholders`), and
+`--no-models`, `--no-vsync` and `--frame-stats S` (performance; it also
+counts the units and the buildings and nodes drawn as models).
 
 ## Running
 

@@ -9,7 +9,8 @@
 //! Buildings are drawn from their [`BuildingView`] (live state, or how the
 //! local team last saw an enemy building that is out of sight). Units whose
 //! type has a model are drawn with it instead of body boxes (see
-//! [`crate::model`]).
+//! [`crate::model`]); buildings and nodes whose type has a static model
+//! likewise (see [`crate::statics`]).
 
 use af_core::ext::render::ground_height;
 use af_core::prelude::*;
@@ -22,9 +23,12 @@ use af_core::ext::fog::SeenBy;
 use crate::assets::{Painter, PartQuery, node};
 use crate::fog::{BuildingView, Viewer, node_in_sight};
 use crate::look::Look;
+use crate::model::rig::TeamTints;
 use crate::model::{ModelLibrary, ModelRoot, ModelUnit};
 use crate::motion::{WeaponAnim, attack_phase, ground_transform, lerp_pos, lerp_yaw};
 use crate::parts::{Part, SHIELD, SHIELD_ALPHA, UnitTraits, WeaponMount, building_layout, node_layout, node_scale, progress_transform, shadow_y, unit_layout};
+use crate::statics::place::{construction_sink, sunk};
+use crate::statics::{StaticLibrary, StaticVisual, rest_transform, spawn_instance};
 
 /// Neutral grey for an owner missing from `Players`.
 const NO_OWNER: Rgb = [0.6, 0.6, 0.6];
@@ -32,13 +36,16 @@ const NO_OWNER: Rgb = [0.6, 0.6, 0.6];
 const SHIELD_FLASH: f32 = 0.35;
 
 /// What a visual was built for; a mismatch rebuilds it (unit and building
-/// upgrades, finished construction, a shield granted by a tech).
+/// upgrades, finished construction, a shield granted by a tech, a model
+/// that finished loading).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisualSig {
     /// `model`: drawn with its type's model rather than boxes.
     Unit { kind: UnitTypeId, shield: bool, model: bool },
-    Building { kind: BuildingTypeId, foundation: bool, shield: bool },
-    Node(NodeTypeId),
+    /// `model`: drawn with its type's static model rather than body boxes.
+    Building { kind: BuildingTypeId, foundation: bool, shield: bool, model: bool },
+    /// `model`: drawn with its type's static model rather than boxes.
+    Node { kind: NodeTypeId, model: bool },
 }
 
 /// An animated weapon pivot.
@@ -62,7 +69,8 @@ pub struct BoxVisual {
     pub shield: Option<Entity>,
     pub cargo: Option<Entity>,
     pub shadow: Option<Entity>,
-    /// Foundation's built-so-far box and its full-height layout.
+    /// Foundation's built-so-far box and its full-height layout (boxes
+    /// only: a static model rises instead, see [`StaticVisual`]).
     pub progress: Option<(Entity, Part)>,
 }
 
@@ -232,30 +240,61 @@ pub(crate) fn attach_units(
 }
 
 /// Build building visuals, and rebuild them when the building the local
-/// team sees is upgraded or completed.
-#[allow(clippy::type_complexity)]
+/// team sees is upgraded or completed, or its type's model is ready.
+///
+/// A building whose type has a ready static model gets an instance of it
+/// instead of its body boxes (a foundation keeps its pad and scaffold, and
+/// its model is sunk by how much is left to build); weapons and the shield
+/// shell stay boxes.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn attach_buildings(
     mut commands: Commands,
     mut painter: Painter,
+    mut tints: ResMut<TeamTints>,
     data: Res<Data>,
     players: Res<Players>,
     ground: Ground,
+    statics: Option<Res<StaticLibrary>>,
     buildings: Query<(Entity, &BuildingView, &Owner, &Position, &Facing, Has<Shield>, Option<&BoxVisual>), Without<Dead>>,
 ) {
+    let statics = statics.as_deref();
     for (e, view, owner, pos, facing, shield, old) in &buildings {
-        let sig = VisualSig::Building { kind: view.kind, foundation: view.construction.is_some(), shield };
+        let model = statics.and_then(|s| s.building(view.kind)).and_then(|(id, m)| m.variant_at(pos.0).map(|(variant, mesh)| (id, m, variant, mesh)));
+        let sig = VisualSig::Building { kind: view.kind, foundation: view.construction.is_some(), shield, model: model.is_some() };
         if old.is_some_and(|v| v.sig == sig) {
             continue;
         }
         let def = data.building(view.kind);
+        let color = owner_color(&players, owner.0);
         let progress = view.construction;
-        let layout = building_layout(&data, def, owner_color(&players, owner.0), progress, shield);
+        let layout = building_layout(&data, def, color, progress, shield);
         let mut b = Builder { commands: &mut commands, painter: &mut painter };
         let root = b.root(e, old, Transform::IDENTITY);
-        b.parts(root, &layout.parts);
         let weapons = b.weapons(root, &layout.weapons);
-        let progress = layout.progress.zip(progress).map(|(full, p)| b.progress(root, full, p));
-        let visual = BoxVisual { root, sig, weapons, shield: b.part(root, layout.shield, true), cargo: None, shadow: None, progress };
+        let mut progress_box = None;
+        match model {
+            Some((id, m, variant, mesh)) => {
+                // A foundation's pad and scaffold (all its layout but the
+                // built-so-far box) stay; the model takes that box's place.
+                if progress.is_some() {
+                    b.parts(root, &layout.parts);
+                }
+                // Buried whole at first, the banner too.
+                let rest = rest_transform(m, mesh, def.size, pos.0);
+                let height = rest.scale.y * mesh.full_height();
+                let at = sunk(rest, construction_sink(progress.unwrap_or(1.0), height));
+                let instance = spawn_instance(b.commands, b.painter, &mut tints, mesh, at, Some(color), ChildOf(root));
+                b.commands.entity(e).try_insert(StaticVisual { model: id, variant, instance, rest, height, shrinks: false });
+            }
+            None => {
+                b.parts(root, &layout.parts);
+                progress_box = layout.progress.zip(progress).map(|(full, p)| b.progress(root, full, p));
+                if old.is_some() {
+                    b.commands.entity(e).try_remove::<StaticVisual>();
+                }
+            }
+        }
+        let visual = BoxVisual { root, sig, weapons, shield: b.part(root, layout.shield, true), cargo: None, shadow: None, progress: progress_box };
         let mut ec = commands.entity(e);
         if old.is_none() {
             ec.try_insert((ground_transform(pos.0, ground.at(pos.0), facing.0), Visibility::Inherited));
@@ -264,22 +303,70 @@ pub(crate) fn attach_buildings(
     }
 }
 
-/// Build resource node visuals (nodes never change kind).
-#[allow(clippy::type_complexity)]
+/// What [`attach_nodes`] builds a node's visuals from.
+#[derive(QueryData)]
+pub(crate) struct NodeLook {
+    entity: Entity,
+    node: &'static ResourceNode,
+    pos: &'static Position,
+    facing: &'static Facing,
+    visual: Option<&'static BoxVisual>,
+}
+
+/// Build resource node visuals (nodes never change kind), and rebuild them
+/// once their type's static model is ready (every node is looked at then).
+/// A tree drawn with a model keeps its full size as it is gathered (it
+/// falls when felled); every other node shrinks ([`shrink_nodes`]).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn attach_nodes(
     mut commands: Commands,
     mut painter: Painter,
+    mut tints: ResMut<TeamTints>,
     data: Res<Data>,
     ground: Ground,
-    nodes: Query<(Entity, &ResourceNode, &Position, &Facing), (Without<BoxVisual>, Without<Dead>)>,
+    statics: Option<Res<StaticLibrary>>,
+    fresh: Query<NodeLook, (Without<BoxVisual>, Without<Dead>)>,
+    all: Query<NodeLook, Without<Dead>>,
 ) {
-    for (e, n, pos, facing) in &nodes {
-        let def = data.node(n.kind);
+    let everyone = statics.as_ref().is_some_and(|s| s.is_changed());
+    let statics = statics.as_deref();
+    let mut build = |n: NodeLookItem| {
+        let (e, kind, old) = (n.entity, n.node.kind, n.visual);
+        let model = statics.and_then(|s| s.node(kind)).and_then(|(id, m)| m.variant_at(n.pos.0).map(|(variant, mesh)| (id, m, variant, mesh)));
+        let sig = VisualSig::Node { kind, model: model.is_some() };
+        if old.is_some_and(|v| v.sig == sig) {
+            return;
+        }
+        let def = data.node(kind);
+        let shrinks = model.is_none_or(|(_, m, ..)| m.manifest.shrinks());
+        let scale = if shrinks { node_scale(n.node.remaining, def.amount) } else { 1.0 };
         let mut b = Builder { commands: &mut commands, painter: &mut painter };
-        let root = b.root(e, None, Transform::from_scale(Vec3::splat(node_scale(n.remaining, def.amount))));
-        b.parts(root, &node_layout(&data, def));
-        let visual = BoxVisual { root, sig: VisualSig::Node(n.kind), weapons: Vec::new(), shield: None, cargo: None, shadow: None, progress: None };
-        commands.entity(e).try_insert((ground_transform(pos.0, ground.at(pos.0), facing.0), Visibility::Inherited, visual));
+        let root = b.root(e, old, Transform::from_scale(Vec3::splat(scale)));
+        match model {
+            Some((id, m, variant, mesh)) => {
+                let rest = rest_transform(m, mesh, def.size, n.pos.0);
+                let instance = spawn_instance(b.commands, b.painter, &mut tints, mesh, rest, None, ChildOf(root));
+                let height = rest.scale.y * mesh.size().y;
+                b.commands.entity(e).try_insert(StaticVisual { model: id, variant, instance, rest, height, shrinks });
+            }
+            None => {
+                b.parts(root, &node_layout(&data, def));
+                if old.is_some() {
+                    b.commands.entity(e).try_remove::<StaticVisual>();
+                }
+            }
+        }
+        let visual = BoxVisual { root, sig, weapons: Vec::new(), shield: None, cargo: None, shadow: None, progress: None };
+        let mut ec = commands.entity(e);
+        if old.is_none() {
+            ec.try_insert((ground_transform(n.pos.0, ground.at(n.pos.0), n.facing.0), Visibility::Inherited));
+        }
+        ec.try_insert(visual);
+    };
+    if everyone {
+        all.iter().for_each(&mut build);
+    } else {
+        fresh.iter().for_each(&mut build);
     }
 }
 
@@ -309,17 +396,17 @@ pub(crate) fn sync_static(
 }
 
 /// Weapon swings/recoil/turret aim, shields, cargo, flyer shadows and
-/// foundation progress. A building drawn from memory keeps its weapons as
-/// last seen and shows no shield.
+/// foundation progress (a box growing, or a model rising). A building drawn
+/// from memory keeps its weapons as last seen and shows no shield.
 #[allow(clippy::type_complexity)]
 pub(crate) fn animate_parts(
     mut painter: Painter,
     data: Res<Data>,
     ground: Ground,
-    actors: Query<(&BoxVisual, &Position, &Transform, Option<&Weapons>, Option<&Shield>, Option<&Gatherer>, Option<&BuildingView>), With<Owner>>,
+    actors: Query<(&BoxVisual, &Position, &Transform, Option<&Weapons>, Option<&Shield>, Option<&Gatherer>, Option<&BuildingView>, Option<&StaticVisual>), With<Owner>>,
     mut parts: PartQuery,
 ) {
-    for (visual, pos, body, weapons, shield, gatherer, view) in &actors {
+    for (visual, pos, body, weapons, shield, gatherer, view, model) in &actors {
         let live = view.is_none_or(|v| v.live);
         if let Some(weapons) = weapons.filter(|_| live) {
             for w in &visual.weapons {
@@ -353,6 +440,11 @@ pub(crate) fn animate_parts(
         {
             tf.set_if_neq(progress_transform(&full, progress));
         }
+        if let (Some(m), Some(progress)) = (model, view.and_then(|v| v.construction))
+            && let Ok((mut tf, _, _)) = parts.get_mut(m.instance)
+        {
+            tf.set_if_neq(sunk(m.rest, construction_sink(progress, m.height)));
+        }
     }
 }
 
@@ -375,13 +467,25 @@ fn show(painter: &mut Painter, parts: &mut PartQuery, entity: Entity, look: Opti
     }
 }
 
+/// What [`shrink_nodes`] reads of a node.
+type Shrinking<'a> = (&'a ResourceNode, Option<&'a SeenBy>, &'a BoxVisual, Option<&'a StaticVisual>);
+
 /// Nodes shrink a little as they are gathered; the local team sees the size
-/// a node had when it was last in sight.
-pub(crate) fn shrink_nodes(data: Res<Data>, viewer: Viewer, nodes: Query<(&ResourceNode, Option<&SeenBy>, &BoxVisual)>, mut roots: PartQuery) {
+/// a node had when it was last in sight. Trees drawn with a model keep
+/// their size (they fall when felled). Only nodes whose amount, sighting or
+/// visuals changed are looked at (every node when the local player does).
+#[allow(clippy::type_complexity)]
+pub(crate) fn shrink_nodes(
+    data: Res<Data>,
+    viewer: Viewer,
+    changed: Query<Shrinking, Or<(Changed<ResourceNode>, Changed<SeenBy>, Changed<BoxVisual>)>>,
+    all: Query<Shrinking>,
+    mut roots: PartQuery,
+) {
     let team = viewer.team();
-    for (n, seen, visual) in &nodes {
-        if !node_in_sight(team, seen) {
-            continue;
+    let mut shrink = |(n, seen, visual, model): Shrinking| {
+        if !node_in_sight(team, seen) || model.is_some_and(|m| !m.shrinks) {
+            return;
         }
         if let Ok((mut tf, _, _)) = roots.get_mut(visual.root) {
             let s = Vec3::splat(node_scale(n.remaining, data.node(n.kind).amount));
@@ -389,5 +493,10 @@ pub(crate) fn shrink_nodes(data: Res<Data>, viewer: Viewer, nodes: Query<(&Resou
                 tf.scale = s;
             }
         }
+    };
+    if viewer.local_changed() {
+        all.iter().for_each(&mut shrink);
+    } else {
+        changed.iter().for_each(&mut shrink);
     }
 }

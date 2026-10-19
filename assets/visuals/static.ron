@@ -1,0 +1,18 @@
+// Written by art/static/build_static.py from the manifests under
+// models/static/; do not edit by hand.
+// Paths are relative to the asset folder.
+(
+    units: {},
+    buildings: {
+        "farm": "models/static/buildings/farm/farm.model.ron",
+        "house": "models/static/buildings/house/house.model.ron",
+        "lumber_camp": "models/static/buildings/lumber_camp/lumber_camp.model.ron",
+        "mining_camp": "models/static/buildings/mining_camp/mining_camp.model.ron",
+        "town_center": "models/static/buildings/town_center/town_center.model.ron",
+    },
+    nodes: {
+        "oak": "models/static/nodes/oak/oak.model.ron",
+        "palm": "models/static/nodes/palm/palm.model.ron",
+        "pine": "models/static/nodes/pine/pine.model.ron",
+    },
+)

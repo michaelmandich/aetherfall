@@ -1,0 +1,72 @@
+# Per-asset settings for the static model build (art/static/build_static.py).
+#
+# Most models need none. Add a table named after the game id only to change
+# a default; unknown keys and wrong types stop the build, so a typo cannot
+# silently do nothing. Contract with the engine: docs/art/static-models.md.
+#
+# [<id>]                  the building or node id (house, town_center, pine...)
+# fit = "Height"          how the engine sizes the model to the game's box:
+#                           "Box"       per axis, exactly the box (buildings)
+#                           "Footprint" one scale, the wider side matches (rocks)
+#                           "Height"    one scale, the height matches (trees)
+# triangles = 3000        budget for the whole model, team banner included;
+#                         anything over it is decimated down to it
+# stump_triangles = 300   nodes: budget for the stump (<id>_stump.glb)
+# random_yaw = true       nodes: each one turned at random (visual only)
+# yaw = 180               degrees to turn the source about the vertical axis,
+#                         before anything else, when it does not face +Z;
+#                         + turns the front from +Z toward +X:
+#                           source faces -Z -> yaw = 180
+#                           source faces +X -> yaw = -90
+#                           source faces -X -> yaw = 90
+# banner = false          buildings: no team banner; or [x, y, z]: where the
+#                         pole stands, in metres in the model's own frame
+#                         after yaw and centring (y up, front +Z, base y = 0),
+#                         before the engine fits it. The build prints where
+#                         the automatic banner went, as a starting point.
+# texture = 1024          largest texture side, px
+# cut_plate = { c = 0.08 }  variants standing on a ground plate or mound
+#                         (Meshy sometimes adds one despite the prompt): the
+#                         faces lying wholly in that bottom fraction of the
+#                         height (up to 0.25) are cut away; "*" = every
+#                         variant. The build stops if a listed variant has
+#                         nothing there to cut.
+# tint = { a = [0.7, 0.75, 0.55] }  multiply variant a's base colour
+#                         textures (sRGB values, each 0 to 2) to bring it in
+#                         line with the other variants; "*" = every variant
+#
+# Defaults (lib/settings.py):
+#   trees (the nodes that give wood: pine, oak, palm)
+#       fit = "Height", random_yaw = true, triangles = 3000, texture = 512
+#   other nodes
+#       fit = "Footprint", random_yaw = true, triangles = 2000, texture = 512
+#   buildings
+#       fit = "Box", random_yaw = false, triangles = 6000 (town_center and
+#       citadel 10000), texture = 1024, banner at the top front-left corner
+#   stumps
+#       stump_triangles = 300
+#
+# Example:
+#
+# [town_center]
+# triangles = 10000
+# banner = [3.2, 6.5, 3.2]
+# yaw = 180
+
+# --- Meshy batch 1 (2026-10-19), tuned after the first in-game review ---
+
+[farm]
+banner = [-0.85, 0.0, 0.85]   # on the field's front-left corner, not mid-field
+fit = "Footprint"      # Box squashed the field to 31 % of its height (fence gone);
+                       # one scale keeps the fence and rows (about 0.65 m tall)
+triangles = 12000      # above collapse's 10,414 stall: no split, no edge cracks
+
+[town_center]
+triangles = 20000      # 10,000 shredded the antler trophy; only a few per map
+texture = 2048         # the hall is the most looked-at building: sharper thatch
+banner = [0.55, 0.6, 0.52]  # front-right hip: the flag hangs out past the eave,
+                            # away from the antlers over the door
+
+[oak]
+tint = { a = [0.68, 0.76, 0.56] }  # oak_a's canopy came out pale lime; this brings
+                                   # it to oak_b's green (value ~0.5, not ~0.68)

@@ -1,8 +1,10 @@
-//! The models units are drawn with: read from [`REGISTRY`] and the
-//! manifests it names at startup, loaded through the asset server, and
-//! turned into what every instance shares once loaded (scene, animation
-//! graph, clip table, the team material).
+//! The models units are drawn with: read from the visual registry's
+//! `units` ([`crate::registry`]) and the manifests it names at startup,
+//! loaded through the asset server, and turned into what every instance
+//! shares once loaded (scene, animation graph, clip table, the team
+//! material).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use af_core::prelude::*;
@@ -11,7 +13,8 @@ use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
 use super::clips::{Clip, ClipTable};
-use super::manifest::{ModelManifest, REGISTRY, parse_registry};
+use super::manifest::ModelManifest;
+use crate::registry::Entry;
 
 /// Index of a model in the [`ModelLibrary`].
 pub type ModelId = usize;
@@ -136,28 +139,20 @@ pub struct ModelSources {
     pub warnings: Vec<String>,
 }
 
-/// Read the registry text (`None`: there is no registry) and each manifest
-/// it names through `read` (asset path -> text).
-pub fn read_sources(data: &GameData, registry: Option<&str>, read: impl Fn(&str) -> Result<String, String>) -> ModelSources {
+/// Read the manifest of each unit `units` lists (unit id -> registry
+/// entry) through `read` (asset path -> text).
+pub fn read_sources(data: &GameData, units: &BTreeMap<String, Entry>, read: impl Fn(&str) -> Result<String, String>) -> ModelSources {
     let mut out = ModelSources::default();
-    let Some(text) = registry else { return out };
-    let registry = match parse_registry(text) {
-        Ok(r) => r,
-        Err(e) => {
-            out.warnings.push(format!("{REGISTRY}: {e}; every unit is drawn as boxes"));
-            return out;
-        }
-    };
-    for (unit, path) in registry {
-        let Some(kind) = data.unit_id(&unit) else {
-            out.warnings.push(format!("{REGISTRY}: no unit `{unit}`"));
+    for (unit, entry) in units {
+        let Some(kind) = data.unit_id(unit) else {
+            out.warnings.push(format!("{}: no unit `{unit}`", entry.file));
             continue;
         };
-        let manifest = read(&path).and_then(|text| ModelManifest::parse(&text));
-        match manifest {
+        let path = &entry.manifest;
+        match read(path).and_then(|text| ModelManifest::parse(&text)) {
             Ok(m) => {
                 out.warnings.extend(m.warnings().into_iter().map(|w| format!("{path}: {w}")));
-                out.entries.push((kind, path, m));
+                out.entries.push((kind, path.clone(), m));
             }
             Err(e) => out.warnings.push(format!("{path} ({unit}): {e}; drawn as boxes")),
         }
@@ -165,24 +160,19 @@ pub fn read_sources(data: &GameData, registry: Option<&str>, read: impl Fn(&str)
     out
 }
 
-/// Startup: read the registry and manifests and start loading the models.
-pub(crate) fn load_models(mut commands: Commands, data: Res<Data>, server: Res<AssetServer>, root: Option<Res<VisualsRoot>>) {
-    let mut library = ModelLibrary::default();
-    let Some(dir) = root.map(|r| r.0.clone()).or_else(default_assets_dir) else {
-        warn!("no assets folder found: every unit is drawn as boxes");
-        commands.insert_resource(library);
-        return;
-    };
-    let registry = std::fs::read_to_string(dir.join(REGISTRY)).ok();
-    let sources = read_sources(&data, registry.as_deref(), |path| std::fs::read_to_string(dir.join(path)).map_err(|e| e.to_string()));
+/// The library of every unit model `units` lists, their glTF files
+/// loading from the asset folder `dir` (warnings are logged).
+pub(crate) fn load_unit_models(data: &GameData, units: &BTreeMap<String, Entry>, dir: &Path, server: &AssetServer) -> ModelLibrary {
+    let sources = read_sources(data, units, |path| std::fs::read_to_string(dir.join(path)).map_err(|e| e.to_string()));
     for w in &sources.warnings {
         warn!("{w}");
     }
+    let mut library = ModelLibrary::default();
     for (kind, source, manifest) in sources.entries {
         let handle = server.load::<Gltf>(manifest.model.clone());
         library.insert(kind, &source, manifest, ModelState::Loading(handle));
     }
-    commands.insert_resource(library);
+    library
 }
 
 /// Finish models whose glTF file (and everything in it) has loaded: the
@@ -257,7 +247,7 @@ fn finish(
 /// material with an emissive texture has its emission switched off.
 /// Emission without a texture (a glowing prop) is kept. Returns the
 /// [`TEAM_MATERIAL`].
-fn fix_materials(scene: &WorldAsset, materials: &mut Assets<StandardMaterial>) -> Option<Handle<StandardMaterial>> {
+pub(crate) fn fix_materials(scene: &WorldAsset, materials: &mut Assets<StandardMaterial>) -> Option<Handle<StandardMaterial>> {
     let mut query = scene.world.try_query::<(&MeshMaterial3d<StandardMaterial>, Option<&GltfMaterialName>)>()?;
     let mut seen = HashSet::new();
     let mut team = None;
@@ -294,25 +284,29 @@ mod tests {
             "models/bad.model.ron" => Ok("(height: 2.0)".to_string()),
             _ => Err("not found".to_string()),
         };
-        let registry = r#"{
-            "peasant": "models/peasant/peasant.model.ron",
-            "spearman": "models/missing.model.ron",
-            "militia": "models/bad.model.ron",
-            "dragon": "models/peasant/peasant.model.ron",
-        }"#;
-        let s = read_sources(&data, Some(registry), read);
+        let entry = |manifest: &str| Entry { manifest: manifest.to_string(), file: "visuals/units.ron".to_string() };
+        let units: BTreeMap<String, Entry> = [
+            ("peasant", "models/peasant/peasant.model.ron"),
+            ("spearman", "models/missing.model.ron"),
+            ("militia", "models/bad.model.ron"),
+            ("dragon", "models/peasant/peasant.model.ron"),
+        ]
+        .into_iter()
+        .map(|(id, m)| (id.to_string(), entry(m)))
+        .collect();
+        let s = read_sources(&data, &units, read);
         assert_eq!(s.entries.len(), 1);
         let (kind, path, manifest) = &s.entries[0];
         assert_eq!(*kind, data.unit_id("peasant").unwrap());
         assert_eq!(path, "models/peasant/peasant.model.ron");
         assert_eq!(manifest.height, 1.65);
-        let w = s.warnings.join("\n");
-        for needle in ["models/missing.model.ron (spearman): not found", "models/bad.model.ron (militia)", "no unit `dragon`"] {
-            assert!(w.contains(needle), "{needle} in:\n{w}");
+        let w = s.warnings.join("
+");
+        for needle in ["models/missing.model.ron (spearman): not found", "models/bad.model.ron (militia)", "visuals/units.ron: no unit `dragon`"] {
+            assert!(w.contains(needle), "{needle} in:
+{w}");
         }
-        assert!(read_sources(&data, None, read).entries.is_empty(), "no registry, no models");
-        let broken = read_sources(&data, Some("{"), read);
-        assert!(broken.entries.is_empty() && broken.warnings[0].contains(REGISTRY));
+        assert!(read_sources(&data, &BTreeMap::new(), read).entries.is_empty(), "no registry, no models");
     }
 
     /// A glTF file as the loader leaves it: one scene, named animations.

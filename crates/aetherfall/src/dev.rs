@@ -3,15 +3,16 @@
 //! made after a delay that the camera can follow and shots can be timed
 //! from, a building held in placement mode, a held hover and a one-off
 //! press of a UI button, a stand-in mouse, a staged battle, an AI-played
-//! local slot, a pause, frame-time statistics, boxes instead of models,
-//! uncapped frames, and a [`script`] of keys, clicks and presses).
+//! local slot, a pause, frame-time statistics, boxes instead of models, an
+//! extra folder of visual registry files, uncapped frames, and a [`script`]
+//! of keys, clicks and presses).
 //! Each piece is registered only when its flag is given, so a normal run
 //! adds nothing. Binary-only: the library (`aetherfall::*`) knows nothing
 //! of it.
 
 mod script;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use af_core::ext::input::CursorOverride;
 use af_core::ext::map::MapSetupSet;
@@ -59,6 +60,7 @@ pub struct DevArgs {
     script: Option<String>,
     frame_stats: Option<f32>,
     no_models: bool,
+    visuals: Option<PathBuf>,
     no_vsync: bool,
 }
 
@@ -92,6 +94,7 @@ impl DevArgs {
             "--pause-at" => self.pause_at = Some(number(arg, &value()?)?),
             "--frame-stats" => self.frame_stats = Some(number(arg, &value()?)?),
             "--no-models" => self.no_models = true,
+            "--visuals" => self.visuals = Some(PathBuf::from(value()?)),
             "--no-vsync" => self.no_vsync = true,
             "--script" => self.script = Some(value()?),
             _ => return Ok(false),
@@ -116,6 +119,7 @@ impl DevArgs {
             || self.pause_at.is_some()
             || self.frame_stats.is_some()
             || self.no_models
+            || self.visuals.is_some()
             || self.no_vsync
             || self.script.is_some()
     }
@@ -169,6 +173,14 @@ impl DevArgs {
             slot.controller = Controller::Ai;
         }
         let virtual_cursor = (shots.is_some() || place.is_some() || self.cursor.is_some() || script.is_some()).then_some(self.cursor);
+        if let Some(dir) = &self.visuals {
+            if self.no_models {
+                return Err("--visuals adds models and --no-models drops them all (use one)".into());
+            }
+            if dir.is_absolute() || dir.as_os_str().is_empty() {
+                return Err(format!("--visuals wants a folder inside assets/ (like visuals-placeholders), got `{}`", dir.display()));
+            }
+        }
         Ok(DevPlan {
             shots,
             camera: self.camera,
@@ -185,6 +197,7 @@ impl DevArgs {
                 every => every,
             },
             no_models: self.no_models,
+            visuals: self.visuals,
             no_vsync: self.no_vsync,
             script: script.map(script::Script::new),
         })
@@ -232,8 +245,11 @@ pub struct DevPlan {
     pause_at: Option<f32>,
     /// Real seconds between frame-time reports.
     frame_stats: Option<f32>,
-    /// Draw every unit as boxes (no models).
+    /// Draw everything as boxes (no models).
     no_models: bool,
+    /// A folder of visual registry files (relative to the asset folder)
+    /// laid on top of `assets/visuals/`.
+    visuals: Option<PathBuf>,
     /// Present frames as fast as they are made.
     no_vsync: bool,
     script: Option<script::Script>,
@@ -244,6 +260,11 @@ impl DevPlan {
     /// `--no-vsync` (to measure frame times above the refresh rate).
     pub fn present_mode(&self) -> PresentMode {
         if self.no_vsync { PresentMode::AutoNoVsync } else { PresentMode::AutoVsync }
+    }
+
+    /// The `--visuals` folder, relative to the asset folder.
+    pub fn visuals(&self) -> Option<&Path> {
+        self.visuals.as_deref()
     }
 }
 
@@ -297,8 +318,12 @@ pub fn install(app: &mut App, plan: DevPlan) {
         app.insert_resource(FrameStats { every, ..default() }).add_systems(Last, report_frame_stats);
     }
     if plan.no_models {
-        // An empty library: af_render loads none and draws boxes.
+        // Empty libraries: af_render loads none and draws boxes.
         app.insert_resource(af_render::model::ModelLibrary::default());
+        app.insert_resource(af_render::statics::StaticLibrary::default());
+    }
+    if let Some(dir) = plan.visuals {
+        app.insert_resource(af_render::registry::ExtraVisuals(dir));
     }
 }
 
@@ -435,6 +460,7 @@ fn report_frame_stats(
     mut stats: ResMut<FrameStats>,
     units: Query<(), (With<Unit>, Without<Dead>)>,
     models: Query<(), With<af_render::model::ModelUnit>>,
+    statics: Query<(), With<af_render::statics::StaticVisual>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -447,7 +473,12 @@ fn report_frame_stats(
     }
     let summary = FrameStats::summary(&mut stats.frames);
     let sim = clock.map_or(0.0, |c| c.elapsed);
-    info!("frame stats at {sim:.0} s sim: {summary}; {} units, {} drawn as models", units.iter().count(), models.iter().count());
+    info!(
+        "frame stats at {sim:.0} s sim: {summary}; {} units, {} drawn as models; {} buildings and nodes drawn as models",
+        units.iter().count(),
+        models.iter().count(),
+        statics.iter().count()
+    );
     stats.frames.clear();
     stats.since = 0.0;
 }
@@ -1028,6 +1059,20 @@ mod tests {
         assert_eq!((plan.frame_stats, plan.no_models), (Some(5.0), true));
         assert_eq!(plan.present_mode(), PresentMode::AutoVsync);
         assert_eq!(args(&["--no-vsync"]).unwrap().plan(&data, &mut setup(2, None)).unwrap().present_mode(), PresentMode::AutoNoVsync);
+    }
+
+    #[test]
+    fn an_extra_visuals_folder_is_taken_relative_to_the_assets() {
+        let data = test_data();
+        let plan = args(&["--visuals", "visuals-placeholders"]).unwrap().plan(&data, &mut setup(2, None)).unwrap();
+        assert_eq!(plan.visuals(), Some(Path::new("visuals-placeholders")));
+        assert!(args(&["--visuals", "visuals-placeholders"]).unwrap().any(), "a dev flag: it needs a window");
+        assert!(args(&["--visuals"]).is_err());
+        let both = args(&["--visuals", "v", "--no-models"]).unwrap().plan(&data, &mut setup(2, None));
+        assert!(both.err().unwrap().contains("--no-models"));
+        let absolute = if cfg!(windows) { "C:/assets/v" } else { "/assets/v" };
+        assert!(args(&["--visuals", absolute]).unwrap().plan(&data, &mut setup(2, None)).is_err());
+        assert_eq!(args(&[]).unwrap().plan(&data, &mut setup(2, None)).unwrap().visuals(), None);
     }
 
     #[test]

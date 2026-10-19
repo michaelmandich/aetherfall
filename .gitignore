@@ -10,3 +10,12 @@
 .env
 .env.*
 *.key
+
+# Placeholder static models, built from art/static/placeholders/source/
+# (art/static/placeholders.py --build); the real ones are committed.
+/assets/models/_placeholders/
+/assets/visuals-placeholders/
+
+# Python bytecode (Blender scripts and tools).
+__pycache__/
+*.pyc

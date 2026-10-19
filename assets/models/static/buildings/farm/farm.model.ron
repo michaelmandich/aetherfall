@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "farm",
+    fit: Footprint,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/farm/a.glb", min: (-0.947, 0.000, -0.944), max: (0.947, 0.215, 0.944), triangles: 11963),
+    ],
+    stump: None,
+    banner: true,
+)

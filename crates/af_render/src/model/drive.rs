@@ -17,6 +17,7 @@ use super::library::{LoadedModel, ModelLibrary};
 use super::props::{heading_tool, shown_props};
 use super::rig::{Corpse, ModelRoot, ModelUnit, Rig, TRACKED_SLOTS};
 use crate::parts::{node_base_half, node_scale};
+use crate::statics::StaticVisual;
 
 #[derive(QueryData)]
 #[query_data(mutable)]
@@ -48,7 +49,7 @@ type Roots<'w, 's> = Query<'w, 's, &'static mut Transform, (With<ModelRoot>, Wit
 
 /// What a worker can be working on: a resource node, or a building (a
 /// foundation, a damaged wall, a field).
-type WorkTarget<'a> = (&'a Position, &'a Facing, &'a Footprint, Option<&'a ResourceNode>);
+type WorkTarget<'a> = (&'a Position, &'a Facing, &'a Footprint, Option<&'a ResourceNode>, Option<&'a StaticVisual>);
 type WorkTargets<'w, 's> = Query<'w, 's, WorkTarget<'static>, Without<Dead>>;
 
 #[allow(clippy::too_many_arguments)]
@@ -146,12 +147,14 @@ pub(crate) fn drive_models(
 /// stands to it: facing it, and stepped up by what the work clip reaches
 /// (`scale`: the model's display scale).
 fn work_lean(data: &GameData, model: &LoadedModel, activity: Activity, at: (Vec2, f32), scale: f32, target: WorkTarget) -> Lean {
-    let (pos, facing, footprint, node) = target;
+    let (pos, facing, footprint, node, drawn) = target;
     let footprint = footprint.obb(pos.0, facing.0);
     let surface = match node {
         Some(n) => {
             let def = data.node(n.kind);
-            af_geom::Obb::new(pos.0, node_base_half(data, def) * node_scale(n.remaining, def.amount), facing.0)
+            // A tree drawn with its model keeps its size as it is gathered.
+            let shrink = if drawn.is_some_and(|d| !d.shrinks) { 1.0 } else { node_scale(n.remaining, def.amount) };
+            af_geom::Obb::new(pos.0, node_base_half(data, def) * shrink, facing.0)
         }
         None => footprint,
     };

@@ -1,0 +1,13 @@
+// Written by art/static/build_static.py from the manifests under
+// this folder; do not edit by hand.
+// Paths are relative to the asset folder.
+(
+    units: {},
+    buildings: {
+        "house": "buildings/house/house.model.ron",
+    },
+    nodes: {
+        "pine": "nodes/pine/pine.model.ron",
+        "stone_outcrop": "nodes/stone_outcrop/stone_outcrop.model.ron",
+    },
+)

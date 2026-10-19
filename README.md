@@ -8,7 +8,8 @@ computers, shields and beams.
 **Everything is a box** for now: the map, terrain, buildings, units, weapons,
 projectiles. Boxes are placed freely (any position, any angle) but never
 overlap. Real graphics come one model at a time and only touch the renderer
-crate; the first is the peasant (see Models below).
+crate: the peasant is animated, and any building or resource node takes a
+model dropped into `art/static/source/` (see Models below).
 
 ## Play
 
@@ -129,18 +130,52 @@ age-ups, and prints every faction's roster per age.
 
 ## Models
 
+Models replace boxes one type at a time. Anything without a model is drawn
+as boxes, and the box stays every entity's collision shape.
+
+### Buildings and resource nodes: dropping a model in
+
+1. **Save the model** under the game's id (the ids are in `assets/data/`):
+   `art/static/source/buildings/<id>.glb` (`house.glb`, `town_center.glb`)
+   or `art/static/source/nodes/<id>.glb` (`stone_outcrop.glb`,
+   `berry_bush.glb`). Variants are `pine_a.glb`, `pine_b.glb`, ... (each
+   tree or rock placed gets one); a felled tree's stump is
+   `pine_stump.glb`. Meshy's GLB is fine, as are `.gltf`, `.fbx` and
+   `.obj`; polygon count, texture size and rigs do not matter. It should
+   stand on the ground with its front toward +Z.
+2. **Build** (from the repository root):
+
+   ```bash
+   "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/static/build_static.py
+   ```
+
+   This reduces, cleans and normalises the model into
+   `assets/models/static/`, adds a team banner to buildings, rewrites the
+   registry `assets/visuals/static.ron`, and prints the path of a contact
+   sheet to look at.
+3. **Run the game** (`cargo run -p aetherfall`). That type now draws its
+   model, fitted to its box, with the variant and turn picked by position
+   and the banner in its owner's colour. Foundations rise out of the
+   ground as they are built, ore and rocks shrink as they are gathered,
+   and felled trees fall and leave a stump.
+
+A model that faces the wrong way, a banner in a bad spot or a reduction
+that hurts is fixed with a line in `art/static/assets.toml`, then a
+rebuild. To take a model out, delete its source and build with
+`-- --prune`. The pipeline and its options are in
+[art/static/README.md](art/static/README.md), the engine contract in
+[docs/art/static-models.md](docs/art/static-models.md), and what to model
+first in [docs/art/model-queue.md](docs/art/model-queue.md).
+
+### Units
+
 The **peasant** (every faction's worker) is an animated 3D model: 23 clips
 (idle, walking, carrying, each kind of gathering, building, repairing,
 fighting, dying...), the tool or load in its hands, and a sash in its
-owner's colour. Every other unit is still boxes; the box stays each unit's
-collision shape.
+owner's colour. Every other unit is still boxes.
 
-* `assets/visuals/units.ron` lists the units drawn with a model, each with
-  its manifest (`assets/models/peasant/peasant.model.ron`, next to
-  `peasant.glb`). A unit missing from it, or whose model fails to load,
-  is drawn as boxes.
 * The model is built by a Blender script from the rigged source in
-  `art/peasant/source/`; nothing in `assets/models/` is edited by hand:
+  `art/peasant/source/`:
 
   ```bash
   "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/peasant/build_peasant.py
@@ -150,7 +185,23 @@ collision shape.
   [docs/art/peasant.md](docs/art/peasant.md) (clip names, props, manifest)
   and the pipeline in [art/peasant/README.md](art/peasant/README.md), then
   add the unit to `assets/visuals/units.ron`.
+
+### The registry and checking models
+
+* The visual registry, every `*.ron` in `assets/visuals/`, lists what is
+  drawn with a model: `units.ron` (hand-written) the units, `static.ron`
+  (written by the static build) the buildings and resource nodes, each
+  with its manifest. Anything missing from it, or whose model fails to
+  load, is drawn as boxes. Nothing in `assets/models/` or
+  `assets/visuals/static.ron` is edited by hand.
 * `cargo run -p aetherfall -- --no-models` draws everything as boxes.
+* Stand-in models for every common building and node (not shipped, and
+  git-ignored) show the engine side without real art:
+
+  ```bash
+  "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/static/placeholders.py -- --build
+  cargo run -p aetherfall -- --visuals visuals-placeholders
+  ```
 
 ## Code
 

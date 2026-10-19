@@ -6,8 +6,11 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use af_core::prelude::Rgb;
+
 use crate::entities::BoxVisual;
 use crate::look::{Look, MatKey, Shade};
+use crate::model::rig::TeamTints;
 use crate::parts::Part;
 
 /// `Shade::Glow` boxes light themselves: their lit (base) colour is dimmed
@@ -36,6 +39,14 @@ pub(crate) fn init_box_assets(mut commands: Commands, mut meshes: ResMut<Assets<
     commands.insert_resource(BoxAssets { cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)), materials: HashMap::default() });
 }
 
+/// How rough every box is: matte, with a broad, dim highlight.
+pub const BOX_ROUGHNESS: f32 = 0.85;
+/// How much light a box reflects head-on (`StandardMaterial::reflectance`,
+/// 0.25 = 1 % against Bevy's default 4 %): low, so dark colours stay
+/// saturated instead of greying under the sky light. Static models are
+/// drawn with it too (`statics::library::flatten`).
+pub const BOX_REFLECTANCE: f32 = 0.25;
+
 /// The `StandardMaterial` for a key.
 pub fn material_for(key: MatKey) -> StandardMaterial {
     let [r, g, b] = key.color();
@@ -53,8 +64,8 @@ pub fn material_for(key: MatKey) -> StandardMaterial {
         emissive: if glow { Color::srgb(r, g, b).to_linear() * GLOW_STRENGTH } else { LinearRgba::BLACK },
         unlit: key.shade() == Shade::Unlit,
         alpha_mode: if key.is_opaque() { AlphaMode::Opaque } else { AlphaMode::Blend },
-        perceptual_roughness: 0.85,
-        reflectance: 0.25,
+        perceptual_roughness: BOX_ROUGHNESS,
+        reflectance: BOX_REFLECTANCE,
         ..default()
     }
 }
@@ -95,6 +106,12 @@ impl Painter<'_> {
         let handle = self.materials.add(material_for(key));
         self.assets.materials.insert(key, handle.clone());
         handle
+    }
+
+    /// `base` (a model's team material) in the owner's `color`, made once
+    /// per material and colour.
+    pub fn team_tint(&mut self, tints: &mut TeamTints, base: &Handle<StandardMaterial>, color: Rgb) -> Handle<StandardMaterial> {
+        tints.tint(base, color, &mut self.materials)
     }
 
     /// The mesh, material and local transform of a part.

@@ -1,8 +1,9 @@
 //! Units drawn with animated glTF models instead of boxes.
 //!
-//! `assets/visuals/units.ron` names a manifest per unit type (contract:
-//! `docs/art/peasant.md`); at startup `library::load_models` reads them
-//! and loads each model through the asset server. A unit whose type has a
+//! The visual registry's `units` ([`crate::registry`], hand-written in
+//! `assets/visuals/units.ron`) names a manifest per unit type (contract:
+//! `docs/art/peasant.md`); at startup `crate::registry::load_visuals` reads
+//! them and loads each model through the asset server. A unit whose type has a
 //! loaded model gets the model's scene in its visual root instead of its
 //! body boxes, scaled to its box height and yawed with it like the boxes;
 //! its selection outline, bars, shield shell and fog hiding stay as they
@@ -18,7 +19,7 @@
 //!
 //! | where | system | what |
 //! |---|---|---|
-//! | `Startup` | `load_models` | registry + manifests, start the glTF loads |
+//! | `Startup` | `crate::registry::load_visuals` | registry + manifests, start the glTF loads |
 //! | `Update` (any state) | `finish_model_loads` | graph, clip table, lighting fix, team material |
 //! | observer | `mark_scene_ready` | a model scene has spawned |
 //! | `RenderStep::Build` | `rig_models` (after `attach_units`) | animation player, props hidden, team tint |

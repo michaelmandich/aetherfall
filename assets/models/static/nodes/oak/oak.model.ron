@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "oak",
+    fit: Height,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/oak/a.glb", min: (-0.670, 0.000, -0.636), max: (0.670, 1.884, 0.636), triangles: 2986),
+        (model: "models/static/nodes/oak/b.glb", min: (-0.808, 0.000, -0.815), max: (0.808, 1.892, 0.815), triangles: 2982),
+    ],
+    stump: None,
+    banner: false,
+)

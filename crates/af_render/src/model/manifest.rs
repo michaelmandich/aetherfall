@@ -1,9 +1,7 @@
-//! The files that say which units are drawn with a model and how to play
-//! it (the contract is `docs/art/peasant.md`):
-//!
-//! * [`REGISTRY`], `assets/visuals/units.ron`: unit id -> manifest path;
-//! * a model manifest (`<name>.model.ron`, written by the art build): the
-//!   glTF file, the model's height and every clip it ships.
+//! The manifest of an animated unit model and how to play it (the contract
+//! is `docs/art/peasant.md`): `<name>.model.ron`, written by the art build,
+//! names the glTF file, the model's height and every clip it ships. Which
+//! units have one is the visual registry's business ([`crate::registry`]).
 //!
 //! Paths are asset paths, relative to the `assets/` folder.
 
@@ -13,13 +11,6 @@ use ron::extensions::Extensions;
 use serde::Deserialize;
 
 use super::clips::Clip;
-
-/// Where the unit -> manifest registry lives, relative to the asset folder.
-pub const REGISTRY: &str = "visuals/units.ron";
-
-/// `assets/visuals/units.ron`: unit id -> model manifest (asset path).
-/// Units not listed are drawn as boxes.
-pub type Registry = BTreeMap<String, String>;
 
 /// One model and its clips, as the art build describes it.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -67,11 +58,6 @@ impl ClipSpec {
 fn ron_options() -> ron::Options {
     // Optional fields may be written bare: `speed: 1.4`.
     ron::Options::default().with_default_extension(Extensions::IMPLICIT_SOME)
-}
-
-/// Parse `assets/visuals/units.ron`.
-pub fn parse_registry(text: &str) -> Result<Registry, String> {
-    ron_options().from_str(text).map_err(|e| e.to_string())
 }
 
 impl ModelManifest {
@@ -205,16 +191,5 @@ mod tests {
         for needle in ["`Chopp`: no such engine clip", "`Attack`: hit 1.5", "`Walk`: duration", "`Cheer`: looping is true, but the engine always plays it once", "`Mine`: reach"] {
             assert!(w.contains(needle), "{needle} in:\n{w}");
         }
-    }
-
-    #[test]
-    fn the_registry_maps_unit_ids_to_manifests() {
-        let r = parse_registry(r#"{"peasant": "models/peasant/peasant.model.ron"} // trailing comment"#).unwrap();
-        assert_eq!(r.get("peasant").map(String::as_str), Some("models/peasant/peasant.model.ron"));
-        assert!(parse_registry("{peasant: 3}").is_err());
-        // The shipped registry parses.
-        let shipped = include_str!("../../../../assets/visuals/units.ron");
-        let r = parse_registry(shipped).unwrap_or_else(|e| panic!("assets/visuals/units.ron: {e}"));
-        assert!(r.contains_key("peasant"));
     }
 }

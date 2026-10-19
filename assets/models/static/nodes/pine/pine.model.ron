@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "pine",
+    fit: Height,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/pine/a.glb", min: (-0.494, 0.000, -0.531), max: (0.494, 1.873, 0.531), triangles: 2999),
+        (model: "models/static/nodes/pine/b.glb", min: (-0.333, 0.000, -0.355), max: (0.333, 1.874, 0.355), triangles: 2999),
+        (model: "models/static/nodes/pine/c.glb", min: (-0.468, 0.000, -0.490), max: (0.468, 1.848, 0.490), triangles: 2994),
+    ],
+    stump: None,
+    banner: false,
+)

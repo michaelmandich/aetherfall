@@ -1,0 +1,13 @@
+# Settings for the placeholder build only (placeholders.py --build), in the
+# format of art/static/assets.toml, which documents every key. The
+# placeholders do not read art/static/assets.toml: settings made there for
+# real models (a yaw, a banner spot) must not move the stand-ins, and these
+# must not move real models.
+
+# The automatic banner spot lands on a prop in front of the shed (the
+# chopping block, the ore cart); fly it from the shed's roof instead.
+[lumber_camp]
+banner = [-1.6, 2.6, -1.1]   # left end of the ridge
+
+[mining_camp]
+banner = [-1.6, 2.55, -0.5]  # front-left corner of the roof

@@ -8,10 +8,12 @@ use af_core::ext::render::FogTexture;
 use crate::fog::{FogOverlay, MemoryPool};
 use crate::ghost::GhostPool;
 use crate::overlay::RallyPool;
+use crate::statics::Remnants;
 use crate::terrain::TerrainState;
 
 /// Every top-level entity af_render spawns for a match (light, terrain,
-/// fog overlay, ghosts, markers). Despawned on leaving `GameState::Playing`.
+/// fog overlay, ghosts, markers, corpses, felled trees, stumps). Despawned
+/// on leaving `GameState::Playing`.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct RenderScene;
 
@@ -40,6 +42,7 @@ pub(crate) fn setup_scene(mut commands: Commands) {
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn teardown_scene(
     mut commands: Commands,
     scene: Query<Entity, With<RenderScene>>,
@@ -48,6 +51,7 @@ pub(crate) fn teardown_scene(
     mut rally: ResMut<RallyPool>,
     mut fog: ResMut<FogOverlay>,
     mut memories: ResMut<MemoryPool>,
+    mut remnants: ResMut<Remnants>,
 ) {
     for e in &scene {
         commands.entity(e).try_despawn();
@@ -57,5 +61,6 @@ pub(crate) fn teardown_scene(
     *rally = RallyPool::default();
     fog.reset();
     memories.reset();
+    remnants.reset();
     commands.remove_resource::<FogTexture>();
 }

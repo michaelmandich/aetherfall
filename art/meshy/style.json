@@ -1,0 +1,20 @@
+{
+    "_about": "Shared settings for every Meshy model (tools/meshy/meshy.py). Change these and every later model follows; already-made models keep the style they were made with. The suffixes are appended to each asset's prompt (max 800 characters in all).",
+    "ai_model": "meshy-6",
+    "texture_resolution": "2k",
+    "enable_pbr": false,
+    "remove_lighting": true,
+    "queue_limit": 10,
+    "polycount": {
+        "nodes": 8000,
+        "buildings": 30000
+    },
+    "prompt_suffix": {
+        "nodes": "Temperate Northern Europe in the Iron Age, natural and believable, realistic bark, foliage and stone, muted natural palette. Game asset for a top-down real-time strategy game: one object standing on flat ground, clear readable silhouette, no base plate, no people, no text.",
+        "buildings": "Ancient Northern European village, Iron Age to early medieval, Celtic and Germanic: rough-hewn timber, wattle and daub, straw thatch, fieldstone. Weathered, hand-made, believable, muted earthy palette. Game asset for a top-down real-time strategy game: one building standing on flat ground, clear readable silhouette, no base plate, no people, no text."
+    },
+    "texture_suffix": {
+        "nodes": "Realistic natural materials, muted greens and browns, soft even lighting, no baked shadows.",
+        "buildings": "Realistic hand-made materials: weathered timber, straw thatch, daub plaster, rough stone; muted earthy palette of warm browns, ochre, grey stone and moss green; soft even lighting, no baked shadows."
+    }
+}

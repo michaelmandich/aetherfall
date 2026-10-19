@@ -28,9 +28,11 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crate::assets::{BoxAssets, Painter, no_shadows};
 use crate::entities::{BoxVisual, Ground, owner_color};
 use crate::fx::FxDrawn;
+use crate::model::rig::TeamTints;
 use crate::motion::ground_transform;
 use crate::parts::{building_layout, node_layout};
 use crate::scene::RenderScene;
+use crate::statics::{StaticLibrary, rest_transform, spawn_instance};
 use crate::terrain::max_terrain_top;
 
 /// Seconds between overlay texture refreshes.
@@ -64,6 +66,12 @@ impl Viewer<'_> {
     /// Team of a player (`None` before `Players` exists).
     pub fn team_of(&self, player: PlayerId) -> Option<u8> {
         self.players.as_ref().map(|p| p.team(player))
+    }
+
+    /// The local player changed since the system last ran (so may the
+    /// team whose sight hides things).
+    pub fn local_changed(&self) -> bool {
+        self.local.is_changed()
     }
 }
 
@@ -217,16 +225,19 @@ impl MemoryPool {
 }
 
 /// Keep drawing buildings and nodes that died out of the local team's
-/// sight, as the team last saw them, until it looks again.
+/// sight, as the team last saw them (with their type's static model when it
+/// is ready), until it looks again.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_fog_memories(
     mut commands: Commands,
     mut painter: Painter,
+    mut tints: ResMut<TeamTints>,
     data: Res<Data>,
     players: Res<Players>,
     fog: Res<FogOfWar>,
     local: Res<LocalPlayer>,
     ghosts: Res<FogGhosts>,
+    statics: Option<Res<StaticLibrary>>,
     ground: Ground,
     mut pool: ResMut<MemoryPool>,
 ) {
@@ -248,21 +259,30 @@ pub(crate) fn update_fog_memories(
         keep
     });
     let Some(team) = team else { return };
+    let statics = statics.as_deref();
     for g in ghosts.remembered_by(team) {
         if drawn.contains_key(&g.entity) {
             continue;
         }
-        let parts = match g.kind {
+        let owner = g.owner.map(|o| owner_color(&players, o));
+        let (size, model, parts) = match g.kind {
             EntityKind::Building(kind) => {
-                let owner = g.owner.map_or([0.6; 3], |o| owner_color(&players, o));
-                building_layout(&data, data.building(kind), owner, None, false).parts
+                let def = data.building(kind);
+                (def.size, statics.and_then(|s| s.building(kind)), building_layout(&data, def, owner.unwrap_or([0.6; 3]), None, false).parts)
             }
-            EntityKind::Node(kind) => node_layout(&data, data.node(kind)),
+            EntityKind::Node(kind) => (data.node(kind).size, statics.and_then(|s| s.node(kind)), node_layout(&data, data.node(kind))),
             EntityKind::Unit(_) => continue,
         };
         let root = commands.spawn((ground_transform(g.pos, ground.at(g.pos), g.facing), Visibility::Inherited, FogMemory, RenderScene)).id();
-        for p in &parts {
-            painter.spawn_child(&mut commands, root, p);
+        match model.and_then(|(_, m)| m.variant_at(g.pos).map(|(_, mesh)| (m, mesh))) {
+            Some((m, mesh)) => {
+                spawn_instance(&mut commands, &mut painter, &mut tints, mesh, rest_transform(m, mesh, size, g.pos), owner, ChildOf(root));
+            }
+            None => {
+                for p in &parts {
+                    painter.spawn_child(&mut commands, root, p);
+                }
+            }
         }
         drawn.insert(g.entity, root);
     }

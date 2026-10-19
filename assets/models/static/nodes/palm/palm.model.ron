@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "palm",
+    fit: Height,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/palm/a.glb", min: (-0.491, 0.000, -0.497), max: (0.491, 1.814, 0.497), triangles: 2883),
+        (model: "models/static/nodes/palm/b.glb", min: (-0.516, 0.000, -0.510), max: (0.516, 1.877, 0.510), triangles: 2991),
+    ],
+    stump: None,
+    banner: false,
+)

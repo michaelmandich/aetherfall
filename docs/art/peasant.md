@@ -133,8 +133,9 @@ origin); the engine scales them with the model.
 ## Engine side
 
 - `assets/visuals/units.ron` maps unit ids to manifests
-  (`{"peasant": "models/peasant/peasant.model.ron"}`); units not listed keep
-  their boxes.
+  (`(units: {"peasant": "models/peasant/peasant.model.ron"})`; every
+  `*.ron` in `assets/visuals/` is merged, see
+  [static-models.md](static-models.md)); units not listed keep their boxes.
 - The simulation exposes what a unit is doing through the shared
   `af_core` `Activity` component (written by af_behavior); each resource
   declares its gather style in `assets/data/core/resources.ron`

@@ -1,0 +1,42 @@
+{
+    "_about": "Models to generate with tools/meshy/meshy.py, in model-queue order (docs/art/model-queue.md). id = the game's id; kind = nodes or buildings; variants = name -> extra description (each variant is its own model). Optional prompt_suffix / texture_suffix override the shared style for one asset. Optional retired = a list of variant names made once and taken out of the game: they are never made, previewed or refined again.",
+    "assets": [
+        {
+            "id": "pine", "kind": "nodes",
+            "prompt": "A tall Scots pine tree with a straight reddish-brown trunk, a bare lower trunk and a crown of layered dark-green needle clusters",
+            "variants": { "a": "tall and slender", "b": "shorter and fuller, a younger tree", "c": "wind-bent crown leaning slightly to one side" }
+        },
+        {
+            "id": "oak", "kind": "nodes",
+            "prompt": "A broad old European oak tree with a thick gnarled trunk and a wide rounded crown of dense green leaves",
+            "variants": { "a": "mature and stately", "b": "a young oak with a narrower crown", "c": "very wide, low spreading branches" },
+            "retired": ["c"]
+        },
+        {
+            "id": "palm", "kind": "nodes",
+            "prompt": "A date palm tree with a tall ringed trunk and a crown of long arching green fronds",
+            "variants": { "a": "straight trunk", "b": "trunk curving gently to one side" },
+            "prompt_suffix": "Desert oasis on the edge of the ancient world, natural and believable, realistic bark and fronds, warm sun-bleached palette. Game asset for a top-down real-time strategy game: one object standing on flat ground, clear readable silhouette, no base plate, no people, no text."
+        },
+        {
+            "id": "farm", "kind": "buildings",
+            "prompt": "A small square farm field with straight ploughed furrows and rows of young barley, a low woven wattle fence along the edges, very flat"
+        },
+        {
+            "id": "house", "kind": "buildings",
+            "prompt": "A small Iron Age family house on a square footprint: wattle-and-daub walls on a low fieldstone base, a steep thatched roof, a plank door and a small smoke vent"
+        },
+        {
+            "id": "town_center", "kind": "buildings",
+            "prompt": "A chieftain's great hall, the heart of an Iron Age village, on a square footprint: heavy carved timber posts, wattle-and-daub walls, a tall steep thatched roof, a stone foundation, wide double doors with shields and antlers above the entrance"
+        },
+        {
+            "id": "lumber_camp", "kind": "buildings",
+            "prompt": "A woodcutter's camp on a square footprint: an open-sided timber shed with a thatched roof, stacked logs, a chopping block with an axe, sawhorses"
+        },
+        {
+            "id": "mining_camp", "kind": "buildings",
+            "prompt": "A miner's camp on a square footprint: a sturdy timber shed with a plank roof, a wooden cart, piles of stone blocks and ore, pickaxes and baskets"
+        }
+    ]
+}

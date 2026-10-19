@@ -62,9 +62,14 @@
 //!   --autoplay              the AI plays the local player's slot (its HUD shows)
 //!   --pause-at S            pause the game at S seconds (shots still due are
 //!                           then taken, paused, one a frame)
-//!   --frame-stats S         log frame times (mean, percentiles, fps) and unit
-//!                           counts every S real seconds
-//!   --no-models             draw every unit as boxes (no glTF models)
+//!   --frame-stats S         log frame times (mean, percentiles, fps) and how
+//!                           many units, and buildings and nodes, are drawn
+//!                           as models, every S real seconds
+//!   --no-models             draw everything as boxes (no glTF models)
+//!   --visuals DIR           also read the visual registry files in assets/DIR
+//!                           (on top of assets/visuals/, its entries win): try
+//!                           models such as the art pipeline's placeholders
+//!                           (--visuals visuals-placeholders)
 //!   --no-vsync              present frames as fast as they are made
 //!   --script "STEPS"        play the match from a script: steps `<S> <action>`
 //!                           separated by `;`, where an action is
@@ -244,6 +249,10 @@ fn run_windowed(data: Arc<GameData>, mut setup: MatchSetup, args: Args, assets: 
             return AppExit::error();
         }
     };
+    if let Some(dir) = dev.visuals().filter(|d| !assets.join(d).is_dir()) {
+        eprintln!("aetherfall: --visuals: no folder `{}` in {}", dir.display(), assets.display());
+        return AppExit::error();
+    }
     let mut app = App::new();
     app.set_error_handler(bevy::ecs::error::warn);
     // Left alone, Bevy looks for `assets/` under BEVY_ASSET_ROOT, else

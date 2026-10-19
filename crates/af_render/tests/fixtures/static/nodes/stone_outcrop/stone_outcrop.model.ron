@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "stone_outcrop",
+    fit: Footprint,
+    random_yaw: true,
+    variants: [
+        (model: "nodes/stone_outcrop/a.glb", min: (-1.265, 0.000, -0.849), max: (1.265, 1.216, 0.849), triangles: 40),
+    ],
+    stump: None,
+    banner: false,
+)

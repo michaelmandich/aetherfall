@@ -6,9 +6,9 @@
 use std::path::PathBuf;
 
 use af_core::testing::test_data;
-use af_render::model::manifest::parse_registry;
 use af_render::model::props::{Prop, Tool, classify};
 use af_render::model::{Clip, ModelManifest};
+use af_render::registry::parse_registry;
 use bevy::gltf::gltf::Gltf;
 
 const MANIFEST: &str = "models/peasant/peasant.model.ron";
@@ -36,7 +36,7 @@ fn peasant_clips() -> impl Iterator<Item = Clip> {
 fn the_registry_names_the_peasant_manifest_and_it_lists_every_clip() {
     let registry = std::fs::read_to_string(asset("visuals/units.ron")).unwrap();
     let registry = parse_registry(&registry).unwrap();
-    assert_eq!(registry.get("peasant").map(String::as_str), Some(MANIFEST));
+    assert_eq!(registry.units.get("peasant").map(String::as_str), Some(MANIFEST));
 
     let m = manifest();
     assert!(m.warnings().is_empty(), "{:#?}", m.warnings());
