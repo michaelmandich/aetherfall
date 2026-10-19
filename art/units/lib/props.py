@@ -32,6 +32,7 @@ the ones it needs; `Gear_*` nodes (a soldier's weapon, a shield) and
 """
 
 import math
+import os
 
 import bmesh
 import bpy
@@ -519,6 +520,10 @@ class Kind:
         self.strike = strike
         self.load = load
 
+    def make(self, name):
+        """The prop's object `name`, its mesh in the prop frame."""
+        return self.builder().to_object(name)
+
 
 LOAD_HAND = "R"
 
@@ -575,32 +580,51 @@ WORKER = {
     "Load_adamant": "load_adamant",
 }
 
-# The props of the unit being built: node name -> kind (`use`).
+# The props of the unit being built: node name -> Kind (`use`).
 _TABLE = {}
 
 
-def use(table):
-    """Make `table` (node name -> kind) the props of the unit being built."""
-    for name, kind in table.items():
-        if kind not in KINDS:
-            raise KeyError(f"prop {name}: no kind {kind!r} (have {sorted(KINDS)})")
+def use(table, props_dir=None):
+    """Make `table` the props of the unit being built. It maps node names to
+    prop ids: a Meshy prop of art/units/meshy_props.py, built from its file
+    in `props_dir` (default art/units/source/props/) when that is there and
+    from its boxy stand-in until then, or a boxy kind of `KINDS`. Returns
+    one line per Meshy prop saying which it got."""
+    specs = mesh_specs()
+    props_dir = props_dir or MESH_DIR
+    resolved, notes = {}, []
+    for name, pid in table.items():
+        if pid in specs:
+            path = mesh_file(props_dir, pid)
+            if path:
+                resolved[name] = MeshKind(pid, path, specs[pid])
+                notes.append(f"{name}: Meshy prop {pid} from {path}")
+            else:
+                resolved[name] = KINDS[specs[pid]["like"]]
+                notes.append(f"{name}: no {pid} model in {props_dir} yet: the boxy {specs[pid]['like']} stands in")
+        elif pid in KINDS:
+            resolved[name] = KINDS[pid]
+        else:
+            raise KeyError(f"prop {name}: no prop {pid!r} (Meshy props: {sorted(specs)}; kinds: {sorted(KINDS)})")
     _TABLE.clear()
-    _TABLE.update(table)
+    _TABLE.update(resolved)
+    return notes
 
 
 def kind_of(name):
-    """The kind of a prop of the unit being built, or a kind by its own name."""
+    """The Kind of a prop of the unit being built, or a kind by its own name."""
     if name in _TABLE:
         return _TABLE[name]
     if name in KINDS:
-        return name
+        return KINDS[name]
     raise KeyError(f"unknown prop {name!r} (this unit has {sorted(_TABLE)})")
 
 
 def prop_info(name):
-    """The solver's `Prop` for a prop name (no Blender objects needed): a
-    node of the unit being built, or a library kind by its own name."""
-    k = KINDS[kind_of(name)]
+    """The solver's `Prop` for a prop name (no Blender objects needed, but a
+    Meshy prop's named parts are known once it is built): a node of the unit
+    being built, or a library kind by its own name."""
+    k = kind_of(name)
     if k.load:
         return Prop(name, k.hand, "load", Matrix.Identity(3))
     return Prop(name, k.hand, "haft", frame(Vector((0, -1, 0)), Vector((0, 0, 1))), k.mount,
@@ -617,8 +641,8 @@ def build_props(arm_obj, rig, names=None):
     objs = {}
     rest = rig.fk({})
     for name in all_prop_names() if names is None else names:
+        obj = kind_of(name).make(name)
         info = prop_info(name)
-        obj = KINDS[kind_of(name)].builder().to_object(name)
         bone = HAND[info.hand]
         pos, w = rest[bone]
         world = mat4(pos, w) @ info.in_hand
@@ -633,6 +657,216 @@ def build_props(arm_obj, rig, names=None):
     return objs
 
 
+# ---------------------------------------------------------------------------
+# Meshy props: weapons and shields generated as models of their own
+# (art/units/source/props/<id>.glb, about 3k triangles, textured), at any
+# scale and orientation. Each has a spec in art/units/meshy_props.py that
+# turns it into the prop frame: which of the file's axes (as glTF writes
+# them, +Y up) runs up the haft to the head (`haft`) and which toward the
+# striking side (`strike`), how long it is in metres along the haft
+# (`length`; the file's own scale means nothing), and where the main hand
+# grips (`grip`: a fraction of the length from the butt, on the middle of
+# the haft there; or (x, y, z) fractions of the oriented bounding box,
+# x strike, y haft, z side). Then it is cleaned, decimated and textured
+# like a static model (art/static/lib) and held like the boxy kind it
+# replaces (`like`: hand, mount, the striking part's name).
+
+UNITS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # art/units
+MESH_DIR = os.path.join(UNITS, "source", "props")
+MESH_SPECS = os.path.join(UNITS, "meshy_props.py")
+MESH_EXTENSIONS = (".glb", ".gltf", ".fbx", ".obj")
+SPEC_KEYS = {"like", "length", "grip", "haft", "strike", "grip_offset", "roll", "parts", "hand", "mount",
+             "triangles", "texture"}
+AXES = {"+X": (1.0, 0.0, 0.0), "-X": (-1.0, 0.0, 0.0), "+Y": (0.0, 0.0, 1.0), "-Y": (0.0, 0.0, -1.0),
+        "+Z": (0.0, -1.0, 0.0), "-Z": (0.0, 1.0, 0.0)}   # glTF axis -> Blender (glTF +Z is Blender -Y)
+MESH_TRIANGLES = 1500   # a weapon at RTS distance needs no more
+MESH_TEXTURE = 512
+_SPECS = None
+
+
+def mesh_specs():
+    """{prop id: spec} from art/units/meshy_props.py, checked."""
+    global _SPECS
+    if _SPECS is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("meshy_props", MESH_SPECS)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SPECS = dict(mod.PROPS)
+        for pid, s in _SPECS.items():
+            _check_spec(pid, s)
+    return _SPECS
+
+
+def _check_spec(pid, s):
+    where = f"{MESH_SPECS}: {pid}"
+    unknown = sorted(set(s) - SPEC_KEYS)
+    if unknown:
+        raise KeyError(f"{where}: unknown keys {unknown} (known: {sorted(SPEC_KEYS)})")
+    if s.get("like") not in KINDS:
+        raise KeyError(f"{where}: `like` must name a boxy kind ({sorted(KINDS)})")
+    if not (isinstance(s.get("length"), (int, float)) and s["length"] > 0):
+        raise KeyError(f"{where}: `length` (metres along the haft) is required")
+    grip = s.get("grip")
+    if not (isinstance(grip, (int, float)) and 0.0 <= grip <= 1.0 or isinstance(grip, (tuple, list)) and len(grip) == 3):
+        raise KeyError(f"{where}: `grip` must be a fraction of the length from the butt or (x, y, z) box fractions")
+    for key in ("haft", "strike"):
+        if s.get(key) is not None and s[key] not in AXES:
+            raise KeyError(f"{where}: `{key}` must be one of {sorted(AXES)} or None (automatic)")
+    if s.get("haft") and s.get("strike") and s["haft"][1] == s["strike"][1]:
+        raise KeyError(f"{where}: `haft` and `strike` must be different axes")
+
+
+def mesh_file(folder, pid):
+    for ext in MESH_EXTENSIONS:
+        path = os.path.join(folder, pid + ext)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+class MeshKind(Kind):
+    """A prop built from a Meshy model by its spec (see above). Its named
+    parts are measured off the model when it is made."""
+
+    def __init__(self, pid, path, spec):
+        like = KINDS[spec["like"]]
+        super().__init__(None, spec.get("hand", like.hand), spec.get("mount", like.mount), strike=like.strike)
+        self.id = pid
+        self.path = path
+        self.spec = spec
+
+    def make(self, name):
+        from .static import static_lib
+
+        notes = []
+        obj = _import_mesh(self.path, name, static_lib("scene"))
+        materials = static_lib("materials")
+        found = [m for m in obj.data.materials if m is not None]
+        if not found:
+            obj.data.materials.append(materials.flat_material(name, (0.5, 0.5, 0.5)))
+        for i, mat in enumerate(found):
+            mat.name = name if i == 0 else f"{name}_{i}"
+            materials.clean(mat, notes)
+        materials.shrink_textures(obj, self.spec.get("texture", MESH_TEXTURE), name, notes)
+        materials.merge_duplicates(obj, notes)
+        before, after = static_lib("reduce").reduce(obj, self.spec.get("triangles", MESH_TRIANGLES), notes)
+        self.parts, how = _normalise(obj, self.spec)
+        if self.strike and self.strike not in self.parts:
+            raise KeyError(f"{MESH_SPECS}: {self.id} needs a part {self.strike!r} (the {self.spec['like']}'s "
+                           f"striking part) in `parts`")
+        print(f"{name}: {os.path.basename(self.path)}, {before} -> {after} triangles, {how}")
+        for n in notes:
+            print(f"  {n}")
+        return obj
+
+
+def _import_mesh(path, name, scene_lib):
+    """The file's meshes, baked and joined into one object `name` in the
+    current scene (nothing else in it is touched)."""
+    before = {k: set(getattr(bpy.data, k)) for k in ("objects", "meshes", "actions")}
+    objs = scene_lib.import_file(path)
+    for a in set(bpy.data.actions) - before["actions"]:
+        bpy.data.actions.remove(a)
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    baked = []
+    for o in objs:
+        if o.type != "MESH" or o.hide_render:
+            continue
+        me = bpy.data.meshes.new_from_object(o.evaluated_get(dg), preserve_all_data_layers=False, depsgraph=dg)
+        if not me.polygons:
+            bpy.data.meshes.remove(me)
+            continue
+        me.transform(o.matrix_world)
+        if o.matrix_world.determinant() < 0:
+            me.flip_normals()
+        for i, slot in enumerate(o.material_slots):
+            if i < len(me.materials):
+                me.materials[i] = slot.material
+        baked.append(me)
+    for o in objs:
+        bpy.data.objects.remove(o, do_unlink=True)
+    for m in set(bpy.data.meshes) - before["meshes"] - set(baked):
+        if m.users == 0:
+            bpy.data.meshes.remove(m)
+    if not baked:
+        raise ValueError(f"{path}: no faces in the file")
+    obj = scene_lib._join(baked, name)
+    while len(obj.data.uv_layers) > 1:  # textures use the first UV map
+        obj.data.uv_layers.remove(obj.data.uv_layers[-1])
+    return obj
+
+
+def _normalise(obj, spec):
+    """Move `obj`'s mesh into the prop frame by `spec`. Returns ({part: point
+    in the prop frame}, a line saying what was done)."""
+    import numpy as np
+
+    me = obj.data
+    co = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    size = co.max(0) - co.min(0)
+    order = [int(i) for i in np.argsort(-size)]   # Blender axes, longest first
+    names = {0: "X", 1: "-Z", 2: "Y"}               # Blender axis -> the glTF axis it shows
+    haft = Vector(AXES[spec["haft"]]) if spec.get("haft") else Vector(np.eye(3)[order[0]])
+    if spec.get("strike"):
+        strike = Vector(AXES[spec["strike"]])
+    else:
+        rest = [i for i in order if abs(haft[i]) < 0.5]
+        strike = Vector(np.eye(3)[rest[0]])
+    axes = frame(strike, haft)                      # columns: prop X, Y, Z in Blender axes
+    q = co @ np.array(axes)                         # vertices in prop axes, file units
+    y0, y1 = q[:, 1].min(), q[:, 1].max()
+    if y1 - y0 <= 0:
+        raise ValueError(f"{obj.name}: flat along its haft axis")
+    scale = spec["length"] / (y1 - y0)
+    q = (q - [0.0, y0, 0.0]) * scale                # metres, butt at y = 0
+    length = spec["length"]
+    lo, hi = q.min(0), q.max(0)
+
+    edges = np.empty(len(me.edges) * 2, np.int64)
+    me.edges.foreach_get("vertices", edges)
+    a, b = q[edges[0::2]], q[edges[1::2]]
+
+    def on_haft(f):
+        """The middle of the haft's cross-section `f` of the way from the
+        butt: where the mesh's edges cross that plane (a shaft may be one
+        long box with no vertex along it)."""
+        y = min(max(f * length, 1e-6), length - 1e-6)
+        cross = (a[:, 1] - y) * (b[:, 1] - y) <= 0.0
+        da = b[cross, 1] - a[cross, 1]
+        t = np.where(np.abs(da) > 1e-12, (y - a[cross, 1]) / np.where(np.abs(da) > 1e-12, da, 1.0), 0.0)
+        cut = a[cross] + (b[cross] - a[cross]) * t[:, None]
+        if len(cut) < 3:
+            raise ValueError(f"{obj.name}: nothing to grip at {f:.2f} of its length")
+        mid = (cut.min(0) + cut.max(0)) / 2
+        return np.array([mid[0], y, mid[2]])
+
+    def point(p):
+        return on_haft(p) if isinstance(p, (int, float)) else lo + np.array(p) * (hi - lo)
+
+    grip = point(spec["grip"]) + np.array(spec.get("grip_offset", (0.0, 0.0, 0.0)))
+    turn = rot(Y_AXIS, spec.get("roll", 0.0))
+    m = turn.to_4x4() @ Matrix.Translation(Vector(-grip)) @ Matrix.Diagonal((scale, scale, scale, 1.0)) \
+        @ Matrix.Translation((0.0, -y0, 0.0)) @ axes.transposed().to_4x4()
+    me.transform(m)
+    me.update()
+    parts = {"tip": 1.0, "butt": 0.0}
+    parts.update(spec.get("parts", {}))
+    out = {k: tuple(turn @ Vector(point(p) - grip)) for k, p in parts.items()}
+
+    def axis_name(v):
+        i = max(range(3), key=lambda k: abs(v[k]))
+        n = names[i]
+        sign = 1 if (v[i] > 0) != n.startswith("-") else -1
+        return ("+" if sign > 0 else "-") + n[-1]
+
+    how = (f"haft {axis_name(haft)}{'' if spec.get('haft') else ' (automatic: the longest)'}, strike "
+           f"{axis_name(strike)}{'' if spec.get('strike') else ' (automatic)'}, scaled x{scale:.4g} to "
+           f"{length} m, grip {spec['grip']}")
+    return out, how
 # ---------------------------------------------------------------------------
 # Team sash: a strap from the right shoulder across the chest to the left
 # hip and round the back, fitted to the body by ray casts and skinned with

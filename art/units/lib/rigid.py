@@ -27,11 +27,8 @@ game whatever the source's scale:
   fraction of H, default 0.5), fitted by rays like the humanoid's sash.
 """
 
-import importlib
-import importlib.util
 import math
 import os
-import sys
 
 import bmesh
 import bpy
@@ -40,9 +37,7 @@ from mathutils.bvhtree import BVHTree
 
 from . import export, props
 from .rig import at
-
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-STATIC_LIB = os.path.join(REPO, "art", "static", "lib")
+from .static import static_lib
 
 PENNANT_POLE = 0.5           # pole length above its foot, of the model's height
 PENNANT_SINK = 0.02          # how far the pole goes into the model
@@ -61,18 +56,6 @@ MARKER_TRIANGLES = {"pennant": 48, "band": 8 * BAND_SEGMENTS, None: 0}
 
 class RigidError(RuntimeError):
     pass
-
-
-def static_lib(name):
-    """A module of art/static/lib, imported as package `static_lib` (both
-    pipelines call their package `lib`)."""
-    if "static_lib" not in sys.modules:
-        spec = importlib.util.spec_from_file_location("static_lib", os.path.join(STATIC_LIB, "__init__.py"),
-                                                      submodule_search_locations=[STATIC_LIB])
-        pkg = importlib.util.module_from_spec(spec)
-        sys.modules["static_lib"] = pkg
-        spec.loader.exec_module(pkg)
-    return importlib.import_module(f"static_lib.{name}")
 
 
 def build(unit, src, out_dir, sheets_dir, model_path, writer):

@@ -168,7 +168,11 @@ them, with these differences:
   never hidden. Soldiers' weapons and shields are `Gear_*` nodes
   (`Gear_spear`, `Gear_shield`), held in every clip, since a model also
   replaces the unit's weapon boxes. `Tool_attack` stays the weapon of
-  units that work, shown only in Attack and CombatIdle.
+  units that work, shown only in Attack and CombatIdle. Characters are
+  generated empty-handed (A-pose, for clean rigging); a weapon or shield
+  is a Meshy model of its own (`art/units/source/props/`), turned into the
+  prop frame by `art/units/meshy_props.py`, or a boxy prop until it
+  arrives. Either way it is a mesh node parented to a hand bone.
 - **Team colour.** Always a material named `Team`: the skinned
   `Team_sash` on humanoids (fitted to each body), `Team_pennant` or
   `Team_band` on rigid models, and the face of a round shield.

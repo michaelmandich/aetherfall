@@ -14,6 +14,8 @@ Options (after the `--`):
                          (default assets/models/<ID>/)
     --source PATH        build from this file instead of the unit's SOURCE
                          (a stand-in, or a new download to try; use --out)
+    --props DIR          look for Meshy prop models (art/units/meshy_props.py)
+                         in DIR instead of art/units/source/props/
     --sheets DIR         render a contact sheet per clip into DIR (into
                          DIR/<ID>/ when building several units)
     --calibrate DIR      render the pose-helper calibration sheets into DIR
@@ -58,6 +60,7 @@ def parse_args():
     ap.add_argument("--only", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--source", default=None)
+    ap.add_argument("--props", default=None)
     ap.add_argument("--sheets", default=None)
     ap.add_argument("--calibrate", default=None)
     ap.add_argument("--check-retarget", action="store_true")
@@ -103,6 +106,8 @@ def sash_points(unit, rig):
 
 def build_humanoid(unit, args, src, out_dir, sheets_dir):
     t0 = time.time()
+    for note in unit.prop_notes:
+        print(note)
     arm, body, source_clips = source.load(src, unit.texture_name, unit.body_material, unit.texture)
     if args.mixamo_fbx:
         export.export_fbx_for_mixamo(args.mixamo_fbx, arm, body)
@@ -226,7 +231,7 @@ def main():
     failed = []
     for uid in ids:
         try:
-            unit = Unit(uid)
+            unit = Unit(uid, args.props and os.path.abspath(args.props))
             src = os.path.abspath(args.source) if args.source else unit.source
             if len(ids) > 1 and not os.path.isfile(src):
                 print(f"=== {uid}: no source yet ({os.path.relpath(src, REPO)}), skipped")

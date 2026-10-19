@@ -5,8 +5,9 @@ loads: `assets/models/<id>/<id>.glb` and its manifest `<id>.model.ron`.
 There are two kinds of unit:
 
 - **Humanoid** (the default): a character rigged by Meshy (Mixamo bone
-  names). The build keeps its skeleton, adds boxy props and a team sash,
-  and bakes the clips: the shared ones in `clips/` (idle, walk, death...)
+  names), generated empty-handed in an A-pose. The build keeps its
+  skeleton, puts its weapon or tools in its hands (Meshy models of their
+  own, or boxy props), adds a team sash, and bakes the clips: the shared ones in `clips/` (idle, walk, death...)
   plus the unit's own in `<id>/clips/` (its attack). The peasant was the
   first; the spearman is set up and waits for its source.
 - **Rigid**: anything without a skeleton (vehicles, siege, mounts, beasts,
@@ -34,6 +35,7 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    |---|---|---|
    | `<id>.glb` | the rigged character (rigging `rigged_character_glb_url`) | yes |
    | `<id>_walking.glb`, `<id>_running.glb` | the rigging's basic animations (`walking_armature_glb_url`...) | no |
+   | `props/<prop>.glb` | a weapon or shield, a model of its own (see "Meshy props") | no: a boxy prop stands in |
    | `<id>_<Clip>.glb` | an Animation API clip (3 credits each: ask before spending) | no |
 
    Walk and Run come from the source's own `Walking`/`Running` actions if
@@ -58,8 +60,10 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    `SOURCE` defaults to `source/<id>.glb`; the team sash's points come from
    the skeleton (`SASH` overrides them). See "Props" for `Gear_` against
    `Tool_attack`, and "Shared clips and the carry layer" for `CARRY`.
-3. **Weapon.** Use a kind from the library (spear, bow, crossbow, sling,
-   round_shield, work_axe...) or add one to `lib/props.py` (see "Props").
+3. **Weapon.** Name a Meshy prop of `art/units/meshy_props.py` (its model
+   is used once it is in `source/props/`, its boxy stand-in until then;
+   see "Meshy props"), or a boxy kind of `lib/props.py` (spear, bow,
+   crossbow, sling, round_shield, work_axe...; see "Props").
 4. **Clips.** The unit gets every shared clip. Fighters need their own
    `Attack` and `CombatIdle` in `<id>/clips/` (start from the spearman's):
    `HIT` is the weapon's `windup` in `assets/data/core/weapons.ron`, and the
@@ -104,9 +108,10 @@ manifest field the engine applies.
 
 ### Trying a stand-in
 
-`--source` builds a unit from any file; with `--out` to a scratch folder
-nothing in the repository changes. For example the spearman on the
-peasant's body, and a "ram" made of the lumber camp:
+`--source` builds a unit from any file, and `--props DIR` takes Meshy prop
+models from DIR; with `--out` to a scratch folder nothing in the
+repository changes. For example the spearman on the peasant's body, and a
+"ram" made of the lumber camp:
 
 ```bash
 "$BLENDER" -b -P art/units/build_unit.py -- --unit spearman --source art/units/peasant/source/peasant_meshy.glb --out <dir> --sheets <dir>/sheets
@@ -134,6 +139,7 @@ BLENDER="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe"
 | `--only A,B` | Builds only these clips and the clips they depend on. Nothing is exported unless `--out` is also given, so a partial build cannot overwrite the asset. |
 | `--out DIR` | Exports to DIR instead (the files are named by id, so units can share it). |
 | `--source PATH` | Builds from this file instead of the unit's `SOURCE` (one unit only). |
+| `--props DIR` | Looks for Meshy prop models (`<prop>.glb`) in DIR instead of `art/units/source/props/`. |
 | `--sheets DIR` | Writes one contact sheet per clip to `DIR/<Clip>.png` (`DIR/<ID>/` for several units; a rigid unit's is `DIR/<ID>.png`). |
 | `--calibrate DIR` | Writes the pose-helper calibration sheets (`calib_*.png`) on this unit's body. |
 | `--check-retarget` | Also checks that clips read from other files come through exactly (see "Mixamo clips"). |
@@ -169,8 +175,10 @@ The peasant's GLB is about 2.6 MB:
 2. **Rig.** `lib/rig.py` sets up the character frame, the rest data, FK in
    metres and samples of the foot soles. `lib/selftest.py` then checks the
    pose helper numerically (19 checks); a failure stops the build.
-3. **Props.** `lib/props.py` builds the unit's `PROPS`, parents them to the
-   hand bones and builds the skinned `Team_sash`.
+3. **Props.** `lib/props.py` builds the unit's `PROPS` (boxes, or a Meshy
+   model imported, cleaned, decimated and turned into the prop frame),
+   parents them to the hand bones and builds the skinned `Team_sash`. The
+   build prints which props are Meshy models and which are stand-ins.
 4. **Clips.** `lib/config.py` gathers the clip modules: the inherited
    shared ones (wrapped by the carry layer when the unit holds gear) and
    the unit's own. Every module is a clip, and its file name is the clip's
@@ -208,7 +216,8 @@ material, the triangle budget) and writes the manifest with no clips.
 ```
 art/units/
   build_unit.py        entry point (headless)
-  source/              Meshy sources: <id>.glb, <id>_walking.glb... (written by the generation session)
+  meshy_props.py       how each Meshy weapon / shield model is turned into the prop frame
+  source/              Meshy sources: <id>.glb, <id>_walking.glb..., props/<prop>.glb (written by the generation session)
   clips/<Clip>.py      shared clips: Idle, IdleFidget, HitReact, Death, Spawn, Cheer, Acknowledge, Walk, Run
   lib/
     config.py          a unit's unit.py, read and checked; the clip modules it builds; the carry layer
@@ -227,6 +236,7 @@ art/units/
     sheets.py          contact sheets (clips; a rigid model turned four ways)
     export.py          GLB export and verification, manifest, FBX for Mixamo
     rigid.py           rigid units: the static pipeline's steps, pennant / band, manifest
+    static.py          imports art/static/lib (read-only) for rigid units and Meshy props
   peasant/
     unit.py            the worker: every tool and load, the Work Axe, its sash points
     source/            peasant_meshy.glb, the untouched Meshy source (and any Mixamo downloads)
@@ -437,6 +447,8 @@ names its GLB gets to kinds. The engine knows props by node name:
 
 The peasant's table is `props.WORKER` (`Tool_attack` = `work_axe`,
 `Tool_chop` = `felling_axe` ..., `Load_<resource>` = `load_<resource>`).
+The boxy weapons and the shield stand in for the Meshy models until those
+arrive (next section).
 
 - **Hafted props.** The prop frame's origin is the main hand's grip just
   above the butt. +Y runs up the haft and +X is the striking direction.
@@ -451,6 +463,45 @@ The peasant's table is `props.WORKER` (`Tool_attack` = `work_axe`,
 - **Visibility.** Every prop is exported visible, because Bevy 0.19's glTF
   loader ignores node visibility. The engine hides all `Tool_*` and
   `Load_*` nodes when it spawns the model.
+
+### Meshy props
+
+Weapons and shields are generated by Meshy as models of their own, so the
+characters can be rigged empty-handed: `art/units/source/props/<prop>.glb`,
+about 3k triangles, textured, at any scale and orientation.
+`art/units/meshy_props.py` has an entry per prop that turns its model into
+the prop frame (the file documents every key):
+
+```python
+"spear": dict(like="spear", length=2.15, grip=0.33),
+# a shield standing upright, facing the viewer:
+# "round_shield": dict(like="round_shield", length=0.62, grip=(0.0, 0.5, 0.5),
+#                      grip_offset=(-0.04, 0.0, 0.0), haft="+Y", strike="+Z"),
+```
+
+- `like`: the boxy kind it replaces, which stands in until the file arrives
+  and gives the hand, the mount and the striking part's name, so clips work
+  with either.
+- `haft` / `strike`: which of the file's axes (glTF's, +Y up) runs up the
+  haft to the head and toward the striking side. Left out, the build takes
+  the longest axis for the haft and the longer of the others for the
+  strike, and prints what it chose.
+- `length`: metres along the haft (the file's scale is arbitrary).
+- `grip`: a fraction of the length from the butt; the hand goes to the
+  middle of the haft there (where the mesh's edges cross that height). Or
+  `(x, y, z)` fractions of the oriented bounding box, plus `grip_offset` in
+  metres: a shield's grip is behind the middle of its back.
+- `parts`: named points for `wield_part()`; `tip` and `butt` are always
+  there.
+
+The model is cleaned like a static model (base colour only, no emission,
+metallic 0), its texture shrunk to 512 px, decimated to 1500 triangles,
+and its materials named after the node (`Gear_spear`, `Gear_spear_1`).
+A stand-in made from the boxy spear, its haft turned onto glTF +X and
+scaled 37 times (`--props`), comes out on the boxy one to within its 1 %
+length difference, and the spearman's checks read the same with either. When a
+real model arrives, build a unit that holds it with `--sheets` and look at
+the hands: set `haft`, `strike` or `grip` if the build guessed wrong.
 
 ## Team colour
 
@@ -580,6 +631,9 @@ to show them on the sheet. A Mixamo clip can still be a base layer:
   the file. `lib/export.py` checks prop placement from the file's own node
   tree, and `crates/af_render/tests/peasant_asset.rs` reads the GLB with the
   same `gltf` crate Bevy uses.
+- **A-pose.** The characters are rigged in an A-pose. The clips do not
+  depend on the rest pose (every angle is measured from a calibrated
+  neutral), but `--mixamo-fbx` uploads it and retargeted clips align to it.
 - **New sources.** The first real file of a kind (a rigged soldier, a
   `<id>_walking.glb`) deserves a look at its sheets: the build was proven
   on the peasant's source and stand-ins made from it.

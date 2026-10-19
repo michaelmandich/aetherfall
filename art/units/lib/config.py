@@ -9,9 +9,12 @@ Humanoid units (KIND = "humanoid", the default): a rigged Meshy character.
 
     SOURCE = "source/spearman.glb"   # the rigged GLB, relative to art/units/
                                      # (default source/<id>.glb)
-    PROPS = {"Gear_spear": "spear"}  # node name -> prop kind (lib/props.py
-                                     # KINDS); Tool_*/Load_* nodes are shown
-                                     # by what the unit does, Gear_* always
+    PROPS = {"Gear_spear": "spear"}  # node name -> prop id: a Meshy prop of
+                                     # art/units/meshy_props.py (its model in
+                                     # source/props/, a boxy stand-in until
+                                     # then) or a boxy kind of lib/props.py
+                                     # KINDS; Tool_*/Load_* nodes are shown by
+                                     # what the unit does, Gear_* always
     HELD = ("Gear_spear",)           # props in hand in every inherited clip
                                      # (default: the Gear_* props)
     def CARRY(clip): ...             # the pose that holds HELD in inherited
@@ -94,7 +97,9 @@ def _camel(unit_id):
 class Unit:
     """One unit's settings, with every default filled in."""
 
-    def __init__(self, unit_id):
+    def __init__(self, unit_id, props_dir=None):
+        """`props_dir`: where Meshy prop models are looked for (default
+        art/units/source/props/)."""
         self.id = unit_id
         self.dir = os.path.join(ROOT, unit_id)
         path = os.path.join(self.dir, "unit.py")
@@ -124,7 +129,7 @@ class Unit:
             return
         self.props = dict(get("PROPS", {}))
         try:
-            props.use(self.props)
+            self.prop_notes = props.use(self.props, props_dir)
         except KeyError as e:
             raise UnitError(f"{path}: PROPS: {e.args[0]}") from None
         self.held = tuple(get("HELD", tuple(n for n in self.props if n.startswith("Gear_"))))
