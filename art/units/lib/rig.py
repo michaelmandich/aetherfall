@@ -1,4 +1,4 @@
-"""The peasant armature: bone names, the character frame, rest data and FK.
+"""A unit's armature (Meshy's Mixamo skeleton): bone names, the character frame, rest data and FK.
 
 Frames
 ------

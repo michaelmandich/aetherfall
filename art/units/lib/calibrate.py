@@ -1,8 +1,10 @@
 """Calibration sheets for the pose helper: one labelled test pose per column.
 
-`build_peasant.py --calibrate DIR` renders these; each label says what the
-pose should show, so a wrong sign or axis is visible at a glance. Re-run it
-after touching rig.py / pose.py / props.py grip constants.
+`build_unit.py --unit <id> -- --calibrate DIR` renders these on that unit's
+body; each label says what the pose should show, so a wrong sign or axis is
+visible at a glance. Re-run it after touching rig.py / pose.py / props.py
+grip constants. Props are named by kind (lib/props.py KINDS), so every
+unit's calibration shows the whole library.
 """
 
 import os
@@ -48,33 +50,52 @@ SHEETS = {
          .foot("R", out=0.08, turn=20)),
     ],
     "calib_props": [
-        ("chop hanging", ("Tool_chop",), lambda p: p),
-        ("chop 2-hand level", ("Tool_chop",), lambda p: p.wield(at=(0.0, 0.32, 1.0), pitch=70).hold("L", at=0.12)),
-        ("chop 2-hand up", ("Tool_chop",), lambda p: p.wield(at=(0.05, 0.15, 1.35), pitch=-30)
+        ("chop hanging", ("felling_axe",), lambda p: p),
+        ("chop 2-hand level", ("felling_axe",), lambda p: p.wield(at=(0.0, 0.32, 1.0), pitch=70).hold("L", at=0.12)),
+        ("chop 2-hand up", ("felling_axe",), lambda p: p.wield(at=(0.05, 0.15, 1.35), pitch=-30)
          .hold("L", at=0.25).spine(turn=25, bend=-5).hips(turn=20)),
-        ("hammer e90", ("Tool_build",), lambda p: p.arm("R", lift=10).elbow("R", 90)),
-        ("basket L", ("Tool_forage",), lambda p: p.arm("L", lift=20, toward=10).elbow("L", 70)),
-        ("chisel+mallet", ("Tool_chip", "Tool_chip_l"), lambda p: p.arm("R", lift=30).elbow("R", 100)
+        ("hammer e90", ("hammer",), lambda p: p.arm("R", lift=10).elbow("R", 90)),
+        ("basket L", ("basket",), lambda p: p.arm("L", lift=20, toward=10).elbow("L", 70)),
+        ("chisel+mallet", ("mallet", "chisel"), lambda p: p.arm("R", lift=30).elbow("R", 100)
          .arm("L", lift=20).elbow("L", 80)),
-        ("carry wood", ("Load_wood",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
-        ("carry food", ("Load_food",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
+        ("carry wood", ("load_wood",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
+        ("carry food", ("load_food",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
     ],
     # Close-ups of the hands (framed on the wrists): grips and palm directions.
     "calib_grips": [
-        ("chop 2-hand level", ("Tool_chop",), lambda p: p.wield(at=(0.0, 0.32, 1.0), pitch=70).hold("L", at=0.12)),
-        ("axe e90", ("Tool_attack",), lambda p: p.arm("R", lift=10).elbow("R", 90)),
+        ("chop 2-hand level", ("felling_axe",), lambda p: p.wield(at=(0.0, 0.32, 1.0), pitch=70).hold("L", at=0.12)),
+        ("axe e90", ("work_axe",), lambda p: p.arm("R", lift=10).elbow("R", 90)),
         ("R e90 twist +90 palm up", (), lambda p: p.arm("R", lift=0).elbow("R", 90).wrist("R", twist=90)),
-        ("shovel 2-hand", ("Tool_dig",), lambda p: p.spine(bend=30).hips(up=-0.1, bend=10)
+        ("shovel 2-hand", ("shovel",), lambda p: p.spine(bend=30).hips(up=-0.1, bend=10)
          .wield(at=(0.1, 0.2, 1.1), pitch=125).hold("L", at=0.3, roll=180)),
-        ("carry wood", ("Load_wood",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
-        ("basket L e70", ("Tool_forage",), lambda p: p.arm("L", lift=20, toward=10).elbow("L", 70)),
-        ("chisel+mallet", ("Tool_chip", "Tool_chip_l"), lambda p: p.arm("R", lift=30).elbow("R", 100)
+        ("carry wood", ("load_wood",), lambda p: p.carry(at=(0.0, 0.29, -0.15))),
+        ("basket L e70", ("basket",), lambda p: p.arm("L", lift=20, toward=10).elbow("L", 70)),
+        ("chisel+mallet", ("mallet", "chisel"), lambda p: p.arm("R", lift=30).elbow("R", 100)
          .arm("L", lift=20).elbow("L", 80)),
-        ("hoe 2-hand", ("Tool_farm",), lambda p: p.spine(bend=30).hips(up=-0.1, bend=10)
+        ("hoe 2-hand", ("hoe",), lambda p: p.spine(bend=30).hips(up=-0.1, bend=10)
          .wield(at=(0.1, 0.2, 1.1), pitch=125).hold("L", at=0.3, roll=180)),
+    ],
+    # The soldiers' weapons in their basic holds.
+    "calib_weapons": [
+        ("spear upright R e90", ("spear",), lambda p: p.arm("R", lift=10).elbow("R", 90)),
+        ("spear 2-hand level", ("spear",), lambda p: p.wield(at=(0.12, 0.25, 1.0), pitch=90, roll=90)
+         .hold("L", at=0.55)),
+        ("bow L hanging", ("bow",), lambda p: p.arm("L", lift=8, toward=70).elbow("L", 14)),
+        ("bow L at aim", ("bow",), lambda p: p.arm("L", lift=88, toward=10).elbow("L", 5)),
+        ("crossbow 2-hand level", ("crossbow",), lambda p: p.wield(at=(0.1, 0.30, 1.1), pitch=90)
+         .hold("L", at=0.25, roll=180)),
+        ("sling R hanging", ("sling",), lambda p: p.arm("R", lift=8, toward=70).elbow("R", 14)),
+        ("round shield L guard", ("round_shield",), lambda p: p.arm("L", lift=50, toward=20).elbow("L", 90)),
+        ("spear + shield", ("spear", "round_shield"), lambda p: p.arm("R", lift=10).elbow("R", 90)
+         .arm("L", lift=50, toward=20).elbow("L", 90)),
     ],
 }
 CLOSE_UP = {"calib_grips"}
+
+
+def prop_names():
+    """Every prop the calibration sheets show (library kinds)."""
+    return sorted({n for poses in SHEETS.values() for _, names, _ in poses for n in names})
 
 
 def _single_pose_clip(ctx, name, prop_names, fn):

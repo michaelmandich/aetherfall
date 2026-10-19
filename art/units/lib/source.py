@@ -1,4 +1,4 @@
-"""Import the Meshy/Mixamo source GLB, clean it up, and read its clips.
+"""Import a unit's rigged Meshy/Mixamo source GLB, clean it up, and read its clips.
 
 * The skeleton is kept exactly: same bones, names, hierarchy, rest
   transforms and the 0.01 root scale (joint inverse binds stay valid and
@@ -6,8 +6,10 @@
   which the importer sets 100x too long and which glTF never stores, are
   fixed so the rig reads in Blender's viewport and bone-parented props
   behave.
+* Body: every mesh skinned to the armature, joined into one (Meshy ships
+  one). The skeleton must have every bone `lib/rig.py` names.
 * Material: emissive texture and factor removed, base colour downscaled to
-  TEXTURE_SIZE px and re-encoded as a compact PNG (lib/png.py), metallic 0 /
+  the unit's texture size and re-encoded as a compact PNG (lib/png.py), metallic 0 /
   plain roughness (the source leaves the glTF defaults, metallic 1, which
   renders as dark metal), specular reset.
 * Source clips are resampled onto the 30 fps grid. Meshy writes rotations at
@@ -28,7 +30,6 @@ from . import png
 
 FPS = 30
 TEXTURE_SIZE = 1024
-TEXTURE_NAME = "peasant_basecolor"
 # Palette size of the base colour PNG (0 = lossless RGB, about twice the
 # size). 256 colours: mean error 1.3/255 on the painted texels, 99 % under
 # 8/255, invisible at RTS distance; the GLB is about 1 MB smaller.
@@ -39,24 +40,47 @@ TEXTURE_COLOURS = 256
 _LEAF_LENGTH = {"Hand": 15.0, "ToeBase": 8.0, "Head": 18.0, "headfront": 5.0, "Hips": 10.0}
 
 
-def load(path):
-    """Fresh scene with the cleaned source. Returns (armature, body, clips)."""
+class SourceError(RuntimeError):
+    pass
+
+
+SOURCE_CLIPS = ("Walking", "Running")  # the source's own actions read as clips
+
+
+def load(path, texture_name, body_material, texture_size=TEXTURE_SIZE):
+    """Fresh scene with the cleaned source. Returns (armature, body, clips):
+    `clips` maps the names in SOURCE_CLIPS the file has to `SourceClip`s."""
+    from .rig import GROUPS
+
+    if not os.path.isfile(path):
+        raise SourceError(f"no source file {path}")
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.fps = FPS
     scene.render.fps_base = 1.0
     bpy.ops.import_scene.gltf(filepath=path, disable_bone_shape=True, bone_heuristic="BLENDER",
                               guess_original_bind_pose=False)
-    arm = next(o for o in scene.objects if o.type == "ARMATURE")
-    body = next(o for o in scene.objects if o.type == "MESH")
+    armatures = [o for o in scene.objects if o.type == "ARMATURE"]
+    if len(armatures) != 1:
+        raise SourceError(f"{path}: expected one armature, found {len(armatures)} (an unrigged model is a "
+                          f"rigid unit: KIND = \"rigid\" in its unit.py)")
+    arm = armatures[0]
+    missing = [n for n in GROUPS["all"] if n not in arm.data.bones]
+    if missing:
+        raise SourceError(f"{path}: the skeleton lacks {missing} (lib/rig.py expects Meshy's Mixamo skeleton)")
+    meshes = [o for o in scene.objects if o.type == "MESH"
+              and any(m.type == "ARMATURE" and m.object == arm for m in o.modifiers)]
+    if not meshes:
+        raise SourceError(f"{path}: no mesh skinned to the armature")
+    body = _join(meshes)
     for o in list(scene.objects):
         if o not in (arm, body):
             bpy.data.objects.remove(o, do_unlink=True)
     _fix_bone_lengths(arm)
-    _clean_material(body)
+    _clean_material(body, body_material, texture_name, texture_size)
     clips = {}
     for action in bpy.data.actions:
-        if action.name in ("Walking", "Running"):
+        if action.name in SOURCE_CLIPS:
             clips[action.name] = SourceClip(action)
     ad = arm.animation_data
     if ad:
@@ -72,6 +96,15 @@ def load(path):
         pb.scale = (1, 1, 1)
     bpy.context.view_layer.update()
     return arm, body, clips
+
+
+def _join(meshes):
+    """One body object from the skinned meshes (the first, if only one)."""
+    if len(meshes) == 1:
+        return meshes[0]
+    with bpy.context.temp_override(active_object=meshes[0], selected_editable_objects=meshes):
+        bpy.ops.object.join()
+    return meshes[0]
 
 
 def _fix_bone_lengths(arm):
@@ -100,12 +133,9 @@ def _fix_bone_lengths(arm):
             raise RuntimeError(f"bone {b.name} rest changed ({turn} rad, {move} cm) while fixing its length")
 
 
-BODY_MATERIAL = "PeasantBody"
-
-
-def _clean_material(body):
+def _clean_material(body, body_material, texture_name, texture_size):
     for mat in body.data.materials:
-        mat.name = BODY_MATERIAL
+        mat.name = body_material
         nt = mat.node_tree
         bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
         base_links = bsdf.inputs["Base Color"].links
@@ -125,27 +155,27 @@ def _clean_material(body):
         if base_node is not None:
             nt.nodes.active = base_node  # what Workbench's texture mode displays
         if base_node is not None and base_node.image is not None:
-            base_node.image = _small_texture(base_node.image)
+            base_node.image = _small_texture(base_node.image, texture_name, texture_size)
 
 
-def _small_texture(img):
-    """The base colour at TEXTURE_SIZE px as a compact packed PNG (lib/png.py:
+def _small_texture(img, name, size):
+    """The base colour at `size` px as a compact packed PNG (lib/png.py:
     RGB, TEXTURE_COLOURS palette), which the glTF exporter embeds as-is.
     Checks that the packed file decodes to exactly the pixels encoded."""
-    if max(img.size) > TEXTURE_SIZE:
-        img.scale(TEXTURE_SIZE, TEXTURE_SIZE)
+    if max(img.size) > size:
+        img.scale(size, size)
     w, h = img.size
     px = np.empty(w * h * 4, np.float32)
     img.pixels.foreach_get(px)
     rgb = np.round(px.reshape(h, w, 4)[::-1, :, :3] * 255.0).astype(np.uint8)  # Blender stores rows bottom-up
     data, decoded = png.encode(rgb, TEXTURE_COLOURS)
     with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, TEXTURE_NAME + ".png")  # the exporter names the glTF image after the file
+        path = os.path.join(tmp, name + ".png")  # the exporter names the glTF image after the file
         with open(path, "wb") as f:
             f.write(data)
         small = bpy.data.images.load(path)
         small.pack()
-    small.name = TEXTURE_NAME
+    small.name = name
     small.colorspace_settings.name = img.colorspace_settings.name
     bpy.data.images.remove(img)
     back = np.empty(w * h * 4, np.float32)

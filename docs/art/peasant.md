@@ -1,12 +1,13 @@
 # Peasant model and animation contract
 
 The first real model in the game. This file is the contract between the art
-pipeline (`art/peasant/`, Blender, scripted) and the engine (`af_render`
-loading `assets/models/peasant/`). Later models follow the same pattern.
+pipeline (`art/units/`, Blender, scripted) and the engine (`af_render`
+loading `assets/models/peasant/`). Every other unit model follows it; what
+differs for them is in "Other units" at the end.
 
 ## Source
 
-- `art/peasant/source/peasant_meshy.glb`: the rigged character from Meshy AI
+- `art/units/peasant/source/peasant_meshy.glb`: the rigged character from Meshy AI
   (one skinned mesh, 18k vertices, one 4K PNG texture, a Mixamo skeleton:
   `mixamorig:Hips`, `Spine`, `Spine1`, `Spine2`, `Neck`, `Head`,
   `Left/RightShoulder`, `Arm`, `ForeArm`, `Hand`, `Left/RightUpLeg`, `Leg`,
@@ -14,21 +15,22 @@ loading `assets/models/peasant/`). Later models follow the same pattern.
   root scale: the character is about 1.65 m tall, faces +Z, up is +Y.
 - It ships only `Walking` (1.08 s) and `Running` (0.71 s) as glTF spans;
   the actual cycles are 31 and 19 frames at 30 fps (`Walk` 1.033 s, `Run`
-  0.633 s). Every other clip is authored by `art/peasant/build_peasant.py`.
-  Because the rig is a standard Mixamo skeleton, clips from Mixamo can be
-  read in too (`clip.from_file`, see "Mixamo clips" in
-  `art/peasant/README.md`).
+  0.633 s). Every other clip is authored by `art/units/build_unit.py`
+  (shared clips in `art/units/clips/`, the peasant's own in
+  `art/units/peasant/clips/`). Because the rig is a standard Mixamo
+  skeleton, clips from Mixamo can be read in too (`clip.from_file`, see
+  "Mixamo clips" in `art/units/README.md`).
 
 ## Build
 
 ```bash
-"C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/peasant/build_peasant.py
+"C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/units/build_unit.py -- --unit peasant
 ```
 
 It imports the source, cleans the material (no emissive; base colour texture
 downscaled to a 1024 px, 256-colour PNG), adds the props below, builds every
-clip, and writes the files below (pipeline details and how to add a clip:
-`art/peasant/README.md`):
+clip, and writes the files below (pipeline details, how to add a clip or a
+unit: `art/units/README.md`):
 
 - `assets/models/peasant/peasant.glb`: mesh, skeleton, props, all clips.
 - `assets/models/peasant/peasant.model.ron`: the manifest the engine reads.
@@ -147,3 +149,32 @@ origin); the engine scales them with the model.
   (the load filling up at work stays hidden), the load in CarryWalk,
   CarryIdle and the first half of Drop, the weapon in Attack and
   CombatIdle, and otherwise the tool of the work the unit walks to.
+
+## Other units
+
+Every unit model is built by `art/units/build_unit.py --unit <id>` into
+`assets/models/<id>/<id>.glb` and `<id>.model.ron` (same manifest format)
+and listed in `assets/visuals/units.ron`. The rules above hold for all of
+them, with these differences:
+
+- **Clips.** A unit ships the clips it has; the engine falls back for the
+  missing looping ones (`Clip::fallback`: CombatIdle, Walk and the work
+  clips to Idle, Run and CarryWalk to Walk, Repair to Build) and skips
+  missing one-shots (Attack, HitReact, Death...). Humanoids share Idle,
+  IdleFidget, HitReact, Death, Spawn, Cheer, Acknowledge, Walk and Run;
+  fighters add their own Attack (with `hit` = the weapon's windup) and
+  CombatIdle; healers may add `Heal`.
+- **Gear.** A node whose name starts with neither `Tool_` nor `Load_` is
+  never hidden. Soldiers' weapons and shields are `Gear_*` nodes
+  (`Gear_spear`, `Gear_shield`), held in every clip, since a model also
+  replaces the unit's weapon boxes. `Tool_attack` stays the weapon of
+  units that work, shown only in Attack and CombatIdle.
+- **Team colour.** Always a material named `Team`: the skinned
+  `Team_sash` on humanoids (fitted to each body), `Team_pennant` or
+  `Team_band` on rigid models, and the face of a round shield.
+- **Rigid models** (vehicles, siege, mounts, beasts, flyers): no skin, no
+  animation, `clips: {}` in the manifest, `height` = the model's height.
+  The engine draws them in their bind pose with no animation player,
+  scaled to the box height like any model; they move, fight and die
+  without clips, and their corpse sinks its full height (nothing lies
+  down). `af_render/tests/models.rs` pins this down.

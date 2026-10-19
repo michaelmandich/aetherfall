@@ -1,5 +1,5 @@
 //! The shipped peasant model (`assets/models/peasant/`, written by
-//! `art/peasant/build_peasant.py`) against what the engine expects of it
+//! `art/units/build_unit.py --unit peasant`) against what the engine expects of it
 //! (contract: `docs/art/peasant.md`). The GLB is read with the same `gltf`
 //! crate Bevy's loader uses, so a broken export fails here, not in game.
 

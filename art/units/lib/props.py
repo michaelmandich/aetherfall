@@ -1,12 +1,14 @@
-"""Props: boxy tools and cargo parented to the hands, and the team sash.
+"""Props: boxy tools, weapons and cargo parented to the hands, and the team sash.
 
-Every prop is built from boxes in its own *prop frame* and parented to a hand
-bone. Two kinds:
+The library (`KINDS`) holds every design; a unit names the ones it carries
+in its config (`PROPS`: node name -> kind, `use()`), and `prop_info()`
+answers for those names or for a kind by its own name. Every prop is built
+from boxes in its own *prop frame* and parented to a hand bone. Two kinds:
 
-* hafted tools (``kind="haft"``): the prop frame's origin is the main
-  (right) hand's grip, just above the butt end; +Y runs along the haft
-  towards the head, +X is the striking direction (blade edge, hammer face,
-  hoe blade), +Z = X x Y. The other hand grips the same haft `at` metres
+* hafted (``kind="haft"``: tools, weapons, the bow, the shield's grip): the
+  prop frame's origin is the hand's grip, just above the butt end; +Y runs
+  along the haft towards the head, +X is the striking direction (blade
+  edge, hammer face, hoe blade; the way a bow shoots), +Z = X x Y. The other hand grips the same haft `at` metres
   further up (`Pose.hold`; slide it by keying `at`).
 * cargo (``kind="load"``): the origin is the load's centre; held upright at
   the chest its axes are the character's (+X left, +Y back, +Z up) and the
@@ -25,7 +27,8 @@ lower hand palm-up under the shaft (hold(roll=180)).
 Visibility: all props are exported visible. The Bevy 0.19 glTF loader
 ignores node-visibility extensions (KHR_node_visibility), so the engine
 hides every `Tool_*` and `Load_*` node when it spawns the model and shows
-the ones it needs; `Team_sash` stays visible.
+the ones it needs; `Gear_*` nodes (a soldier's weapon, a shield) and
+`Team_sash` always stay visible.
 """
 
 import math
@@ -176,6 +179,11 @@ _PALETTE = {
     "PropAether": ((0.52, 0.17, 1.00), 0.3, 0.0, (0.52, 0.17, 1.00), 4.0),
     "PropAdamant": ((0.084, 0.064, 0.036), 0.6, 0.0, None, 0.0),
     "PropAdamantOre": ((0.89, 0.69, 0.17), 0.35, 0.0, None, 0.0),
+    # The bronze of the spear's look in assets/data/core/weapons.ron (sRGB
+    # (0.8, 0.55, 0.25)), in linear values.
+    "PropBronze": ((0.61, 0.27, 0.047), 0.45, 0.0, None, 0.0),
+    "PropString": ((0.85, 0.80, 0.66), 0.9, 0.0, None, 0.0),
+    "PropLeather": ((0.24, 0.13, 0.06), 0.85, 0.0, None, 0.0),
     "Team": ((1.0, 1.0, 1.0), 0.75, 0.0, None, 0.0),
 }
 
@@ -227,6 +235,38 @@ class Boxes:
 
     def haft(self, y0, y1, thick=0.034, mat="PropWood"):
         return self.box(mat, (0.0, (y0 + y1) / 2, 0.0), (thick, y1 - y0, thick))
+
+    def disc(self, mat, center, radius, depth, segments=12):
+        """A flat prism of `segments` sides, its axis along the prop's X."""
+        if mat not in self.materials:
+            self.materials.append(mat)
+        idx = self.materials.index(mat)
+        m = Matrix.Translation(Vector(center)) @ Matrix.Rotation(math.radians(90.0), 4, "Y")
+        res = bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=segments, radius1=radius,
+                                    radius2=radius, depth=depth, matrix=m)
+        for f in {f for v in res["verts"] for f in v.link_faces}:
+            f.material_index = idx
+            f.smooth = False
+        return self
+
+    def bar(self, mat, a, b, width, depth):
+        """A box from point `a` to point `b` (its length along a -> b), `width`
+        across in the plane of a, b and the prop's Z, `depth` along Z (for a
+        bar in the X-Y plane; otherwise the box's own Z is as near the
+        prop's Z as the bar allows)."""
+        a, b = Vector(a), Vector(b)
+        y = (b - a).normalized()
+        x = Z_AXIS.cross(y) if abs(y.dot(Z_AXIS)) < 0.999 else X_AXIS.copy()
+        m = frame(x, y).to_4x4()
+        m.translation = (a + b) / 2
+        if mat not in self.materials:
+            self.materials.append(mat)
+        idx = self.materials.index(mat)
+        res = bmesh.ops.create_cube(self.bm, size=1.0, matrix=m @ Matrix.Diagonal((width, (b - a).length, depth, 1.0)))
+        for f in {f for v in res["verts"] for f in v.link_faces}:
+            f.material_index = idx
+            f.smooth = False
+        return self
 
     def to_object(self, name):
         me = bpy.data.meshes.new(name)
@@ -389,73 +429,196 @@ def _load_adamant():
     return b
 
 
-TOOLS = {
-    # name: (builder, hand, mount roll in degrees)
-    "Tool_attack": (_work_axe, "R", 0.0),
-    "Tool_chop": (_felling_axe, "R", 0.0),
-    "Tool_farm": (_hoe, "R", -90.0),     # broom-like grip: hoe and shovel lie along the forearm
-    "Tool_mine": (_pickaxe, "R", 0.0),
-    "Tool_dig": (_shovel, "R", -90.0),
-    "Tool_chip": (_mallet, "R", 0.0),
-    "Tool_chip_l": (_chisel, "L", 0.0),
-    "Tool_smash": (_sledge, "R", 0.0),
-    "Tool_build": (_hammer, "R", 0.0),
-    "Tool_forage": (_basket, "L", 0.0),
-}
+# ---------------------------------------------------------------------------
+# Weapons (the soldiers'). Sizes for a 1.65 m figure, from the game's weapon
+# boxes (assets/data/core/weapons.ron `look`, scaled from the 1.4 m unit box).
 
-LOADS = {
-    "Load_food": _load_food,
-    "Load_wood": _load_wood,
-    "Load_stone": _load_stone,
-    "Load_copper": lambda: _ore("PropCopper", "PropPatina"),
-    "Load_iron": lambda: _ore("PropOre", "PropRust"),
-    "Load_silicon": _load_silicon,
-    "Load_aether": _load_aether,
-    "Load_adamant": _load_adamant,
-}
+
+def _spear():
+    # A 2.15 m bronze-tipped spear, gripped 0.7 m above the butt: the hand
+    # that holds it alone (upright at the side) is the rear hand of a thrust.
+    b = Boxes().haft(-0.70, 1.20, 0.034)
+    b.box("PropBronze", (0.0, -0.715, 0.0), (0.042, 0.03, 0.042))    # butt cap
+    b.box("PropBronze", (0.0, 1.215, 0.0), (0.046, 0.06, 0.046))     # socket
+    b.box("PropBronze", (0.0, 1.31, 0.0), (0.075, 0.14, 0.016))      # leaf blade, flat in the strike plane
+    b.box("PropBronze", (0.0, 1.405, 0.0), (0.038, 0.07, 0.013))     # point
+    return b
+
+
+def _bow():
+    # A 1.1 m short bow in the left fist. The back faces +X (the way the
+    # arrow flies when the bow arm points at the target); the limbs sweep
+    # back toward the archer and the string runs between their tips.
+    b = Boxes()
+    b.box("PropWood", (0.0, 0.0, 0.0), (0.042, 0.13, 0.036))         # grip
+    b.box("PropLeather", (0.0, 0.0, 0.0), (0.046, 0.07, 0.04))       # grip wrap
+    for sign in (1.0, -1.0):
+        pts = ((0.0, 0.06), (-0.035, 0.30), (-0.095, 0.50), (-0.13, 0.56))
+        for (x0, y0), (x1, y1), t in zip(pts, pts[1:], (0.03, 0.024, 0.018)):
+            b.bar("PropWoodLight", (x0, sign * y0, 0.0), (x1, sign * y1, 0.0), t, 0.026)
+    b.bar("PropString", (-0.125, 0.555, 0.0), (-0.125, -0.555, 0.0), 0.006, 0.006)
+    return b
+
+
+def _crossbow():
+    # Gripped by the tiller behind the trigger; the tiller runs forward
+    # (+Y) to the prod, which spans the prop's Z; the bolt lies on the +X
+    # side, spanned and loaded.
+    b = Boxes()
+    b.box("PropWood", (0.0, 0.03, 0.0), (0.05, 0.62, 0.045))          # tiller, butt at -0.28
+    b.box("PropWood", (-0.012, -0.22, 0.0), (0.085, 0.14, 0.05))      # stock end, deeper
+    b.box("PropIron", (-0.035, 0.03, 0.0), (0.03, 0.05, 0.012))       # trigger lever
+    for sign in (1.0, -1.0):
+        b.bar("PropIron", (0.0, 0.36, 0.0), (0.0, 0.31, sign * 0.30), 0.03, 0.025)    # prod
+        b.bar("PropString", (0.012, 0.31, sign * 0.29), (0.012, 0.10, 0.0), 0.005, 0.005)
+    b.box("PropIron", (0.0, 0.42, 0.0), (0.012, 0.08, 0.07))           # stirrup
+    b.box("PropWood", (0.032, 0.25, 0.0), (0.014, 0.30, 0.014))        # bolt
+    b.box("PropIron", (0.032, 0.405, 0.0), (0.02, 0.03, 0.02))         # bolt head
+    return b
+
+
+def _sling():
+    # Two cords from the fist, hanging along the fingers (+X), and the
+    # pouch with its stone. Whirled, it stays straight: from the RTS camera
+    # it is a short line off the hand.
+    b = Boxes()
+    for z in (-0.012, 0.012):
+        b.box("PropRope", (0.22, 0.0, z), (0.40, 0.008, 0.008))
+    b.box("PropLeather", (0.445, 0.0, 0.0), (0.06, 0.045, 0.05))
+    b.box("PropStone", (0.45, 0.0, 0.0), (0.042, 0.042, 0.042))
+    return b
+
+
+def _round_shield():
+    # A 0.62 m centre-grip shield in the left fist: the face is square to
+    # the forearm (+X), in the team's colour, with an iron boss.
+    b = Boxes()
+    b.box("PropWood", (0.0, 0.0, 0.0), (0.03, 0.14, 0.03))     # the grip bar, in the fist
+    b.disc("PropWood", (0.055, 0.0, 0.0), 0.31, 0.024)          # planks and rim
+    b.disc("Team", (0.069, 0.0, 0.0), 0.27, 0.006)              # painted face
+    b.disc("PropIron", (0.08, 0.0, 0.0), 0.07, 0.03, 8)         # boss
+    return b
+
+
+# ---------------------------------------------------------------------------
+# The prop library. Each kind is a design: its boxes, the hand that holds
+# it, how it sits in the fist (`mount`, degrees about the haft) and its
+# named points. A unit names its props in its config (`PROPS`: node name
+# -> kind); the engine knows props by node name (docs/art/peasant.md):
+# `Tool_<role>` and `Load_<resource>` nodes are shown and hidden by what
+# the unit does, every other node (`Gear_spear`, `Gear_shield`) always
+# shows.
+
+
+class Kind:
+    def __init__(self, builder, hand, mount=0.0, parts=None, strike=None, load=False):
+        self.builder = builder
+        self.hand = hand
+        self.mount = mount
+        self.parts = parts or {}
+        self.strike = strike
+        self.load = load
+
+
 LOAD_HAND = "R"
 
-# Named points of the tools, in the prop frame (metres), measured off the
+# Named points of the props, in the prop frame (metres), measured off the
 # boxes above: clips aim these at the work (`Pose.wield_part`), and the
-# build's checks report the speed of the striking one (`STRIKES`) at HIT.
-PARTS = {
-    "Tool_attack": {"bit": (0.155, 0.50, 0.0)},     # centre of the axe's edge
-    "Tool_chop": {"bit": (0.1875, 0.79, 0.0)},
-    "Tool_farm": {"edge": (0.18, 1.235, 0.0)},      # the hoe blade's edge
-    "Tool_mine": {"tip": (0.325, 0.72, 0.0)},       # the front pick's point
-    "Tool_dig": {"tip": (0.0, 1.16, 0.0)},          # the shovel blade's tip
-    "Tool_chip": {"face": (0.065, 0.26, 0.0)},      # the mallet's striking face
-    "Tool_chip_l": {"butt": (0.0, 0.08, 0.0), "edge": (0.0, -0.145, 0.0)},  # chisel: struck end, cutting end
-    "Tool_smash": {"face": (0.131, 0.88, 0.0)},
-    "Tool_build": {"face": (0.071, 0.27, 0.0)},
+# build's checks report the speed of the striking one (`strike`) at HIT.
+KINDS = {
+    "work_axe": Kind(_work_axe, "R", parts={"bit": (0.155, 0.50, 0.0)}, strike="bit"),   # centre of the edge
+    "felling_axe": Kind(_felling_axe, "R", parts={"bit": (0.1875, 0.79, 0.0)}, strike="bit"),
+    # Broom-like grip: the hoe and the shovel lie along the forearm.
+    "hoe": Kind(_hoe, "R", -90.0, parts={"edge": (0.18, 1.235, 0.0)}, strike="edge"),   # the blade's edge
+    "pickaxe": Kind(_pickaxe, "R", parts={"tip": (0.325, 0.72, 0.0)}, strike="tip"),    # the front pick's point
+    "shovel": Kind(_shovel, "R", -90.0, parts={"tip": (0.0, 1.16, 0.0)}, strike="tip"),  # the blade's tip
+    "mallet": Kind(_mallet, "R", parts={"face": (0.065, 0.26, 0.0)}, strike="face"),
+    # Chisel: the struck end and the cutting end.
+    "chisel": Kind(_chisel, "L", parts={"butt": (0.0, 0.08, 0.0), "edge": (0.0, -0.145, 0.0)}),
+    "sledgehammer": Kind(_sledge, "R", parts={"face": (0.131, 0.88, 0.0)}, strike="face"),
+    "hammer": Kind(_hammer, "R", parts={"face": (0.071, 0.27, 0.0)}, strike="face"),
+    "basket": Kind(_basket, "L"),
+    "load_food": Kind(_load_food, LOAD_HAND, load=True),
+    "load_wood": Kind(_load_wood, LOAD_HAND, load=True),
+    "load_stone": Kind(_load_stone, LOAD_HAND, load=True),
+    "load_copper": Kind(lambda: _ore("PropCopper", "PropPatina"), LOAD_HAND, load=True),
+    "load_iron": Kind(lambda: _ore("PropOre", "PropRust"), LOAD_HAND, load=True),
+    "load_silicon": Kind(_load_silicon, LOAD_HAND, load=True),
+    "load_aether": Kind(_load_aether, LOAD_HAND, load=True),
+    "load_adamant": Kind(_load_adamant, LOAD_HAND, load=True),
+    "spear": Kind(_spear, "R", parts={"tip": (0.0, 1.44, 0.0), "butt": (0.0, -0.73, 0.0)}, strike="tip"),
+    "bow": Kind(_bow, "L", parts={"string": (-0.125, 0.0, 0.0), "tip": (-0.13, 0.56, 0.0)}),
+    "crossbow": Kind(_crossbow, "R", parts={"bolt": (0.032, 0.42, 0.0), "butt": (0.0, -0.28, 0.0)}),
+    "sling": Kind(_sling, "R", parts={"pouch": (0.45, 0.0, 0.0)}, strike="pouch"),
+    "round_shield": Kind(_round_shield, "L", parts={"boss": (0.10, 0.0, 0.0)}),
 }
-STRIKES = {"Tool_attack": "bit", "Tool_chop": "bit", "Tool_farm": "edge", "Tool_mine": "tip", "Tool_dig": "tip",
-           "Tool_chip": "face", "Tool_smash": "face", "Tool_build": "face"}
+
+# The peasant's props: a tool per work role, the Work Axe, and the cargo.
+WORKER = {
+    "Tool_attack": "work_axe",
+    "Tool_chop": "felling_axe",
+    "Tool_farm": "hoe",
+    "Tool_mine": "pickaxe",
+    "Tool_dig": "shovel",
+    "Tool_chip": "mallet",
+    "Tool_chip_l": "chisel",
+    "Tool_smash": "sledgehammer",
+    "Tool_build": "hammer",
+    "Tool_forage": "basket",
+    "Load_food": "load_food",
+    "Load_wood": "load_wood",
+    "Load_stone": "load_stone",
+    "Load_copper": "load_copper",
+    "Load_iron": "load_iron",
+    "Load_silicon": "load_silicon",
+    "Load_aether": "load_aether",
+    "Load_adamant": "load_adamant",
+}
+
+# The props of the unit being built: node name -> kind (`use`).
+_TABLE = {}
+
+
+def use(table):
+    """Make `table` (node name -> kind) the props of the unit being built."""
+    for name, kind in table.items():
+        if kind not in KINDS:
+            raise KeyError(f"prop {name}: no kind {kind!r} (have {sorted(KINDS)})")
+    _TABLE.clear()
+    _TABLE.update(table)
+
+
+def kind_of(name):
+    """The kind of a prop of the unit being built, or a kind by its own name."""
+    if name in _TABLE:
+        return _TABLE[name]
+    if name in KINDS:
+        return name
+    raise KeyError(f"unknown prop {name!r} (this unit has {sorted(_TABLE)})")
 
 
 def prop_info(name):
-    """The solver's `Prop` for a prop name (no Blender objects needed)."""
-    if name in TOOLS:
-        _, hand, mount = TOOLS[name]
-        return Prop(name, hand, "haft", frame(Vector((0, -1, 0)), Vector((0, 0, 1))), mount,
-                    parts=PARTS.get(name), strike=STRIKES.get(name))
-    if name in LOADS:
-        return Prop(name, LOAD_HAND, "load", Matrix.Identity(3))
-    raise KeyError(f"unknown prop {name!r}")
+    """The solver's `Prop` for a prop name (no Blender objects needed): a
+    node of the unit being built, or a library kind by its own name."""
+    k = KINDS[kind_of(name)]
+    if k.load:
+        return Prop(name, k.hand, "load", Matrix.Identity(3))
+    return Prop(name, k.hand, "haft", frame(Vector((0, -1, 0)), Vector((0, 0, 1))), k.mount,
+                parts=k.parts, strike=k.strike)
 
 
 def all_prop_names():
-    return list(TOOLS) + list(LOADS)
+    return list(_TABLE)
 
 
-def build_props(arm_obj, rig):
-    """Create every Tool_* / Load_* object, parented to its hand bone."""
+def build_props(arm_obj, rig, names=None):
+    """Create the unit's prop objects (or those in `names`: nodes of the
+    unit or kinds), each parented to its hand bone."""
     objs = {}
     rest = rig.fk({})
-    for name in all_prop_names():
+    for name in all_prop_names() if names is None else names:
         info = prop_info(name)
-        builder = TOOLS[name][0] if name in TOOLS else LOADS[name]
-        obj = builder().to_object(name)
+        obj = KINDS[kind_of(name)].builder().to_object(name)
         bone = HAND[info.hand]
         pos, w = rest[bone]
         world = mat4(pos, w) @ info.in_hand
@@ -474,14 +637,21 @@ def build_props(arm_obj, rig):
 # Team sash: a strap from the right shoulder across the chest to the left
 # hip and round the back, fitted to the body by ray casts and skinned with
 # weights copied from the nearest body vertices. The strap is the body's
-# outline in the plane through these two points (inside the body, world
-# axes: +X left) and the front-back axis. The shoulder point lies under the
-# top of the right shoulder, outside the neck and the hair (both within
-# 12 cm of the midline), so the strap runs over the shoulder, not up the
-# side of the neck.
+# outline in the plane through two points inside the body and the
+# front-back axis: one under the top of the right shoulder, outside the
+# neck and the hair, so the strap runs over the shoulder, not up the side
+# of the neck; one at the left hip. A unit's config may give them
+# (`SASH`); otherwise `sash_anchors` finds them from the skeleton.
 
-SASH_SHOULDER = (-0.165, 0.0, 1.33)
-SASH_HIP = (0.16, 0.0, 0.99)
+# Where `sash_anchors` puts the two points, measured on the peasant (whose
+# hand-placed points they reproduce to 1 mm): the shoulder point 89 % of
+# the way out to the right shoulder joint and 75 % of the way up from it to
+# the neck; the hip point 86.5 % of that half-width out to the left and
+# 42 % of the way up from the pelvis joint to the spine's first joint.
+SASH_SHOULDER_OUT = 0.89
+SASH_SHOULDER_UP = 0.75
+SASH_HIP_OUT = 0.865
+SASH_HIP_UP = 0.42
 SASH_WIDTH = 0.085  # wide enough to read as team colour from the RTS camera
 SASH_THICK = 0.008
 SASH_LIFT = 0.008
@@ -493,7 +663,20 @@ SASH_BONES = {HIPS, *SPINE, NECK, ARM["L"][0], ARM["R"][0]}  # skinned to: pelvi
 SASH_OFF = {HEAD, HEADFRONT, *(ARM[s][i] for s in SIDES for i in (1, 2, 3))}  # not fitted over: head, arms
 
 
-def build_sash(body, arm_obj):
+def sash_anchors(rig):
+    """(shoulder, hip) world points for the sash, from the rest skeleton."""
+    p = rig.rest_pos
+    r_arm, l_arm = p[ARM["R"][1]], p[ARM["L"][1]]
+    half = (l_arm.x - r_arm.x) / 2
+    mid_y = (p[SPINE[0]].y + p[SPINE[2]].y) / 2
+    shoulder = Vector((-SASH_SHOULDER_OUT * half, mid_y, r_arm.z + SASH_SHOULDER_UP * (p[NECK].z - r_arm.z)))
+    hip = Vector((SASH_HIP_OUT * half, mid_y, p[HIPS].z + SASH_HIP_UP * (p[SPINE[0]].z - p[HIPS].z)))
+    return shoulder, hip
+
+
+def build_sash(body, arm_obj, shoulder, hip, width=SASH_WIDTH):
+    """The skinned `Team_sash` through the world points `shoulder` and
+    `hip` (`sash_anchors`, or a unit's own)."""
     from mathutils.bvhtree import BVHTree
     from mathutils.kdtree import KDTree
 
@@ -514,7 +697,7 @@ def build_sash(body, arm_obj):
     bvh = BVHTree.FromPolygons(verts, polys)
     torso = [d in SASH_BONES for d in dom]
 
-    shoulder, hip = Vector(SASH_SHOULDER), Vector(SASH_HIP)
+    shoulder, hip = Vector(shoulder), Vector(hip)
     center = (shoulder + hip) / 2
     u = (hip - shoulder).normalized()
     v = Vector((0.0, 1.0, 0.0))
@@ -530,7 +713,7 @@ def build_sash(body, arm_obj):
     # round the loop (never inwards), so it lies flat across its width and
     # bridges the tunic's folds instead of following them.
     n = SASH_SEGMENTS
-    offsets = [SASH_WIDTH * (k / (SASH_LINES - 1) - 0.5) for k in range(SASH_LINES)]
+    offsets = [width * (k / (SASH_LINES - 1) - 0.5) for k in range(SASH_LINES)]
     r = [None] * n
     for off in offsets:
         c = center + normal * off
