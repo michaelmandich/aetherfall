@@ -8,9 +8,11 @@ There are two kinds of unit:
   names), generated empty-handed in an A-pose. The build keeps its
   skeleton, puts its weapon or tools in its hands (Meshy models of their
   own, or boxy props), adds a team sash, and bakes the clips: the shared ones in `clips/` (idle, walk, death...)
-  plus the unit's own in `<id>/clips/` (its attack). The peasant was the
-  first; the spearman, the crossbowman and the Starborn lumen knight
-  build from Meshy's rigging-API characters (see "Source notes").
+  plus the unit's own (its attack: written in `<id>/clips/`, or made
+  from a weapon family by `lib/fight.py`). The peasant was the first; the
+  spearman, the crossbowman, the Starborn lumen knight and the second
+  wave's 33 fighters and healers build from Meshy's rigging-API
+  characters (see "Source notes").
 - **Rigid**: anything without a skeleton (vehicles, siege, mounts, beasts,
   flyers). The build cleans and decimates it, adds a team pennant or band,
   and writes a manifest with no clips; the engine draws it as it is.
@@ -66,10 +68,13 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    see "Meshy props"), or a boxy kind of `lib/props.py` (spear, bow,
    crossbow, sling, round_shield, work_axe...; see "Props").
 4. **Clips.** The unit gets every shared clip. Fighters need their own
-   `Attack` and `CombatIdle` in `<id>/clips/` (start from the spearman's):
-   `HIT` is the weapon's `windup` in `assets/data/core/weapons.ron`, and the
-   clip should end well inside the weapon's `cooldown`. A unit clip with a
-   shared clip's name replaces it.
+   `Attack` and `CombatIdle`: most take them from their weapon's family
+   (see "Fight families"), the rest write them in `<id>/clips/` (start
+   from the spearman's). `HIT` is the weapon's `windup` in
+   `assets/data/core/weapons.ron`, and the clip should end well inside the
+   weapon's `cooldown`. A unit clip with a shared clip's name replaces it;
+   `CLIPS_FROM = "peasant"` takes another unit's clips (the engineer works
+   with the peasant's).
 5. **Build** and look at the sheets and the printed checks (see "Checks"):
 
    ```bash
@@ -229,6 +234,8 @@ art/units/
     ik.py              two-bone IK
     clip.py            Clip (the authoring API), Context (one build), source resampling
     stances.py         shared start poses: relaxed, combat ready (axe, spear), carrying
+    fight.py           Attack, CombatIdle and CARRY by weapon family; the healers' Heal
+    gamedata.py        unit and weapon numbers from assets/data (the windup is HIT)
     props.py           the prop library (tools, weapons, loads), grips, named parts, Team_sash
     retarget.py        clips from other files (Mixamo FBX, Meshy GLB) onto the rig
     checks.py          per-clip measurements and warnings
@@ -245,6 +252,7 @@ art/units/
   spearman/            unit.py + clips/Attack.py, CombatIdle.py (the spear thrust)
   crossbowman/         unit.py + clips/Attack.py, CombatIdle.py (raise, aim, shoot)
   starborn_lumen_knight/  unit.py + clips/Attack.py, CombatIdle.py (a one-handed lightblade stroke)
+  pikeman/, archer/, monk/...  unit.py only: clips from a fight family (lib/fight.py)
   battering_ram/       unit.py (rigid, pennant)
   scout_rider/         unit.py (rigid, band)
 ```
@@ -269,6 +277,40 @@ with `hold()`; the build converts the wielding arm to FK. `HELD` (default:
 the `Gear_*` props) and `CARRY_SKIP` (clips that keep their own arms)
 adjust it. Check the carried clips' sheets for the gear crossing the legs
 (`props in the body`).
+
+## Fight families
+
+`lib/fight.py` makes a fighter's `Attack` and `CombatIdle`, and the
+`CARRY` that holds its gear, from its weapon's family; `HIT` comes from
+the game data (`lib/gamedata.py` reads `assets/data`). The pikeman's
+whole config:
+
+```python
+from lib import fight
+PROPS = {"Gear_pike": "pike"}
+CARRY = fight.carry("thrust", "Gear_pike")
+CLIPS = fight.clips("pikeman", "thrust", "Gear_pike")   # a shield node may follow the weapon
+```
+
+| family | the blow | units |
+|---|---|---|
+| `thrust` | two-handed polearm lunge (the spearman's) | pikeman, halberdier |
+| `swing` | one-handed diagonal cut, a shield or a guard hand (the lumen knight's) | militia, man_at_arms, tide_marine, starborn_zealot, dune_sun_guard, dune_veil_guard |
+| `heavy` | two-handed overhead smash | ironhold_delver_band, ironhold_thane_guard, ironhold_ironclad, tide_varangian, shock_trooper |
+| `bow` | draw to the cheek, loose | archer, sylvan_longbowman |
+| `gun` | shouldered, aimed, fired with a kick | arquebusier, rifle_squad, ironhold_hearthguard, tide_phaser_marine, tide_diver |
+| `hip` | fired from the hip | gatling_crew, tide_siphoneer |
+| `gun1h` | fired one-handed past a tall shield | shield_trooper |
+| `throw` | overhand throw, with an optional shield | javelineer, grenadier |
+| `sling` | swung up behind the head, whipped forward | slinger |
+| `cast` | a staff, lens or rune raised and pointed; `None` for bare hands | starborn_lightbearer, sylvan_lightwarden, sylvan_druid, ironhold_runeguard, dune_sand_mage |
+
+`fight.heal(weapon=None)` is a healer's `Heal` loop (the monk's, the
+druid's with its staff). Every pose was searched for straight wrists on a
+real Meshy body holding its real Meshy weapon, then scaled by body height;
+the weapon's own geometry decides where its head goes. A body whose arms
+are short for its height has an out-of-reach hand drawn in toward the
+shoulder (`fight._fk`); one that reaches gets the pose as written.
 
 ## Adding or changing a clip
 
@@ -488,9 +530,12 @@ the prop frame (the file documents every key):
   and gives the hand, the mount and the striking part's name, so clips work
   with either.
 - `haft` / `strike`: which of the file's axes (glTF's, +Y up) runs up the
-  haft to the head and toward the striking side. Left out, the build takes
-  the longest axis for the haft and the longer of the others for the
-  strike, and prints what it chose.
+  haft to the head and toward the striking side, or `(x, y, z)` in glTF
+  axes for a model lying askew. Left out, the build takes the model's
+  principal axes (the longest spread for the haft, the next for the
+  strike; snapped to a file axis within 10°) and prints what it chose.
+  The sign it guesses is often wrong: `flip` turns the haft end for end,
+  `strike_flip` the striking side.
 - `length`: metres along the haft (the file's scale is arbitrary).
 - `grip`: a fraction of the length from the butt; the hand goes to the
   middle of the haft there (where the mesh's edges cross that height). Or
@@ -501,6 +546,9 @@ the prop frame (the file documents every key):
 - `glow`: the model emits its own colours at this strength (the cleanup
   takes Meshy's emission off everything else), as the Starborn lightblade
   should.
+- `file`: build it from another prop's model, a stand-in while its own is
+  unusable (the yew longbow's file holds two bows crossed over each other:
+  the short bow stands in, at the longbow's length).
 
 A prop's id is the game's weapon id (`assets/data/core/weapons.ron` and
 the factions'): `short_spear`, `crossbow`, `starborn_lightblade`. The
@@ -546,7 +594,7 @@ warning knowingly.
 | `seam` | Loops: first frame against last. Must be 0. |
 | `pelvis horizontal offset` | How far the pelvis leaves the spot (clips are in place; Death, Spawn and a lunge travel on purpose). |
 | `foot L/R` | Lowest sole point, planted frames, and how far a planted foot slides (must be about 0 in work clips). |
-| `ground speed` | Locomotion: the planted foot's speed under the body, written to the manifest as `speed`. |
+| `ground speed` | Locomotion: the planted foot's speed under the body, written to the manifest as `speed`. A contact ends where the foot is furthest back: a long boot rolling off its toe stays on the floor while it already swings forward. |
 | `ik reach error` | How far any IK target was out of reach. |
 | `wrist L/R` | Flexion (palm side +) and deviation (thumb side +) over the clip, against 25° radial, 40° ulnar and a 65° total bend. |
 | `strike` | The prop's striking part (its kind's `strike`): its speed into HIT against the swing's peak. Warns below 60 %. |
@@ -565,6 +613,12 @@ Accepted warnings in the current set:
   the guard's wrists are straight.
 - crossbowman Death: the crossbow passes 5 cm into the left thigh as he
   falls.
+- The second wave's guns (arquebusier, rifle_squad, ironhold_hearthguard,
+  tide_phaser_marine, tide_diver, shield_trooper) and hip weapons
+  (gatling_crew, tide_siphoneer): the stock or the gun's body rests 5-15 cm
+  into the shoulder, chest or forearm, as a held gun does.
+- monk and dune_sand_mage IdleFidget: the shared fidget bends the right
+  wrist 40° radial on these bodies, for a moment.
 
 ## Mixamo clips
 
@@ -647,7 +701,8 @@ to show them on the sheet. A Mixamo clip can still be a base layer:
   bone-parented props metres away. That comes from Blender's importer, not
   the file. `lib/export.py` checks prop placement from the file's own node
   tree, and `crates/af_render/tests/peasant_asset.rs` reads the GLB with the
-  same `gltf` crate Bevy uses.
+  same `gltf` crate Bevy uses (`unit_assets.rs` does it for every
+  registered unit: its manifest, and each clip at its length).
 - **A-pose.** The characters are rigged in an A-pose. The clips do not
   depend on the rest pose (every angle is measured from a calibrated
   neutral), but `--mixamo-fbx` uploads it and retargeted clips align to it.
@@ -667,5 +722,12 @@ to show them on the sheet. A Mixamo clip can still be a base layer:
   knight 1.80 m). Another body with the same weapon may need its own
   search (README "Wrists stay in range"), especially for the carry: a
   thick Meshy weapon brushes the legs or head sooner than a boxy one.
+- **The second wave.** Its bodies are 1.6 m (dwarves) to 2.0 m (power
+  armour). Two needed more than their family: the delver's short legs
+  (the shared Death draws the seated feet in, only when a body cannot
+  reach them) and the sun guard's short arms (`fight._fk`). Meshy's
+  walking cycle can leave a heavy boot's toe on the floor while the foot
+  already swings forward; the ground speed allows for it (see "Checks"),
+  which also corrected the crossbowman's Walk from 0.88 to 1.33 m/s.
 - **New sources.** The first real file of a kind deserves a look at its
   sheets and its checks.

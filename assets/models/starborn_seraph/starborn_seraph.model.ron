@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_seraph; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_seraph/starborn_seraph.glb",
+    height: 1.698,
+    clips: {
+    },
+)

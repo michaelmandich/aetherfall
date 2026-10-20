@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit flak_wagon; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/flak_wagon/flak_wagon.glb",
+    height: 1.410,
+    clips: {
+    },
+)

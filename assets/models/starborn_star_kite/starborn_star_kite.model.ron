@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_star_kite; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_star_kite/starborn_star_kite.glb",
+    height: 1.900,
+    clips: {
+    },
+)

@@ -1,0 +1,21 @@
+// Written by art/units/build_unit.py --unit shock_trooper; do not edit by hand.
+// Clip durations in seconds; speed = ground speed in m/s at playback
+// rate 1 (model scale 1); hit = impact time in seconds; reach = how far
+// ahead the work lands in metres (model scale 1).
+(
+    model: "models/shock_trooper/shock_trooper.glb",
+    height: 2.000,
+    clips: {
+        "Acknowledge": (duration: 0.8000, looping: false),
+        "Attack": (duration: 1.1333, looping: false, hit: 0.5000),
+        "Cheer": (duration: 2.0000, looping: false),
+        "CombatIdle": (duration: 1.5000, looping: true),
+        "Death": (duration: 1.5000, looping: false),
+        "HitReact": (duration: 0.4000, looping: false),
+        "Idle": (duration: 3.0000, looping: true),
+        "IdleFidget": (duration: 3.0000, looping: false),
+        "Run": (duration: 0.6333, looping: true, speed: 5.863),
+        "Spawn": (duration: 1.0000, looping: false),
+        "Walk": (duration: 1.0333, looping: true, speed: 1.692),
+    },
+)

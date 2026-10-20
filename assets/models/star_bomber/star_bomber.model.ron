@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit star_bomber; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/star_bomber/star_bomber.glb",
+    height: 0.538,
+    clips: {
+    },
+)

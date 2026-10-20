@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit sylvan_rootbreaker; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/sylvan_rootbreaker/sylvan_rootbreaker.glb",
+    height: 1.286,
+    clips: {
+    },
+)

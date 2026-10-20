@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit titan; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/titan/titan.glb",
+    height: 1.897,
+    clips: {
+    },
+)

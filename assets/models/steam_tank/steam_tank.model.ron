@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit steam_tank; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/steam_tank/steam_tank.glb",
+    height: 1.329,
+    clips: {
+    },
+)

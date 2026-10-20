@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit dune_mirror_engine; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/dune_mirror_engine/dune_mirror_engine.glb",
+    height: 1.898,
+    clips: {
+    },
+)

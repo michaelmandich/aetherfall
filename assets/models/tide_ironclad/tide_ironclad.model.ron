@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit tide_ironclad; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/tide_ironclad/tide_ironclad.glb",
+    height: 1.186,
+    clips: {
+    },
+)

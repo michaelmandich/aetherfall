@@ -29,6 +29,7 @@ game whatever the source's scale:
 
 import math
 import os
+import tempfile
 
 import bmesh
 import bpy
@@ -118,7 +119,7 @@ def build(unit, src, out_dir, sheets_dir, model_path, writer):
     if sheets_dir:
         from . import sheets
         out = os.path.join(sheets_dir, f"{unit.id}.png")
-        sheets.render_model(objects, out, os.path.join(sheets_dir, "_tiles"))
+        sheets.render_model(objects, out, tempfile.mkdtemp(prefix="af_tiles_"))  # short: Windows paths stop at 260
         print("sheet", out)
 
 

@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starfighter; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starfighter/starfighter.glb",
+    height: 0.383,
+    clips: {
+    },
+)

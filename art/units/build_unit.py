@@ -36,6 +36,7 @@ art/units/README.md.
 import argparse
 import os
 import sys
+import tempfile
 import time
 
 sys.dont_write_bytecode = True  # keep __pycache__ out of the repository
@@ -128,6 +129,7 @@ def build_humanoid(unit, args, src, out_dir, sheets_dir):
     rig.attach_soles(body)
     selftest.run(rig)
     lo, hi = body_height(body)
+    rig.height = hi - lo  # the fight clips (lib/fight.py) scale their positions by it
     print(f"rest pose: body z {lo:.4f} .. {hi:.4f} m (height {hi - lo:.3f} m)")
     prop_objs = props.build_props(arm, rig)
     markers = []
@@ -197,7 +199,8 @@ def build_humanoid(unit, args, src, out_dir, sheets_dir):
 
     if sheets_dir or args.calibrate:
         rig_scene = sheets.SheetRig(bpy.context.scene)
-        scratch = os.path.join(sheets_dir or args.calibrate, "_tiles")
+        # Tiles go to a short temporary folder: Windows paths stop at 260 characters.
+        scratch = tempfile.mkdtemp(prefix="af_tiles_")
         if sheets_dir:
             for clip in clips:
                 out = os.path.join(sheets_dir, f"{clip.name}.png")

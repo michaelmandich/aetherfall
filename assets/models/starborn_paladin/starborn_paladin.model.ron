@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_paladin; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_paladin/starborn_paladin.glb",
+    height: 1.901,
+    clips: {
+    },
+)
