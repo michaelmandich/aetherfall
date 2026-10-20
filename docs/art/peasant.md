@@ -176,6 +176,10 @@ them, with these differences:
 - **Team colour.** Always a material named `Team`: the skinned
   `Team_sash` on humanoids (fitted to each body), `Team_pennant` or
   `Team_band` on rigid models, and the face of a round shield.
+- **Skeleton.** Every humanoid GLB has the peasant's joint names
+  (`mixamorig:Hips` ...), whatever the source used: Meshy's rigging API
+  names them differently and the build renames them (`art/units/README.md`,
+  "Source notes"). The API's extra `head_end` joint is kept, unanimated.
 - **Rigid models** (vehicles, siege, mounts, beasts, flyers): no skin, no
   animation, `clips: {}` in the manifest, `height` = the model's height.
   The engine draws them in their bind pose with no animation player,

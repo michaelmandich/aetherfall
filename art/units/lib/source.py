@@ -7,7 +7,13 @@
   fixed so the rig reads in Blender's viewport and bone-parented props
   behave.
 * Body: every mesh skinned to the armature, joined into one (Meshy ships
-  one). The skeleton must have every bone `lib/rig.py` names.
+  one). The skeleton must have every bone `lib/rig.py` names: bones in
+  Meshy's rigging-API naming are renamed to the Mixamo names first
+  (`rig.canonical_names`), and arm and hand bones rolled half a turn from
+  the Mixamo convention (local X toward the character's left) are rolled
+  back, so the pose helper's elbow hinge and palm conventions hold. Neither
+  moves the mesh. The source's own Walking/Running are then read from the
+  file by retargeting (`SourceClip` values are relative to the old roll).
 * Material: emissive texture and factor removed, base colour downscaled to
   the unit's texture size and re-encoded as a compact PNG (lib/png.py), metallic 0 /
   plain roughness (the source leaves the glTF defaults, metallic 1, which
@@ -48,8 +54,10 @@ SOURCE_CLIPS = ("Walking", "Running")  # the source's own actions read as clips
 
 
 def load(path, texture_name, body_material, texture_size=TEXTURE_SIZE):
-    """Fresh scene with the cleaned source. Returns (armature, body, clips):
-    `clips` maps the names in SOURCE_CLIPS the file has to `SourceClip`s."""
+    """Fresh scene with the cleaned source. Returns (armature, body, clips,
+    notes): `clips` maps the names in SOURCE_CLIPS the file has to
+    `SourceClip`s; `notes` says what was renamed or rolled, and
+    `notes.retarget` lists the source clips to read by retargeting instead."""
     from .rig import GROUPS
 
     if not os.path.isfile(path):
@@ -65,6 +73,11 @@ def load(path, texture_name, body_material, texture_size=TEXTURE_SIZE):
         raise SourceError(f"{path}: expected one armature, found {len(armatures)} (an unrigged model is a "
                           f"rigid unit: KIND = \"rigid\" in its unit.py)")
     arm = armatures[0]
+    notes = Notes()
+    renamed = _canonical_bones(arm)
+    if renamed:
+        spine = [old for old, new in renamed.items() if new.split(":")[-1].startswith("Spine")]
+        notes.append(f"renamed {len(renamed)} bones to the Mixamo names (spine from the hips: {' > '.join(spine)})")
     missing = [n for n in GROUPS["all"] if n not in arm.data.bones]
     if missing:
         raise SourceError(f"{path}: the skeleton lacks {missing} (lib/rig.py expects Meshy's Mixamo skeleton)")
@@ -77,11 +90,17 @@ def load(path, texture_name, body_material, texture_size=TEXTURE_SIZE):
         if o not in (arm, body):
             bpy.data.objects.remove(o, do_unlink=True)
     _fix_bone_lengths(arm)
+    rolled = _roll_arms(arm)
+    if rolled:
+        notes.append(f"rolled {len(rolled)} arm and hand bones half a turn to the Mixamo convention")
     _clean_material(body, body_material, texture_name, texture_size)
     clips = {}
     for action in bpy.data.actions:
         if action.name in SOURCE_CLIPS:
-            clips[action.name] = SourceClip(action)
+            if rolled:
+                notes.retarget.append(action.name)
+            else:
+                clips[action.name] = SourceClip(action)
     ad = arm.animation_data
     if ad:
         for t in list(ad.nla_tracks):
@@ -95,7 +114,45 @@ def load(path, texture_name, body_material, texture_size=TEXTURE_SIZE):
         pb.rotation_quaternion = (1, 0, 0, 0)
         pb.scale = (1, 1, 1)
     bpy.context.view_layer.update()
-    return arm, body, clips
+    return arm, body, clips, notes
+
+
+class Notes(list):
+    """Lines saying what `load` changed; `retarget`: source clips to read
+    from the file by retargeting."""
+
+    def __init__(self):
+        super().__init__()
+        self.retarget = []
+
+
+def _canonical_bones(arm):
+    """Rename the bones to the rig's names (`rig.canonical_names`); Blender
+    renames the vertex groups with them. Returns {old: new}."""
+    from .rig import canonical_names
+
+    names = canonical_names({b.name: b.parent.name if b.parent else None for b in arm.data.bones})
+    renames = {old: new for old, new in names.items() if old != new}
+    for old, new in renames.items():  # the new names are prefixed: they never clash with old ones
+        arm.data.bones[old].name = new
+    return renames
+
+
+def _roll_arms(arm):
+    """Roll back half a turn the arm and hand bones whose local X points to
+    the character's right. Returns their names."""
+    from .rig import ARM, LEFT, SIDES
+
+    rot = arm.matrix_world.to_3x3()
+    turn = [n for s in SIDES for n in ARM[s][1:]
+            if (rot @ arm.data.bones[n].matrix_local.to_3x3()).col[0].dot(LEFT) < 0.0]
+    if turn:
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="EDIT")
+        for n in turn:
+            arm.data.edit_bones[n].roll += math.pi
+        bpy.ops.object.mode_set(mode="OBJECT")
+    return turn
 
 
 def _join(meshes):

@@ -1,7 +1,7 @@
 """Clips from other files: Mixamo FBX downloads, Meshy's walking/running
 GLBs, or any glTF / FBX whose armature uses the Mixamo bone names
 (`mixamorig:Hips`, ...; any `<prefix>:` before the name, such as Mixamo's
-`mixamorig1:`, matches).
+`mixamorig1:`, matches) or Meshy's rigging-API names (`rig.canonical_names`).
 
     clip.from_file("peasant/source/mixamo/Waving.fbx")   # in a clip module's build()
 
@@ -31,7 +31,7 @@ import os
 import bpy
 from mathutils import Matrix, Vector
 
-from .rig import HIPS
+from .rig import HIPS, canonical_names
 
 REST_TOLERANCE = 5.0  # degrees: rest poses further apart than this are reported
 LOOP_SEAM = 0.5       # degrees: a looping action whose last frame matches its first repeats it
@@ -97,8 +97,10 @@ def _match(path, src, rig):
     of a bone onto the file's (identity when the rest poses agree), found
     from two directions per bone (`_reference`): where its limb points and
     the plane it bends in. A bone with no child takes its parent's."""
-    rest, by_name = _rest(src), _names(src)
-    names = {n: by_name[n.split(":")[-1]] for n in rig.order if n.split(":")[-1] in by_name}
+    rest = _rest(src)
+    theirs = {r: f for f, r in canonical_names({b.name: b.parent.name if b.parent else None
+                                                 for b in src.data.bones}).items()}
+    names = {n: theirs[n] for n in rig.order if n in theirs}
     ours = {n: rig.rest_pos[n] for n in names}
     theirs = {n: rest[f][1] for n, f in names.items()}
     align, worst = {}, (0.0, None)

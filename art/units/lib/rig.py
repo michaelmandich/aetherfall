@@ -57,6 +57,51 @@ GROUPS["lower"] = GROUPS["hips"] + GROUPS["legs"]
 GROUPS["upper"] = GROUPS["spine"] + GROUPS["head"] + GROUPS["arms"]
 GROUPS["all"] = GROUPS["lower"] + GROUPS["upper"]
 
+
+def canonical_names(parents):
+    """{file bone: the rig's name} for a skeleton given as {bone: parent or
+    None}, for the bones the rig uses (others are left out).
+
+    Two namings of the same 23 joints exist. Meshy's web export (the
+    peasant) and Mixamo use Mixamo's: `mixamorig:Hips`, `Spine`, `Spine1`,
+    `Spine2`, `Neck`... (any `<prefix>:`). Meshy's rigging API names them
+    without a prefix, the neck `neck`, and the spine Hips > Spine02 >
+    Spine01 > Spine > neck: its *lowest* spine bone is `Spine02` and its
+    chest is `Spine`. Its spine is therefore mapped by its place in the
+    chain from the hips, the rest by name (any case). It also has a
+    `head_end` leaf, which the rig carries along unposed."""
+    base = {n: n.split(":")[-1] for n in parents}
+    wanted = {b.split(":")[-1] for b in GROUPS["all"]}
+
+    def rig_name(b):
+        return b if b == HEADFRONT else PREFIX + b
+
+    if wanted <= set(base.values()):
+        return {n: rig_name(b) for n, b in base.items() if b in wanted}
+    lower = {b.lower(): n for n, b in base.items()}
+    children = {}
+    for n, p in parents.items():
+        children.setdefault(p, []).append(n)
+    out = {}
+    hips = lower.get("hips")
+    if hips is not None:
+        out[hips] = rig_name("Hips")
+        chain, cur = [], hips
+        while len(chain) < 3:
+            kids = [c for c in children.get(cur, ()) if not base[c].lower().endswith("upleg")]
+            if len(kids) != 1:
+                break
+            cur = kids[0]
+            chain.append(cur)
+        if len(chain) == 3:
+            for n, b in zip(chain, ("Spine", "Spine1", "Spine2")):
+                out[n] = rig_name(b)
+    for b in wanted - {"Hips", "Spine", "Spine1", "Spine2"}:
+        n = lower.get(b.lower())
+        if n is not None and n not in out:
+            out[n] = rig_name(b)
+    return out
+
 # Character directions in world coordinates.
 FWD = Vector((0.0, -1.0, 0.0))
 BACK = -FWD

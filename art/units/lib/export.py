@@ -80,8 +80,10 @@ def _node_matrix(n):
 
 
 def rest_centroids(path):
-    """Rest-pose world centroid (Blender axes, metres) of every unskinned mesh
-    node, computed from the GLB's own node tree and vertex buffers."""
+    """Rest-pose world bounding-box centre (Blender axes, metres) of every
+    unskinned mesh node, computed from the GLB's own node tree and vertex
+    buffers (a box centre: the exporter duplicates vertices along seams,
+    which moves a mean)."""
     import numpy as np
     js, buf = _glb_chunks(path)
     parent = {c: i for i, n in enumerate(js["nodes"]) for c in n.get("children", [])}
@@ -100,7 +102,7 @@ def rest_centroids(path):
             start = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
             pts.append(np.frombuffer(buf, np.float32, acc["count"] * 3, start).reshape(-1, 3))
         p = np.concatenate(pts) @ m[:3, :3].T + m[:3, 3]
-        c = p.mean(0)
+        c = (p.min(0) + p.max(0)) / 2
         out[n["name"]] = (float(c[0]), float(-c[2]), float(c[1]))  # glTF Y-up -> Blender Z-up
     return out
 
@@ -141,7 +143,8 @@ def verify(path, clips, prop_names, bone_names, glowing=(), prop_rest=None, text
     duration, every prop / bone / team `markers` node present by name, the
     `Team` material, nothing emissive but the `glowing` materials, PNG
     textures of at most `texture_size` px, and (given `prop_rest`, name ->
-    rest centroid) every prop where Blender had it in the rest pose."""
+    rest bounding-box centre) every prop where Blender had it in the rest
+    pose."""
     s = summarize(path)
     problems = []
     if prop_rest:

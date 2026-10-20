@@ -3,7 +3,7 @@
 from lib import stances
 
 # SOURCE: source/spearman.glb (the default), the rigged Meshy character.
-PROPS = {"Gear_spear": "spear"}  # Gear_: always shown, so it is never empty-handed
+PROPS = {"Gear_spear": "short_spear"}  # Gear_: always shown, so it is never empty-handed
 
 
 def CARRY(clip):
