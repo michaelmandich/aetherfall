@@ -133,6 +133,12 @@ age-ups, and prints every faction's roster per age.
 Models replace boxes one type at a time. Anything without a model is drawn
 as boxes, and the box stays every entity's collision shape.
 
+The source models the art builds read (`art/static/source/`,
+`art/units/source/`, about 1 GB) are stored with
+[Git LFS](https://git-lfs.com): run `git lfs install` once before cloning,
+or they arrive as small pointer files. The built models in `assets/` are
+ordinary files, so the game runs without them.
+
 ### Buildings and resource nodes: dropping a model in
 
 1. **Save the model** under the game's id (the ids are in `assets/data/`):

@@ -1,0 +1,2 @@
+art/units/source/**/*.glb filter=lfs diff=lfs merge=lfs -text
+art/static/source/**/*.glb filter=lfs diff=lfs merge=lfs -text
