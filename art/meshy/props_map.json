@@ -1,0 +1,133 @@
+{
+  "_about": "Which Meshy prop models each rigged unit holds (prop ids are art/meshy/requests.json ids, kind props; files land in art/units/source/props/). Written with batch 3; unit configs in art/units/<id>/unit.py name these.",
+  "units": {
+    "slinger": {
+      "weapon": "sling",
+      "shield": null
+    },
+    "archer": {
+      "weapon": "short_bow",
+      "shield": null
+    },
+    "militia": {
+      "weapon": "club",
+      "shield": null
+    },
+    "pikeman": {
+      "weapon": "pike",
+      "shield": null
+    },
+    "javelineer": {
+      "weapon": "javelin",
+      "shield": "round_shield"
+    },
+    "man_at_arms": {
+      "weapon": "arming_sword",
+      "shield": "heater_shield"
+    },
+    "halberdier": {
+      "weapon": "halberd",
+      "shield": null
+    },
+    "grenadier": {
+      "weapon": "grenade",
+      "shield": null
+    },
+    "arquebusier": {
+      "weapon": "arquebus",
+      "shield": null
+    },
+    "engineer": {
+      "weapon": "engineer_axe",
+      "shield": null
+    },
+    "rifle_squad": {
+      "weapon": "rifle",
+      "shield": null
+    },
+    "gatling_crew": {
+      "weapon": "gatling",
+      "shield": null
+    },
+    "shock_trooper": {
+      "weapon": "shock_maul",
+      "shield": null
+    },
+    "shield_trooper": {
+      "weapon": "plasma_carbine",
+      "shield": "adamant_shield"
+    },
+    "ironhold_delver_band": {
+      "weapon": "ironhold_mattock",
+      "shield": null
+    },
+    "starborn_zealot": {
+      "weapon": "starborn_scourge",
+      "shield": null
+    },
+    "dune_sun_guard": {
+      "weapon": "dune_scimitar",
+      "shield": null
+    },
+    "ironhold_thane_guard": {
+      "weapon": "ironhold_dane_axe",
+      "shield": null
+    },
+    "starborn_lightbearer": {
+      "weapon": "starborn_sunlens",
+      "shield": null
+    },
+    "ironhold_hearthguard": {
+      "weapon": "ironhold_blunderbuss",
+      "shield": null
+    },
+    "dune_veil_guard": {
+      "weapon": "dune_khanjar",
+      "shield": null
+    },
+    "starborn_lumen_knight": {
+      "weapon": "starborn_lightblade",
+      "shield": null
+    },
+    "ironhold_ironclad": {
+      "weapon": "ironhold_piston_hammer",
+      "shield": null
+    },
+    "ironhold_runeguard": {
+      "weapon": "ironhold_thunder_rune",
+      "shield": null
+    },
+    "sylvan_longbowman": {
+      "weapon": "sylvan_yew_longbow",
+      "shield": null
+    },
+    "sylvan_druid": {
+      "weapon": "sylvan_starcall",
+      "shield": null
+    },
+    "sylvan_lightwarden": {
+      "weapon": "sylvan_crystal_lens",
+      "shield": null
+    },
+    "tide_marine": {
+      "weapon": "tide_boarding_axe",
+      "shield": "tide_buckler_shield"
+    },
+    "tide_varangian": {
+      "weapon": "tide_varangian_axe",
+      "shield": null
+    },
+    "tide_siphoneer": {
+      "weapon": "tide_siphon",
+      "shield": null
+    },
+    "tide_diver": {
+      "weapon": "tide_galvanic_harpoon",
+      "shield": null
+    },
+    "tide_phaser_marine": {
+      "weapon": "tide_phaser",
+      "shield": null
+    }
+  }
+}

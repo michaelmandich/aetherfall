@@ -1,13 +1,15 @@
 {
-    "_about": "Shared settings for every Meshy model (tools/meshy/meshy.py). Change these and every later model follows; already-made models keep the style they were made with. The suffixes are appended to each asset's prompt (max 800 characters in all).",
+    "_about": "Shared settings for every Meshy model (tools/meshy/meshy.py); the reasoning behind every layer is docs/art/style-guide.md. Change these and every later model follows; already-made models keep the style they were made with. Batch 1 (text to 3D: ai_model, texture_resolution, enable_pbr, remove_lighting, prompt_suffix, texture_suffix) is kept as it was made. From batch 2 on every asset goes concept -> pick -> model (image to 3D) -> rig: the concept prompt is framing + Subject + faction + magic + age + kinds + look, with the kind's reference images as style references.",
     "ai_model": "meshy-6",
     "texture_resolution": "2k",
     "enable_pbr": false,
     "remove_lighting": true,
-    "queue_limit": 10,
+    "queue_limit": 100,
     "polycount": {
         "nodes": 8000,
-        "buildings": 30000
+        "buildings": 30000,
+        "units": 15000,
+        "props": 3000
     },
     "prompt_suffix": {
         "nodes": "Temperate Northern Europe in the Iron Age, natural and believable, realistic bark, foliage and stone, muted natural palette. Game asset for a top-down real-time strategy game: one object standing on flat ground, clear readable silhouette, no base plate, no people, no text.",
@@ -16,5 +18,58 @@
     "texture_suffix": {
         "nodes": "Realistic natural materials, muted greens and browns, soft even lighting, no baked shadows.",
         "buildings": "Realistic hand-made materials: weathered timber, straw thatch, daub plaster, rough stone; muted earthy palette of warm browns, ochre, grey stone and moss green; soft even lighting, no baked shadows."
+    },
+
+    "concept": {
+        "ai_model": "nano-banana-pro",
+        "candidates": 2,
+        "aspect": { "character": "3:4", "object": "1:1", "prop": "1:1" }
+    },
+    "model": {
+        "ai_model": "meshy-6",
+        "texture_resolution": "2k",
+        "remove_lighting": true,
+        "enable_pbr": false
+    },
+    "references": {
+        "units": ["art/meshy/references/peasant.png", "art/meshy/references/house.png"],
+        "props": ["art/meshy/references/peasant.png", "art/meshy/references/house.png"],
+        "buildings": ["art/meshy/references/house.png", "art/meshy/references/town_center.png", "art/meshy/references/lumber_camp.png"],
+        "nodes": ["art/meshy/references/pine.png", "art/meshy/references/oak.png", "art/meshy/references/house.png"]
+    },
+    "framing": {
+        "character": "Concept art for a 3D game model: one full-body character seen straight from the front, standing in a relaxed A-pose with the arms angled down and away from the body, empty open hands, feet flat on the ground, the whole figure in frame with space around it, on a plain light grey background, soft even studio light, no cast shadows.",
+        "object": "Concept art for a 3D game model: one single object shown whole in three-quarter view from slightly above, as a strategy-game camera sees it, centred with space around it, on a plain light grey background, soft even studio light, no cast shadows, no ground plane.",
+        "prop": "Concept art for a 3D game prop: one single hand-held item shown whole, lying flat and seen from the side, centred with space around it, on a plain light grey background, soft even studio light, no cast shadows, no hands holding it."
+    },
+    "look": "Art style: grounded realism with a hand-made warmth, like a finely painted miniature: believable materials, chunky and slightly simplified forms, a few large readable details, muted natural colours, lived-in and weathered but cared for. Not cartoon, no outlines, no cel shading, not gritty photorealism. Any glow is a thin accent only. No text, letters, logos, heraldry, flags or banners.",
+    "ages": {
+        "1": "Hearth Age materials: timber, wattle and daub, straw thatch, fieldstone, undyed wool and linen, leather and fur; bronze and rough dark iron; nothing glows.",
+        "2": "Banner Age materials: dressed stone, slate and shingle, mail, padded gambesons, forged steel and iron plate pieces; nothing glows.",
+        "3": "Starfall Age: the first aether tech, grown out of craft: brass, gold trim, verdigris bronze and dark riveted iron, violet aether crystals set in carved fittings, thin warm amber glowing lines.",
+        "4": "Engine Age: blackened iron, gunmetal grey, heavy rivets, pipes, gauges and boilers, verdigris bronze and gold trim, a little soot; thin warm amber glowing lines and small amber cores.",
+        "5": "Ascendant Age: dark polished metal, gold and cool grey plates over hand-forged riveted frames, shadowy recesses; thin blue glowing lines and small blue cores."
+    },
+    "factions": {
+        "ironhold": "Ironhold Thanes culture: Norse and Germanic mountain clans, dwarves in spirit though human: broad, stocky and bearded, heavy riveted plate, rock-cut stone and forge-iron forms; small accents of soot black, oxblood red and gold runes.",
+        "sylvan": "Sylvan Wardens culture: Celtic forest clans of druids, rangers and beast-tamers: torcs, leather, bark and living wood, knotwork, standing-stone forms; small accents of moss green and bark brown.",
+        "dune": "Sunspire Caliphate culture: desert scholars and glass-wrights in the Abbasid and Persian tradition: flowing linen, veils and turbans, domes and pointed arches, brass and sun-fused glass; small accents of white linen and saffron.",
+        "tide": "Tidecrown Republic culture: Venetian and Byzantine lagoon merchants with a Varangian guard: lamellar and quilted coats, galley-built timber, coral and sea-worn bronze; small accents of teal-cyan and copper.",
+        "steppe": "Khaganate of the Steppe culture: Mongol and Turkic horse clans: felt, lacquered leather and lamellar, fur-trimmed hats, horn and silver fittings, felt-and-lattice forms; small accents of indigo and silver.",
+        "starborn": "Synod of the Fallen Star culture: a monastic star-cult of paladins and monks: cathedral and reliquary forms, star motifs; small accents of white and gold."
+    },
+    "magic": {
+        "starborn": "Its holy power shows as white enamel, polished gold and pale crystal with a thin pale-gold starlight glow.",
+        "sylvan": "Its nature magic shows as living wood, bark, moss and bronze with a thin soft green glow.",
+        "dune": "Its sorcery shows as sun-fused glass and polished brass with a thin amber sun-glow.",
+        "ironhold": "Its rune-craft shows as blackened iron and carved stone with inlaid gold runes glowing a thin molten orange.",
+        "tide": "Its sea-magic shows as copper, verdigris, coral and mother-of-pearl with a thin sea-teal glow.",
+        "steppe": "Its sky-magic shows as horn, silver and lacquer with a thin white-gold sky-fire glow."
+    },
+    "kinds": {
+        "units": "A single game unit: exactly one figure or machine, slightly heroic proportions with weapons, shields, helmets and hands about a quarter larger than life and a normal-sized head, a plain weathered face. Neutral undyed cloth and natural metals; no strong colour on large areas.",
+        "props": "A single hand-held weapon or shield for a game unit, slightly oversized and chunky so it reads from far away, nothing attached to it.",
+        "buildings": "A single building for a strategy game: chunky readable massing with a clear roof shape and a few large features, standing alone with no base plate, no ground around it, no people or animals.",
+        "nodes": "A single natural resource object for a strategy game, standing alone with no base plate and no ground around it."
     }
 }
