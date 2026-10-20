@@ -69,7 +69,7 @@ def run(rig):
     check("foot L IK placement", err < 1e-3, f"{err * 1000:.2f} mm")
 
     # Two hands on one haft: the left fist sits on the haft line `at` up it.
-    chop = prop_info("Tool_chop")
+    chop = prop_info("felling_axe")
     s2 = Solver(rig, {"R": chop})
     pose = Pose().wield(at=(0.15, 0.35, 1.2), pitch=40, yaw=-20).hold("L", at=0.3)
     s2.solve(pose.v)

@@ -255,7 +255,7 @@ fails if any is wrong. Run it after changing anything in `lib/`.
 
 ## Rehearsal: the Meshy peasant as a statue
 
-The heaviest real source in the repository, `art/peasant/source/
+The heaviest real source in the repository, `art/units/peasant/source/
 peasant_meshy.glb` (22 MB, skinned and animated, 10,319 triangles in
 18,149 split vertices, a 4096 px texture, an emissive material), built as
 node `statue`:

@@ -290,9 +290,16 @@ def _inside(tree, p):
     return votes >= len(PARITY_RAYS) - 1
 
 
+PROP_SAMPLES = 2000  # a modelled prop (Meshy's) is sampled at about this many of its vertices
+
+
 def _prop_samples(obj, per_edge=6):
-    """Points along every edge of a prop's boxes, in the prop's local space."""
+    """Points along every edge of a prop's boxes, in the prop's local space
+    (a modelled prop, with many more edges: a spread of its vertices)."""
     me = obj.data
+    if len(me.edges) * (per_edge + 1) > 4 * PROP_SAMPLES:
+        step = max(1, len(me.vertices) // PROP_SAMPLES)
+        return [v.co.copy() for v in me.vertices[::step]]
     pts = []
     for e in me.edges:
         a, b = (me.vertices[i].co for i in e.vertices)

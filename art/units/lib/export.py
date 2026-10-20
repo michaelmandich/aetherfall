@@ -135,12 +135,13 @@ def summarize(path):
                 skins=len(js.get("skins", [])))
 
 
-def verify(path, clips, prop_names, bone_names, glowing=(), prop_rest=None, texture_size=None):
+def verify(path, clips, prop_names, bone_names, glowing=(), prop_rest=None, texture_size=None,
+           markers=("Team_sash",)):
     """Raise if the GLB does not match the build: every clip present with its
-    duration, every prop / bone node present by name, nothing emissive but
-    the `glowing` materials, one PNG texture of `texture_size` px, and
-    (given `prop_rest`, name -> rest centroid) every prop where Blender had
-    it in the rest pose."""
+    duration, every prop / bone / team `markers` node present by name, the
+    `Team` material, nothing emissive but the `glowing` materials, PNG
+    textures of at most `texture_size` px, and (given `prop_rest`, name ->
+    rest centroid) every prop where Blender had it in the rest pose."""
     s = summarize(path)
     problems = []
     if prop_rest:
@@ -162,7 +163,7 @@ def verify(path, clips, prop_names, bone_names, glowing=(), prop_rest=None, text
     extra = set(s["animations"]) - {c.name for c in clips}
     if extra:
         problems.append(f"unexpected animations {sorted(extra)}")
-    for name in list(prop_names) + ["Team_sash"]:
+    for name in list(prop_names) + list(markers):
         if name not in s["nodes"]:
             problems.append(f"node {name} missing")
     missing = set(bone_names) - s["joints"]
@@ -170,27 +171,32 @@ def verify(path, clips, prop_names, bone_names, glowing=(), prop_rest=None, text
         problems.append(f"joints missing: {sorted(missing)}")
     team = [m for m in s["materials"] if m["name"] == "Team"]
     if not team:
-        problems.append("material Team missing")
+        problems.append("material Team missing: nothing shows the owner's colour")
     for m in s["materials"]:
         glows = m["emissive_tex"] or (m["emissive"] and any(m["emissive"]))
         if glows and m["name"] not in glowing:
             problems.append(f"material {m['name']} is emissive")
     if texture_size is not None:
         sizes = [i["size"] for i in s["images"]]
-        if sizes != [(texture_size, texture_size)]:
-            problems.append(f"textures {sizes}, expected one {texture_size} px PNG")
+        if not sizes or any(sz is None or max(sz) > texture_size for sz in sizes):
+            problems.append(f"textures {sizes}, expected PNGs of at most {texture_size} px")
     if problems:
         raise RuntimeError("GLB check failed:\n  " + "\n  ".join(problems))
     return s
 
 
-def write_manifest(path, model, height, clips):
-    """peasant.model.ron, in the contract's format (docs/art/peasant.md)."""
+def write_manifest(path, model, height, clips, writer):
+    """<unit>.model.ron, in the contract's format (docs/art/peasant.md).
+    `writer` (the command that wrote it) goes in the header."""
+    if clips:
+        about = ["// Clip durations in seconds; speed = ground speed in m/s at playback",
+                 "// rate 1 (model scale 1); hit = impact time in seconds; reach = how far",
+                 "// ahead the work lands in metres (model scale 1)."]
+    else:
+        about = ["// A rigid model: no clips, drawn as it is (height in metres)."]
     lines = [
-        "// Written by art/peasant/build_peasant.py; do not edit by hand.",
-        "// Clip durations in seconds; speed = ground speed in m/s at playback",
-        "// rate 1 (model scale 1); hit = impact time in seconds; reach = how far",
-        "// ahead the work lands in metres (model scale 1).",
+        f"// Written by {writer}; do not edit by hand.",
+        *about,
         "(",
         f'    model: "{model}",',
         f"    height: {height:.3f},",

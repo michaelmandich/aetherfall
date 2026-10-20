@@ -1,17 +1,18 @@
-"""Clips from other files: Mixamo FBX downloads, or any glTF / FBX whose
-armature uses the peasant's Mixamo bone names (`mixamorig:Hips`, ...; any
-`<prefix>:` before the name, such as Mixamo's `mixamorig1:`, matches).
+"""Clips from other files: Mixamo FBX downloads, Meshy's walking/running
+GLBs, or any glTF / FBX whose armature uses the Mixamo bone names
+(`mixamorig:Hips`, ...; any `<prefix>:` before the name, such as Mixamo's
+`mixamorig1:`, matches).
 
-    clip.from_file("mixamo/Waving.fbx")      # in a clip module's build()
+    clip.from_file("peasant/source/mixamo/Waving.fbx")   # in a clip module's build()
 
-(paths are relative to art/peasant/source/). The file is imported into the
+(paths are relative to art/units/). The file is imported into the
 build's scene, each of its actions is sampled frame by frame, and every
 bone's motion is carried over as a *world-space rotation from its rest
-pose*: the peasant's bone turns from its own rest exactly as the file's bone
+pose*: the unit's bone turns from its own rest exactly as the file's bone
 turned from the file's rest. That is independent of the file's axis
 convention, scale and bone rolls (FBX importers change them). It is exact
 when the two rest poses agree, as they do when the clip was made on this
-skeleton (upload the peasant to Mixamo, see art/peasant/README.md). When
+skeleton (upload the unit to Mixamo, see art/units/README.md). When
 they differ (a T-pose file, this rig's arms-down rest), each bone is first
 aligned by two directions: where its limb points and the plane it bends in
 (`_reference`), and the build says so. Bones then point where the file's
@@ -115,7 +116,7 @@ def _match(path, src, rig):
         if angle > worst[0]:
             worst = (angle, name)
     if worst[0] > REST_TOLERANCE:
-        print(f"{os.path.basename(path)}: its rest pose differs from the peasant's (up to {worst[0]:.0f} deg, "
+        print(f"{os.path.basename(path)}: its rest pose differs from the unit's (up to {worst[0]:.0f} deg, "
               f"{worst[1]}); bones are aligned by direction")
     return names, align
 
@@ -156,7 +157,7 @@ def _sample(src, action, rig, names, align, loop):
 
     scene = bpy.context.scene
     assign(src, action)
-    first, last = (int(round(x)) for x in action.frame_range)
+    first, last = (int(round(x)) for x in _key_range(action))
     rest = _rest(src)
     src_rot = src.matrix_world.to_3x3().normalized()
     hips_height = rest[names[HIPS]][1].z - min(p.z for _, p in rest.values())
@@ -179,6 +180,18 @@ def _sample(src, action, rig, names, align, loop):
         frames.append(basis)
     assign(src, None)
     return RetargetedClip(action.name, frames, scene.render.fps / scene.render.fps_base, loop)
+
+
+def _key_range(action):
+    """First and last frame of the action's rotation keys: the clip itself.
+    Its frame range can start earlier (Blender's glTF importer puts a clip's
+    first key on frame 1 but some channels on 0) or end later (Meshy's hips
+    keys run past the rotations' cycle), and sampling there would hold the
+    first or last pose for a frame."""
+    keys = [fc.keyframe_points for fc in action.fcurves if "rotation" in fc.data_path and len(fc.keyframe_points)]
+    if not keys:
+        return action.frame_range
+    return min(k[0].co.x for k in keys), max(k[-1].co.x for k in keys)
 
 
 class RetargetedClip:
@@ -212,7 +225,7 @@ def round_trip(ctx, arm, body, name):
     """Export a built clip to FBX with deliberately different bone axes,
     read it back through `import_clips` and return the worst rotation
     difference (degrees) and pelvis offset (metres) against the original:
-    both must be ~0 (build_peasant.py --check-retarget)."""
+    both must be ~0 (build_unit.py --check-retarget)."""
     import tempfile
 
     from .clip import _source_frames, assign

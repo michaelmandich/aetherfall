@@ -16,7 +16,7 @@ Frame and signs (the character's own frame, wherever it faces):
   body's midline on that side, "in" towards it;
 * `side` is "L" or "R" (the character's left / right);
 * zero for every angle is the calibrated neutral below, verified by renders
-  (see art/peasant/README.md "Calibration").
+  (see art/units/README.md "Calibration").
 
 Root and torso
 --------------

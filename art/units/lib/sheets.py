@@ -246,6 +246,52 @@ def render_columns(rig_obj, body, props, columns, out_png, scratch, sheet_rig, b
                 pass
 
 
+def render_model(objects, out_png, scratch, yaws=(0.0, 90.0, 180.0, 270.0)):
+    """A rigid model's sheet: the rows as for clips, one column per turn of
+    the model (degrees; 0 faces the front camera)."""
+    scene = bpy.context.scene
+    sheet_rig = SheetRig(scene)
+    pivot = bpy.data.objects.new("_turn", None)
+    scene.collection.objects.link(pivot)
+    for o in objects:
+        o.parent = pivot
+    lo, hi = _bbox(objects, bpy.context.evaluated_depsgraph_get())
+    r = max(abs(lo.x), abs(hi.x), abs(lo.y), abs(hi.y))  # every turn fits
+    sheet_rig.frame_cameras(Vector((-r, -r, min(lo.z, 0.0))), Vector((r, r, hi.z)))
+    os.makedirs(scratch, exist_ok=True)
+    tiles = {v: [] for v in VIEWS}
+    stem = os.path.splitext(os.path.basename(out_png))[0]
+    for i, yaw in enumerate(yaws):
+        pivot.rotation_euler = (0.0, 0.0, math.radians(yaw))
+        bpy.context.view_layer.update()
+        for v in VIEWS:
+            scene.camera = sheet_rig.cams[v]
+            rs = scene.render
+            rs.resolution_x, rs.resolution_y = (TILE_W // RTS_SCALE, TILE_H // RTS_SCALE) if v == "rts" else (TILE_W, TILE_H)
+            rs.use_stamp = v == "front"
+            rs.use_stamp_note = True
+            rs.stamp_note_text = f"turned {yaw:.0f} deg"
+            rs.resolution_percentage = 100
+            path = os.path.join(scratch, f"{stem}_{i}_{v}.png")
+            rs.filepath = path
+            bpy.ops.render.render(write_still=True)
+            tiles[v].append(path)
+    for o in objects:
+        o.parent = None
+    bpy.data.objects.remove(pivot)
+    _tile(tiles, out_png)
+    for paths in tiles.values():
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    try:
+        os.rmdir(scratch)
+    except OSError:
+        pass
+
+
 def _load_px(path, scale=1):
     img = bpy.data.images.load(path)
     w, h = img.size

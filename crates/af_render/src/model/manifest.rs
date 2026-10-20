@@ -162,6 +162,18 @@ mod tests {
     }
 
     #[test]
+    fn a_rigid_model_lists_no_clips() {
+        // As art/units/lib/rigid.py writes it.
+        let text = "// Written by art/units/build_unit.py --unit battering_ram; do not edit by hand.\n\
+                    // A rigid model: no clips, drawn as it is (height in metres).\n\
+                    (\n    model: \"models/battering_ram/battering_ram.glb\",\n    height: 1.112,\n    clips: {\n    },\n)\n";
+        let m = ModelManifest::parse(text).unwrap_or_else(|e| panic!("{e}"));
+        assert!(m.clips.is_empty() && m.warnings().is_empty());
+        assert!(Clip::ALL.into_iter().all(|c| m.clip(c).is_none()));
+        assert!(ModelManifest::parse(r#"(model: "m.glb", height: 2.0)"#).unwrap().clips.is_empty(), "clips may be left out");
+    }
+
+    #[test]
     fn broken_manifests_are_rejected_with_a_reason() {
         assert!(ModelManifest::parse("(height: 1.0)").unwrap_err().contains("model"));
         assert!(ModelManifest::parse(r#"(model: "", height: 1.0)"#).unwrap_err().contains("model"));

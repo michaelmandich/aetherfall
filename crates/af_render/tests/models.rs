@@ -301,6 +301,72 @@ fn a_dead_unit_leaves_its_model_behind_for_a_while() {
     assert!(t.app.world().get_entity(model).is_err(), "gone once sunk");
 }
 
+/// A rigid model (a ram, a cart: no skeleton, no clips; `art/units/lib/rigid.py`)
+/// is drawn as it is: no animation player and nothing to play, its team
+/// marker tinted. The unit moves, fights, is hurt and dies without trouble,
+/// and its corpse sinks its full height (nothing lies down).
+#[test]
+fn a_model_without_bones_or_clips_is_drawn_as_it_is() {
+    let mut t = setup_with(r#"(model: "models/ram/ram.glb", height: 1.1, clips: {})"#, true);
+    let root = model_root(&t);
+    let team = t.loaded.team_material.clone().unwrap();
+    let world = t.app.world_mut();
+    let body = world.spawn((Name::new("battering_ram"), Transform::default(), Visibility::default(), ChildOf(root))).id();
+    let pennant = world.spawn((Name::new("Team_pennant"), Transform::default(), Visibility::default(), ChildOf(root))).id();
+    let flag = world.spawn((Name::new("Team_pennant.0"), MeshMaterial3d(team.clone()), Transform::default(), Visibility::default(), ChildOf(pennant))).id();
+    world.entity_mut(root).insert(SceneReady);
+    run_ticks(&mut t.app, 2);
+    let rig = t.app.world().get::<Rig>(root).expect("rigged").clone();
+    assert_eq!(rig.player, None, "no bones, no animation player");
+    assert!(rig.props.is_empty() && rig.bind_pose.is_empty());
+    assert!(visible(&t.app, root) && visible(&t.app, body) && visible(&t.app, pennant), "shown once rigged");
+    let tinted = t.app.world().get::<MeshMaterial3d<StandardMaterial>>(flag).unwrap().0.clone();
+    assert_ne!(tinted, team, "the pennant takes the owner's colour");
+
+    let animator = |t: &Test| t.app.world().get::<ModelUnit>(t.peasant).unwrap().animator().clone();
+    t.app.world_mut().entity_mut(t.peasant).insert(Velocity(Vec2::new(2.0, 0.0)));
+    run_ticks(&mut t.app, 2);
+    assert_eq!(animator(&t).main(), None, "nothing to walk with");
+    let mut weapons = t.app.world().get::<Weapons>(t.peasant).unwrap().clone();
+    weapons.slots[0].windup = 0.5;
+    let mut health = *t.app.world().get::<Health>(t.peasant).unwrap();
+    health.hp -= 5.0;
+    t.app.world_mut().entity_mut(t.peasant).insert((Activity::Fight, Velocity(Vec2::ZERO), weapons, health));
+    run_ticks(&mut t.app, 2);
+    let a = animator(&t);
+    assert_eq!((a.main(), a.shot()), (None, None), "no attack or hit clip: skipped");
+    assert!(visible(&t.app, body));
+
+    t.app.world_mut().entity_mut(t.peasant).insert(Dead);
+    run_ticks(&mut t.app, 1);
+    let corpse = t.app.world().get::<Corpse>(root).copied().expect("its model stays as a corpse");
+    run_ticks(&mut t.app, ((CORPSE_HOLD + CORPSE_SINK * 0.95) * SIM_HZ as f32) as u32);
+    let sunk = t.app.world().get::<Transform>(root).expect("still sinking").translation.y;
+    assert!(sunk < corpse.rest_y - 1.0, "left standing, it sinks nearly its whole height: {} -> {sunk}", corpse.rest_y);
+    run_ticks(&mut t.app, (CORPSE_SINK * SIM_HZ as f32) as u32);
+    assert!(t.app.world().get_entity(root).is_err(), "gone once sunk");
+}
+
+/// `Gear_*` nodes (a soldier's spear, a shield) are the model's own: never
+/// hidden, whatever the unit does; only `Tool_*` and `Load_*` come and go.
+#[test]
+fn gear_is_always_shown() {
+    let mut t = setup(true);
+    let i = spawn_instance(&mut t);
+    let spear = t.app.world_mut().spawn((Name::new("Gear_spear"), Transform::default(), Visibility::default(), ChildOf(i.armature))).id();
+    run_ticks(&mut t.app, 2);
+    assert_eq!(t.app.world().get::<Rig>(model_root(&t)).unwrap().props.len(), 5, "gear is not a prop the engine toggles");
+    assert!(visible(&t.app, spear), "idle");
+    t.app.world_mut().entity_mut(t.peasant).insert(Activity::Gather(WorkStyle::Chop));
+    run_ticks(&mut t.app, 1);
+    assert!(visible(&t.app, spear) && visible(&t.app, i.chop), "at work");
+    let mut weapons = t.app.world().get::<Weapons>(t.peasant).unwrap().clone();
+    weapons.slots[0].windup = 0.5;
+    t.app.world_mut().entity_mut(t.peasant).insert((Activity::Fight, weapons));
+    run_ticks(&mut t.app, 1);
+    assert!(visible(&t.app, spear) && visible(&t.app, i.attack), "mid-swing");
+}
+
 /// A model that ships nothing but a walk (the raw Meshy export) walks, and
 /// stands in its bind pose otherwise.
 #[test]

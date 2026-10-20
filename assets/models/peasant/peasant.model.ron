@@ -1,4 +1,4 @@
-// Written by art/peasant/build_peasant.py; do not edit by hand.
+// Written by art/units/build_unit.py --unit peasant; do not edit by hand.
 // Clip durations in seconds; speed = ground speed in m/s at playback
 // rate 1 (model scale 1); hit = impact time in seconds; reach = how far
 // ahead the work lands in metres (model scale 1).

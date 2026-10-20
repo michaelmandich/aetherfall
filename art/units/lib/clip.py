@@ -1,6 +1,7 @@
 """Clips: keyed poses -> a baked 30 fps Blender action.
 
-A clip module (art/peasant/clips/<Name>.py) declares
+A clip module (art/units/clips/<Name>.py, shared by every humanoid unit, or
+art/units/<unit>/clips/<Name>.py, that unit's own) declares
 
     DURATION = 1.0          # seconds (a whole number of 30 fps frames);
                             # None = take it from the source clip
@@ -38,10 +39,13 @@ and `build` uses this API:
     s = clip.solve(p)                 # where things end up, e.g.
     s.part_point("Tool_chip_l", "butt")   #   a held prop's part (world)
     clip.base("Walk", bones="lower")  # take these bones from another built
-                                      # clip (time-stretched to this length)
+                                      # clip (time-stretched to this length;
+                                      # DURATION = None takes its length)
     clip.from_source("Walking")       # use a source clip as-is, in place
-    clip.from_file("mixamo/Wave.fbx") # or a clip from another file on this
-                                      # skeleton, retargeted (lib/retarget.py)
+    clip.from_file("peasant/source/mixamo/Wave.fbx")  # or a clip from another
+                                      # file on this skeleton, retargeted
+                                      # (lib/retarget.py); paths are relative
+                                      # to art/units/
 
 Key times are seconds; `FRAME` (1/30 s) puts keys on whole frames, so
 impacts are sampled exactly (`HIT = 29 * FRAME`).
@@ -65,7 +69,7 @@ from .source import FPS
 INTERPOLATIONS = {"BEZIER", "LINEAR", "CONSTANT", "SINE", "QUAD", "CUBIC", "QUART", "QUINT", "EXPO",
                   "CIRC", "BACK", "BOUNCE", "ELASTIC"}
 
-SOURCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "source")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # art/units: from_file() paths start here
 FRAME = 1.0 / FPS  # one frame in seconds: `from lib.clip import FRAME as T`, key at `29 * T`
 REACH_TOLERANCE = 0.01  # metres an IK limb may fall short before Clip.fk() refuses it
 
@@ -186,26 +190,27 @@ class Clip:
         return held
 
     def base(self, clip_name, bones="lower"):
+        """Take `bones` (a group name from lib.rig.GROUPS, or bone names)
+        from another built clip, time-stretched to this clip's length; with
+        DURATION = None this clip takes that clip's length."""
         names = GROUPS[bones] if isinstance(bones, str) else tuple(bones)
-        self._base = (self.ctx.built(clip_name), tuple(names))
+        base = self.ctx.built(clip_name)
+        if self.duration is None:
+            self._set_duration(base.duration)
+        self._base = (base, tuple(names))
 
     def from_source(self, action_name, in_place=True):
-        """Play a clip of the Meshy source as it is (made in place, feet on
-        the floor): "Walking" or "Running"."""
-        self._use_source(self.ctx.source_clips[action_name], in_place)
+        """Play a clip of the unit's Meshy source as it is (made in place,
+        feet on the floor): "Walking" or "Running". When the source GLB has
+        no such action, `Context.source_clip` finds one elsewhere."""
+        self._use_source(self.ctx.source_clip(action_name, self.loop), in_place)
 
     def from_file(self, path, action=None, in_place=True):
         """Play an action from another file (a Mixamo FBX download, or any
         glTF/FBX on this skeleton), retargeted onto the rig (lib/retarget.py).
-        `path` is relative to art/peasant/source/; `action` picks one when
-        the file has several."""
-        actions = self.ctx.imported(path, self.loop)
-        if action is None and len(actions) != 1:
-            raise ClipError(f"{self.name}: {path} has actions {sorted(actions)}; name one")
-        name = action or next(iter(actions))
-        if name not in actions:
-            raise ClipError(f"{self.name}: {path} has no action {name!r} (it has {sorted(actions)})")
-        self._use_source(actions[name], in_place)
+        `path` is relative to art/units/; `action` picks one when the file
+        has several."""
+        self._use_source(self.ctx.file_clip(path, action, self.loop, self.name), in_place)
 
     def _use_source(self, src, in_place):
         if self.duration is None:
@@ -394,18 +399,54 @@ def _source_frames(rig, src, in_place, frames, loop=True):
 
 
 class Context:
-    """Shared state for one build: the rig, source clips and built clips."""
+    """Shared state for one build: the rig, source clips and built clips.
 
-    def __init__(self, rig, arm, source_clips, modules, source_dir=SOURCE_DIR):
+    `source_files` maps a source clip name ("Walking") to the files tried,
+    in order, when the unit's source GLB has no such action: (path under
+    `source_dir`, action name or None for the file's only one)."""
+
+    def __init__(self, rig, arm, source_clips, modules, source_dir=ROOT, source_files=None):
         self.rig = rig
         self.arm = arm
         self.source_clips = source_clips
         self.modules = modules
         self.source_dir = source_dir
+        self.source_files = source_files or {}
         self.clips = {}
         self._building = []
         self._scratch = None
         self._imported = {}
+
+    def source_clip(self, name, loop):
+        """A source clip by name: the unit source's own action, else the first
+        of `source_files[name]` that exists, retargeted onto the rig."""
+        if name in self.source_clips:
+            return self.source_clips[name]
+        tried = []
+        for path, action in self.source_files.get(name, ()):
+            if os.path.isfile(os.path.join(self.source_dir, path)):
+                src = self.file_clip(path, action, loop, name)
+                print(f"source clip {name}: from {path}" + (f" ({action})" if action else ""))
+                self.source_clips[name] = src
+                return src
+            tried.append(path)
+        raise ClipError(f"no source clip {name!r}: the source has {sorted(self.source_clips)}, "
+                        f"and none of {tried} exists")
+
+    def file_clip(self, path, action, loop, who):
+        """A clip read from a file under `source_dir` (`Clip.from_file`)."""
+        actions = self.imported(path, loop)
+        if action is None:
+            # Meshy's files carry a one-frame bind-pose stub
+            # ("Armature|clip0|baselayer") beside the clip: not a candidate.
+            real = [n for n, a in actions.items() if a.frames > 2] or list(actions)
+            if len(real) != 1:
+                raise ClipError(f"{who}: {path} has actions {sorted(actions)}; name one")
+            action = real[0]
+        name = action
+        if name not in actions:
+            raise ClipError(f"{who}: {path} has no action {name!r} (it has {sorted(actions)})")
+        return actions[name]
 
     def imported(self, path, loop):
         """{action: RetargetedClip} of a file under source_dir (read once)."""

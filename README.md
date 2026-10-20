@@ -172,19 +172,27 @@ first in [docs/art/model-queue.md](docs/art/model-queue.md).
 The **peasant** (every faction's worker) is an animated 3D model: 23 clips
 (idle, walking, carrying, each kind of gathering, building, repairing,
 fighting, dying...), the tool or load in its hands, and a sash in its
-owner's colour. Every other unit is still boxes.
+owner's colour. Every other unit is still boxes until its model is built.
 
-* The model is built by a Blender script from the rigged source in
-  `art/peasant/source/`:
+* One Blender script builds any unit's model from its Meshy source in
+  `art/units/source/` (the peasant's is in `art/units/peasant/source/`),
+  configured by `art/units/<id>/unit.py`:
 
   ```bash
-  "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/peasant/build_peasant.py
+  "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/units/build_unit.py -- --unit peasant
   ```
 
-* To add a model for another unit, follow the contract in
-  [docs/art/peasant.md](docs/art/peasant.md) (clip names, props, manifest)
-  and the pipeline in [art/peasant/README.md](art/peasant/README.md), then
-  add the unit to `assets/visuals/units.ron`.
+  Rigged characters (humanoids) share the peasant's clips (idle, walk,
+  death...) and add their own attack; their weapons and shields are boxy
+  props always in hand (`Gear_*` nodes). Models without a skeleton
+  (vehicles, siege, mounts, beasts, flyers) are built as rigid models with
+  a team pennant or band and no clips. The spearman (spear, attack and
+  combat-idle clips), the battering ram and the scout rider are
+  configured and wait for their Meshy sources.
+* To add a model for another unit, follow "Adding a unit" in
+  [art/units/README.md](art/units/README.md) and the contract in
+  [docs/art/peasant.md](docs/art/peasant.md) (clip names, props, manifest),
+  then add the unit to `assets/visuals/units.ron`.
 
 ### The registry and checking models
 
