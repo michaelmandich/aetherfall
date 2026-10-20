@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit battering_ram; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/battering_ram/battering_ram.glb",
+    height: 1.084,
+    clips: {
+    },
+)

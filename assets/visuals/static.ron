@@ -4,11 +4,15 @@
 (
     units: {},
     buildings: {
+        "aether_foundry": "models/static/buildings/aether_foundry/aether_foundry.model.ron",
+        "barracks": "models/static/buildings/barracks/barracks.model.ron",
         "farm": "models/static/buildings/farm/farm.model.ron",
         "house": "models/static/buildings/house/house.model.ron",
         "lumber_camp": "models/static/buildings/lumber_camp/lumber_camp.model.ron",
         "mining_camp": "models/static/buildings/mining_camp/mining_camp.model.ron",
+        "stone_wall": "models/static/buildings/stone_wall/stone_wall.model.ron",
         "town_center": "models/static/buildings/town_center/town_center.model.ron",
+        "watchtower": "models/static/buildings/watchtower/watchtower.model.ron",
     },
     nodes: {
         "oak": "models/static/nodes/oak/oak.model.ron",

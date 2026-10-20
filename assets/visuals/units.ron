@@ -7,5 +7,16 @@
 (
     units: {
         "peasant": "models/peasant/peasant.model.ron",
+        // Rigged humanoids (Meshy auto-rig, art/units/<id>/).
+        "spearman": "models/spearman/spearman.model.ron",
+        "crossbowman": "models/crossbowman/crossbowman.model.ron",
+        "starborn_lumen_knight": "models/starborn_lumen_knight/starborn_lumen_knight.model.ron",
+        // Rigid units (art/units/<id>/unit.py, KIND = "rigid"): no clips.
+        "scout_rider": "models/scout_rider/scout_rider.model.ron",
+        "battering_ram": "models/battering_ram/battering_ram.model.ron",
+        "clockwork_automaton": "models/clockwork_automaton/clockwork_automaton.model.ron",
+        "mech_walker": "models/mech_walker/mech_walker.model.ron",
+        "hover_tank": "models/hover_tank/hover_tank.model.ron",
+        "sylvan_elder_treant": "models/sylvan_elder_treant/sylvan_elder_treant.model.ron",
     },
 )

@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit scout_rider; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/scout_rider/scout_rider.glb",
+    height: 1.900,
+    clips: {
+    },
+)
