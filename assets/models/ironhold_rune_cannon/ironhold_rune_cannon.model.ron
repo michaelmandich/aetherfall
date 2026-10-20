@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit ironhold_rune_cannon; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/ironhold_rune_cannon/ironhold_rune_cannon.glb",
+    height: 0.877,
+    clips: {
+    },
+)

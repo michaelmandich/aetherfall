@@ -16,6 +16,6 @@
         "IdleFidget": (duration: 3.0000, looping: false),
         "Run": (duration: 0.6333, looping: true, speed: 4.776),
         "Spawn": (duration: 1.0000, looping: false),
-        "Walk": (duration: 1.0333, looping: true, speed: 0.881),
+        "Walk": (duration: 1.0333, looping: true, speed: 1.327),
     },
 )

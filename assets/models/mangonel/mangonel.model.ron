@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit mangonel; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/mangonel/mangonel.glb",
+    height: 1.154,
+    clips: {
+    },
+)

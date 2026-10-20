@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit ironhold_breacher; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/ironhold_breacher/ironhold_breacher.glb",
+    height: 1.282,
+    clips: {
+    },
+)

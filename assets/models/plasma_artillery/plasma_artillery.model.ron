@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit plasma_artillery; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/plasma_artillery/plasma_artillery.glb",
+    height: 1.793,
+    clips: {
+    },
+)

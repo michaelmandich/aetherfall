@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit dune_ornithopter; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/dune_ornithopter/dune_ornithopter.glb",
+    height: 0.606,
+    clips: {
+    },
+)

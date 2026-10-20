@@ -24,6 +24,13 @@ Humanoid units (KIND = "humanoid", the default): a rigged Meshy character.
     INHERIT = ("Idle", ...)          # shared clips (art/units/clips/) to use
                                      # (default: all of them); a clip in the
                                      # unit's own clips/ replaces a shared one
+    CLIPS = fight.clips("pikeman", "thrust", "Gear_pike")
+                                     # {clip name: module}: generated clips (a
+                                     # weapon family's Attack and CombatIdle,
+                                     # lib/fight.py); the unit's own clips/
+                                     # files replace them
+    CLIPS_FROM = "peasant"           # also take that unit's own clips (a
+                                     # worker's work clips; it needs their props)
     SASH = {"shoulder": (0.165, 0.0, 1.33), "hip": (-0.16, 0.0, 0.99), "width": 0.085}
                                      # the team sash's points (right, fwd, up
                                      # in metres; default: from the skeleton,
@@ -68,8 +75,8 @@ SHARED_CLIPS = os.path.join(ROOT, "clips")
 # own source and files have none.
 FALLBACK_SOURCE = "peasant/source/peasant_meshy.glb"
 
-HUMANOID = {"KIND", "SOURCE", "PROPS", "HELD", "CARRY", "CARRY_SKIP", "INHERIT", "SASH", "SOURCE_CLIPS",
-            "TEXTURE", "TEXTURE_NAME", "BODY_MATERIAL"}
+HUMANOID = {"KIND", "SOURCE", "PROPS", "HELD", "CARRY", "CARRY_SKIP", "INHERIT", "CLIPS", "CLIPS_FROM", "SASH",
+            "SOURCE_CLIPS", "TEXTURE", "TEXTURE_NAME", "BODY_MATERIAL"}
 RIGID = {"KIND", "SOURCE", "YAW", "TRIANGLES", "TEXTURE", "CUT_PLATE", "MARKER", "MARKER_AT"}
 MARKERS = ("pennant", "band", None)
 
@@ -144,6 +151,10 @@ class Unit:
             raise UnitError(f"{path}: HELD props need a CARRY pose to hold them in the shared clips")
         self.carry_skip = tuple(get("CARRY_SKIP", ()))
         self.inherit = get("INHERIT")
+        self.generated = dict(get("CLIPS", {}))
+        self.clips_from = get("CLIPS_FROM")
+        if self.clips_from and not os.path.isdir(os.path.join(ROOT, self.clips_from, "clips")):
+            raise UnitError(f"{path}: CLIPS_FROM names {self.clips_from!r}, which has no clips/ folder")
         sash = get("SASH", {})
         if sash is not None:
             unknown = sorted(set(sash) - {"shoulder", "hip", "width"})
@@ -175,7 +186,11 @@ class Unit:
         unknown = [n for n in names if n not in shared]
         if unknown:
             raise UnitError(f"{self.id}: INHERIT names {unknown}, which art/units/clips/ lacks (it has {sorted(shared)})")
-        own = _modules(os.path.join(self.dir, "clips"), f"{self.id}_clips")
+        own = {}
+        if self.clips_from:
+            own.update(_modules(os.path.join(ROOT, self.clips_from, "clips"), f"{self.clips_from}_clips"))
+        own.update(self.generated)
+        own.update(_modules(os.path.join(self.dir, "clips"), f"{self.id}_clips"))
         modules = {}
         for name in names:
             if name in own:

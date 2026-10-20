@@ -9,6 +9,7 @@ the head lands, arms flop out -> a small rebound -> 1.5 limp (the engine
 holds the last frame).
 """
 
+from lib.clip import ClipError
 from lib.stances import relaxed
 
 DURATION = 1.5
@@ -30,10 +31,16 @@ def build(clip):
     buckle.arm("L", lift=22, toward=45).elbow("L", 30).arm("R", lift=26, toward=40).elbow("R", 25)
     buckle = clip.fk(buckle, arms=(), legs=LEGS, switch=False)
 
-    seat = stand.copy().hips(fwd=-0.22, up=-0.70, bend=-18, lean=-4).spine(bend=10, lean=-4).head(nod=14)
-    seat.foot("L", fwd=0.42, out=0.03, turn=6, knee=2).foot("R", fwd=0.38, out=0.05, turn=8, knee=4)
-    seat.arm("L", lift=36, toward=100).elbow("L", 30).arm("R", lift=42, toward=105).elbow("R", 32)
-    seat = clip.fk(seat, arms=(), legs=LEGS, switch=False)
+    for draw in (1.0, 0.94, 0.88, 0.82, 0.76):   # a short-legged body sits with its feet drawn in
+        seat = stand.copy().hips(fwd=-0.22 * draw, up=-0.70, bend=-18, lean=-4).spine(bend=10, lean=-4).head(nod=14)
+        seat.foot("L", fwd=0.42 * draw, out=0.03, turn=6, knee=2).foot("R", fwd=0.38 * draw, out=0.05, turn=8, knee=4)
+        seat.arm("L", lift=36, toward=100).elbow("L", 30).arm("R", lift=42, toward=105).elbow("R", 32)
+        try:
+            seat = clip.fk(seat, arms=(), legs=LEGS, switch=False)
+            break
+        except ClipError:
+            if draw == 0.76:
+                raise
     # A beat on the seat: the legs let go (FK, same angles) before the fall.
     slump = seat.copy().hips(up=-0.71, fwd=-0.225).spine(bend=8).head(nod=10)
     for s in LEGS:

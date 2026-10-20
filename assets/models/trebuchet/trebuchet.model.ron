@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit trebuchet; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/trebuchet/trebuchet.glb",
+    height: 1.416,
+    clips: {
+    },
+)

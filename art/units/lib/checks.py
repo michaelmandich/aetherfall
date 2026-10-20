@@ -43,6 +43,7 @@ from .rig import ARM, CHEST, HAND, HEAD, HEADFRONT, HIPS, NECK, SIDES, SPINE, ma
 from .source import FPS
 
 CONTACT = 0.01  # a sole this close to the floor (metres) is planted
+TOE_OFF = 0.05  # metres a low foot may move forward before its contact counts as over
 
 # Wrist ranges (degrees) beyond which a pose reads as broken.
 WRIST_RADIAL = 25.0
@@ -95,7 +96,15 @@ def measure(clip):
             slide = max(slide, max(math.hypot(centres[i].x - c0.x, centres[i].y - c0.y) for i in run))
             if len(run) > 2:
                 # Ground speed: the planted foot's backward travel under the body.
-                travel.append(((centres[run[-1]].y - c0.y) * FPS / (len(run) - 1), len(run) - 1))
+                # A foot rolling off a long boot's toe keeps its sole on the
+                # floor while it already swings forward: the contact ends
+                # where the foot is furthest back.
+                ys = [centres[i].y for i in run]
+                end = max(range(len(ys)), key=ys.__getitem__)
+                if ys[end] - ys[-1] <= TOE_OFF:
+                    end = len(ys) - 1
+                if end > 1:
+                    travel.append(((ys[end] - c0.y) * FPS / end, end))
         feet[s] = dict(ground=min(lows), contact=sum(planted), slide=slide, travel=travel)
     out["feet"] = feet
     if clip.locomotion:

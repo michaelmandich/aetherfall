@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_reliquary_ark; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_reliquary_ark/starborn_reliquary_ark.glb",
+    height: 1.457,
+    clips: {
+    },
+)

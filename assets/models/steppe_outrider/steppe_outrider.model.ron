@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit steppe_outrider; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/steppe_outrider/steppe_outrider.glb",
+    height: 1.896,
+    clips: {
+    },
+)

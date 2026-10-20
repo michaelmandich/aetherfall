@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit sylvan_great_bear; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/sylvan_great_bear/sylvan_great_bear.glb",
+    height: 1.282,
+    clips: {
+    },
+)

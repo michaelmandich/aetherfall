@@ -619,7 +619,7 @@ def use(table, props_dir=None):
     resolved, notes = {}, []
     for name, pid in table.items():
         if pid in specs:
-            path = mesh_file(props_dir, pid)
+            path = mesh_file(props_dir, specs[pid].get("file", pid))
             if path:
                 resolved[name] = MeshKind(pid, path, specs[pid])
                 notes.append(f"{name}: Meshy prop {pid} from {path}")
@@ -693,14 +693,15 @@ def build_props(arm_obj, rig, names=None):
 # the haft there; or (x, y, z) fractions of the oriented bounding box,
 # x strike, y haft, z side). Then it is cleaned, decimated and textured
 # like a static model (art/static/lib) and held like the boxy kind it
-# replaces (`like`: hand, mount, the striking part's name).
+# replaces (`like`: hand, mount, the striking part's name). `file` builds
+# it from another prop's model (a stand-in while its own is unusable).
 
 UNITS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # art/units
 MESH_DIR = os.path.join(UNITS, "source", "props")
 MESH_SPECS = os.path.join(UNITS, "meshy_props.py")
 MESH_EXTENSIONS = (".glb", ".gltf", ".fbx", ".obj")
-SPEC_KEYS = {"like", "length", "grip", "haft", "strike", "grip_offset", "roll", "parts", "hand", "mount",
-             "triangles", "texture", "glow"}
+SPEC_KEYS = {"like", "length", "grip", "haft", "strike", "flip", "strike_flip", "grip_offset", "roll", "parts",
+             "hand", "mount", "triangles", "texture", "glow", "file"}
 AXES = {"+X": (1.0, 0.0, 0.0), "-X": (-1.0, 0.0, 0.0), "+Y": (0.0, 0.0, 1.0), "-Y": (0.0, 0.0, -1.0),
         "+Z": (0.0, -1.0, 0.0), "-Z": (0.0, 1.0, 0.0)}   # glTF axis -> Blender (glTF +Z is Blender -Y)
 MESH_TRIANGLES = 1500   # a weapon at RTS distance needs no more
@@ -735,9 +736,10 @@ def _check_spec(pid, s):
     if not (isinstance(grip, (int, float)) and 0.0 <= grip <= 1.0 or isinstance(grip, (tuple, list)) and len(grip) == 3):
         raise KeyError(f"{where}: `grip` must be a fraction of the length from the butt or (x, y, z) box fractions")
     for key in ("haft", "strike"):
-        if s.get(key) is not None and s[key] not in AXES:
-            raise KeyError(f"{where}: `{key}` must be one of {sorted(AXES)} or None (automatic)")
-    if s.get("haft") and s.get("strike") and s["haft"][1] == s["strike"][1]:
+        a = s.get(key)
+        if a is not None and a not in AXES and not (isinstance(a, (tuple, list)) and len(a) == 3):
+            raise KeyError(f"{where}: `{key}` must be one of {sorted(AXES)}, (x, y, z) in glTF axes, or None")
+    if isinstance(s.get("haft"), str) and isinstance(s.get("strike"), str) and s["haft"][1] == s["strike"][1]:
         raise KeyError(f"{where}: `haft` and `strike` must be different axes")
 
 
@@ -848,15 +850,14 @@ def _normalise(obj, spec):
     co = np.empty(len(me.vertices) * 3)
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)
-    size = co.max(0) - co.min(0)
-    order = [int(i) for i in np.argsort(-size)]   # Blender axes, longest first
     names = {0: "X", 1: "-Z", 2: "Y"}               # Blender axis -> the glTF axis it shows
-    haft = Vector(AXES[spec["haft"]]) if spec.get("haft") else Vector(np.eye(3)[order[0]])
-    if spec.get("strike"):
-        strike = Vector(AXES[spec["strike"]])
-    else:
-        rest = [i for i in order if abs(haft[i]) < 0.5]
-        strike = Vector(np.eye(3)[rest[0]])
+    spread = _spread(co)
+    haft = _axis(spec["haft"]) if spec.get("haft") else _principal(spread)
+    if spec.get("flip"):
+        haft = -haft
+    strike = _axis(spec["strike"]) if spec.get("strike") else _principal(spread, haft)
+    if spec.get("strike_flip"):
+        strike = -strike
     axes = frame(strike, haft)                      # columns: prop X, Y, Z in Blender axes
     q = co @ np.array(axes)                         # vertices in prop axes, file units
     y0, y1 = q[:, 1].min(), q[:, 1].max()
@@ -900,14 +901,54 @@ def _normalise(obj, spec):
 
     def axis_name(v):
         i = max(range(3), key=lambda k: abs(v[k]))
+        if abs(v[i]) < 0.9999:   # not along a file axis: glTF components
+            return "(%.2f, %.2f, %.2f)" % (v.x, v.z, -v.y)
         n = names[i]
         sign = 1 if (v[i] > 0) != n.startswith("-") else -1
         return ("+" if sign > 0 else "-") + n[-1]
 
-    how = (f"haft {axis_name(haft)}{'' if spec.get('haft') else ' (automatic: the longest)'}, strike "
-           f"{axis_name(strike)}{'' if spec.get('strike') else ' (automatic)'}, scaled x{scale:.4g} to "
-           f"{length} m, grip {spec['grip']}")
+    how = (f"haft {axis_name(haft)}{'' if spec.get('haft') else ' (automatic: the longest)'}"
+           f"{' flipped' if spec.get('flip') else ''}, strike {axis_name(strike)}"
+           f"{'' if spec.get('strike') else ' (automatic)'}{' flipped' if spec.get('strike_flip') else ''}, "
+           f"scaled x{scale:.4g} to {length} m, grip {spec['grip']}")
     return out, how
+
+
+SNAP = 0.985   # cos 10 deg: an automatic axis this close to a file axis is that axis
+
+
+def _axis(a):
+    """A spec axis: a name ("+X" ...) or (x, y, z) in glTF axes -> a Blender unit vector."""
+    if isinstance(a, str):
+        return Vector(AXES[a])
+    x, y, z = a
+    return Vector((x, -z, y)).normalized()
+
+
+def _spread(co):
+    import numpy as np
+    d = co - co.mean(0)
+    return d.T @ d
+
+
+def _principal(spread, normal=None):
+    """The direction the vertices spread most along (perpendicular to
+    `normal` if given), snapped to a file axis when within 10 degrees, its
+    largest component positive."""
+    import numpy as np
+    m = np.array(spread, dtype=float)
+    if normal is not None:
+        n = np.array(normal, dtype=float)
+        p = np.eye(3) - np.outer(n, n)
+        m = p @ m @ p
+    w, v = np.linalg.eigh(m)
+    d = v[:, int(np.argmax(w))]
+    i = int(np.argmax(np.abs(d)))
+    if d[i] < 0:
+        d = -d
+    if abs(d[i]) >= SNAP:
+        d = np.eye(3)[i]
+    return Vector(d).normalized()
 # ---------------------------------------------------------------------------
 # Team sash: a strap from the right shoulder across the chest to the left
 # hip and round the back, fitted to the body by ray casts and skinned with

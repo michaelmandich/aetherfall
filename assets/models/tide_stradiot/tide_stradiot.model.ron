@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit tide_stradiot; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/tide_stradiot/tide_stradiot.glb",
+    height: 1.899,
+    clips: {
+    },
+)

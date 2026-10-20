@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit aether_lancer; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/aether_lancer/aether_lancer.glb",
+    height: 1.899,
+    clips: {
+    },
+)
