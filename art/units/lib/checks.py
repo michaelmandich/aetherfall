@@ -299,7 +299,7 @@ def _prop_samples(obj, per_edge=6):
     me = obj.data
     if len(me.edges) * (per_edge + 1) > 4 * PROP_SAMPLES:
         step = max(1, len(me.vertices) // PROP_SAMPLES)
-        return [v.co.copy() for v in me.vertices[::step]]
+        return [me.vertices[i].co.copy() for i in range(0, len(me.vertices), step)]
     pts = []
     for e in me.edges:
         a, b = (me.vertices[i].co for i in e.vertices)

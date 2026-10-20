@@ -9,7 +9,8 @@ There are two kinds of unit:
   skeleton, puts its weapon or tools in its hands (Meshy models of their
   own, or boxy props), adds a team sash, and bakes the clips: the shared ones in `clips/` (idle, walk, death...)
   plus the unit's own in `<id>/clips/` (its attack). The peasant was the
-  first; the spearman is set up and waits for its source.
+  first; the spearman, the crossbowman and the Starborn lumen knight
+  build from Meshy's rigging-API characters (see "Source notes").
 - **Rigid**: anything without a skeleton (vehicles, siege, mounts, beasts,
   flyers). The build cleans and decimates it, adds a team pennant or band,
   and writes a manifest with no clips; the engine draws it as it is.
@@ -39,9 +40,9 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    | `<id>_<Clip>.glb` | an Animation API clip (3 credits each: ask before spending) | no |
 
    Walk and Run come from the source's own `Walking`/`Running` actions if
-   it has them, else from `<id>_walking.glb`/`<id>_running.glb`, else from
-   the peasant's walk, retargeted (`lib/retarget.py`). The build prints
-   which.
+   it has them, else from `<id>_walking.glb`/`<id>_running.glb` beside the
+   source, else from the peasant's walk, retargeted (`lib/retarget.py`).
+   The build prints which.
 2. **Config.** `art/units/<id>/unit.py`, for example the spearman's:
 
    ```python
@@ -49,7 +50,7 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
 
    from lib import stances
 
-   PROPS = {"Gear_spear": "spear"}  # node name -> a kind from lib/props.py KINDS
+   PROPS = {"Gear_spear": "short_spear"}  # node name -> a Meshy prop id (the weapon's id in weapons.ron)
 
 
    def CARRY(clip):
@@ -102,9 +103,9 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    unit's box height and plays nothing (bind pose, no animation player);
    the marker takes the owner's colour.
 
-`battering_ram` and `scout_rider` are configured this way and wait for
-their sources. A bob or sway for rigid units can come later as a
-manifest field the engine applies.
+`battering_ram`, `scout_rider` and the other rigid units are configured
+this way. A bob or sway for rigid units can come later as a manifest
+field the engine applies.
 
 ### Trying a stand-in
 
@@ -241,7 +242,9 @@ art/units/
     unit.py            the worker: every tool and load, the Work Axe, its sash points
     source/            peasant_meshy.glb, the untouched Meshy source (and any Mixamo downloads)
     clips/<Clip>.py    its own clips: the work clips, carrying, Attack, CombatIdle
-  spearman/            unit.py + clips/Attack.py, CombatIdle.py
+  spearman/            unit.py + clips/Attack.py, CombatIdle.py (the spear thrust)
+  crossbowman/         unit.py + clips/Attack.py, CombatIdle.py (raise, aim, shoot)
+  starborn_lumen_knight/  unit.py + clips/Attack.py, CombatIdle.py (a one-handed lightblade stroke)
   battering_ram/       unit.py (rigid, pennant)
   scout_rider/         unit.py (rigid, band)
 ```
@@ -444,6 +447,8 @@ names its GLB gets to kinds. The engine knows props by node name:
 | `crossbow` | R | crossbow, spanned and loaded; tiller along the haft axis | `bolt`, `butt` |
 | `sling` | R | two cords and a pouch, hanging off the fingers | `pouch` |
 | `round_shield` | L | 0.62 m centre-grip shield, face in the team's colour | `boss` |
+| `sword` | R | one-handed long sword, 1.22 m, steel | `edge`, `tip` |
+| `lightblade` | R | the sword with a blade of glowing light (the Starborn lightblade's stand-in) | `edge`, `tip` |
 
 The peasant's table is `props.WORKER` (`Tool_attack` = `work_axe`,
 `Tool_chop` = `felling_axe` ..., `Load_<resource>` = `load_<resource>`).
@@ -473,7 +478,7 @@ about 3k triangles, textured, at any scale and orientation.
 the prop frame (the file documents every key):
 
 ```python
-"spear": dict(like="spear", length=2.15, grip=0.33),
+"short_spear": dict(like="spear", length=2.15, grip=0.33, haft="-X"),
 # a shield standing upright, facing the viewer:
 # "round_shield": dict(like="round_shield", length=0.62, grip=(0.0, 0.5, 0.5),
 #                      grip_offset=(-0.04, 0.0, 0.0), haft="+Y", strike="+Z"),
@@ -493,6 +498,15 @@ the prop frame (the file documents every key):
   metres: a shield's grip is behind the middle of its back.
 - `parts`: named points for `wield_part()`; `tip` and `butt` are always
   there.
+- `glow`: the model emits its own colours at this strength (the cleanup
+  takes Meshy's emission off everything else), as the Starborn lightblade
+  should.
+
+A prop's id is the game's weapon id (`assets/data/core/weapons.ron` and
+the factions'): `short_spear`, `crossbow`, `starborn_lightblade`. The
+first two arrived lying along glTF X: the automatic axis found the spear's
+shaft but pointed it the wrong way (`haft="-X"`), and the crossbow got
+`haft="-X", strike="+Y"` (the head and prod toward -X, the top, where the bolt lies, up).
 
 The model is cleaned like a static model (base colour only, no emission,
 metallic 0), its texture shrunk to 512 px, decimated to 1500 triangles,
@@ -546,8 +560,11 @@ Accepted warnings in the current set:
 - peasant Drop: both wrists at the floor set-down (43° radial, for about 0.1 s).
 - peasant Farm: the left, palm-up hand at the top of the lift (43° ulnar).
 - peasant Run: the source's own right wrist (39° radial).
-- spearman Attack (on the peasant's body as a stand-in): the left forearm
-  grazes the chest by 0.7 cm at full extension. Re-check on the real body.
+- crossbowman CombatIdle and Attack (the lowered guard): the stock pressed
+  5 cm into the padded right shoulder. It is held against the shoulder;
+  the guard's wrists are straight.
+- crossbowman Death: the crossbow passes 5 cm into the left thigh as he
+  falls.
 
 ## Mixamo clips
 
@@ -634,6 +651,21 @@ to show them on the sheet. A Mixamo clip can still be a base layer:
 - **A-pose.** The characters are rigged in an A-pose. The clips do not
   depend on the rest pose (every angle is measured from a calibrated
   neutral), but `--mixamo-fbx` uploads it and retargeted clips align to it.
-- **New sources.** The first real file of a kind (a rigged soldier, a
-  `<id>_walking.glb`) deserves a look at its sheets: the build was proven
-  on the peasant's source and stand-ins made from it.
+- **Meshy's rigging API.** Its characters name the same joints without
+  the `mixamorig:` prefix, the neck `neck`, and the spine Hips > Spine02 >
+  Spine01 > Spine > neck (its lowest spine bone is `Spine02`, its chest
+  `Spine`), with an extra `head_end` leaf; their arm and hand bones are
+  rolled half a turn from the web export's. The build renames the bones
+  to the Mixamo names (the spine by its place in the chain), rolls those
+  bones back and carries `head_end` along at rest; none of it moves the
+  mesh, and the GLB gets the Mixamo names. Its `<id>_walking.glb` /
+  `_running.glb` (armature only, action `Armature|walking_man|baselayer`)
+  are read by retargeting with the same mapping: a 31- and a 19-frame
+  cycle, like the web export's.
+- **Proportions.** The stances in `lib/stances.py` were searched on each
+  weapon's Meshy body (the spearman and crossbowman 1.70 m, the lumen
+  knight 1.80 m). Another body with the same weapon may need its own
+  search (README "Wrists stay in range"), especially for the carry: a
+  thick Meshy weapon brushes the legs or head sooner than a boxy one.
+- **New sources.** The first real file of a kind deserves a look at its
+  sheets and its checks.

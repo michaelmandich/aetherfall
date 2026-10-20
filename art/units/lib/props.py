@@ -185,6 +185,10 @@ _PALETTE = {
     "PropBronze": ((0.61, 0.27, 0.047), 0.45, 0.0, None, 0.0),
     "PropString": ((0.85, 0.80, 0.66), 0.9, 0.0, None, 0.0),
     "PropLeather": ((0.24, 0.13, 0.06), 0.85, 0.0, None, 0.0),
+    "PropGold": ((0.76, 0.52, 0.14), 0.4, 0.0, None, 0.0),
+    # The Starborn lightblade's solid light, in its look's colour (sRGB
+    # (1.0, 0.92, 0.6), assets/data/factions/starborn.ron), glowing.
+    "PropLight": ((1.0, 0.83, 0.32), 0.3, 0.0, (1.0, 0.83, 0.32), 3.0),
     "Team": ((1.0, 1.0, 1.0), 0.75, 0.0, None, 0.0),
 }
 
@@ -209,9 +213,13 @@ def material(name):
     return mat
 
 
+_GLOWING = set()  # materials of Meshy props made to glow (`glow`)
+
+
 def emissive_materials():
-    """Names of the palette materials that are meant to glow."""
-    return {name for name, spec in _PALETTE.items() if spec[3] is not None}
+    """Names of the materials that are meant to glow: the palette's and
+    those of Meshy props with `glow`."""
+    return {name for name, spec in _PALETTE.items() if spec[3] is not None} | _GLOWING
 
 
 class Boxes:
@@ -490,6 +498,18 @@ def _sling():
     return b
 
 
+def _sword(blade="PropSteel", guard="PropIron"):
+    # A long one-handed sword, 1.22 m: leather grip in the fist, pommel below
+    # it, crossguard above, the blade's edges toward +X and -X.
+    b = Boxes()
+    b.box("PropLeather", (0.0, 0.01, 0.0), (0.034, 0.18, 0.034))        # grip
+    b.box(guard, (0.0, -0.11, 0.0), (0.05, 0.04, 0.05))                 # pommel
+    b.box(guard, (0.0, 0.12, 0.0), (0.20, 0.035, 0.045))                # crossguard
+    b.box(blade, (0.0, 0.58, 0.0), (0.06, 0.88, 0.014))                 # blade
+    b.box(blade, (0.0, 1.05, 0.0), (0.034, 0.08, 0.012))                # point
+    return b
+
+
 def _round_shield():
     # A 0.62 m centre-grip shield in the left fist: the face is square to
     # the forearm (+X), in the team's colour, with an iron boss.
@@ -556,6 +576,10 @@ KINDS = {
     "crossbow": Kind(_crossbow, "R", parts={"bolt": (0.032, 0.42, 0.0), "butt": (0.0, -0.28, 0.0)}),
     "sling": Kind(_sling, "R", parts={"pouch": (0.45, 0.0, 0.0)}, strike="pouch"),
     "round_shield": Kind(_round_shield, "L", parts={"boss": (0.10, 0.0, 0.0)}),
+    "sword": Kind(_sword, "R", parts={"edge": (0.03, 0.75, 0.0), "tip": (0.0, 1.09, 0.0)}, strike="edge"),
+    # The Starborn lightblade: the sword with a blade of glowing light.
+    "lightblade": Kind(lambda: _sword("PropLight", "PropGold"), "R",
+                       parts={"edge": (0.03, 0.75, 0.0), "tip": (0.0, 1.09, 0.0)}, strike="edge"),
 }
 
 # The peasant's props: a tool per work role, the Work Axe, and the cargo.
@@ -676,7 +700,7 @@ MESH_DIR = os.path.join(UNITS, "source", "props")
 MESH_SPECS = os.path.join(UNITS, "meshy_props.py")
 MESH_EXTENSIONS = (".glb", ".gltf", ".fbx", ".obj")
 SPEC_KEYS = {"like", "length", "grip", "haft", "strike", "grip_offset", "roll", "parts", "hand", "mount",
-             "triangles", "texture"}
+             "triangles", "texture", "glow"}
 AXES = {"+X": (1.0, 0.0, 0.0), "-X": (-1.0, 0.0, 0.0), "+Y": (0.0, 0.0, 1.0), "-Y": (0.0, 0.0, -1.0),
         "+Z": (0.0, -1.0, 0.0), "-Z": (0.0, 1.0, 0.0)}   # glTF axis -> Blender (glTF +Z is Blender -Y)
 MESH_TRIANGLES = 1500   # a weapon at RTS distance needs no more
@@ -750,6 +774,10 @@ class MeshKind(Kind):
             materials.clean(mat, notes)
         materials.shrink_textures(obj, self.spec.get("texture", MESH_TEXTURE), name, notes)
         materials.merge_duplicates(obj, notes)
+        if self.spec.get("glow"):
+            for mat in obj.data.materials:
+                _glow(mat, self.spec["glow"])
+            notes.append(f"glows at strength {self.spec['glow']} in its own colours")
         before, after = static_lib("reduce").reduce(obj, self.spec.get("triangles", MESH_TRIANGLES), notes)
         self.parts, how = _normalise(obj, self.spec)
         if self.strike and self.strike not in self.parts:
@@ -759,6 +787,19 @@ class MeshKind(Kind):
         for n in notes:
             print(f"  {n}")
         return obj
+
+
+def _glow(mat, strength):
+    """Make a cleaned material emit its own base colour (texture or colour)."""
+    nt = mat.node_tree
+    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    links = bsdf.inputs["Base Color"].links
+    if links:
+        nt.links.new(links[0].from_socket, bsdf.inputs["Emission Color"])
+    else:
+        bsdf.inputs["Emission Color"].default_value = bsdf.inputs["Base Color"].default_value
+    bsdf.inputs["Emission Strength"].default_value = strength
+    _GLOWING.add(mat.name)
 
 
 def _import_mesh(path, name, scene_lib):

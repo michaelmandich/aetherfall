@@ -58,9 +58,12 @@ def run(rig):
     u = solver.W["mixamorig:Spine2"] @ rig.canon["mixamorig:Spine2"].transposed() @ UP
     check("spine bend + tips forward", u.dot(FWD) > 0.5, f"up -> {tuple(round(x, 2) for x in u)}")
 
-    # IK: wrist reaches a point; feet stay where placed.
-    target = at(0.15, 0.4, 1.15)
-    solver.solve(Pose().reach("R", at=(0.15, 0.4, 1.15)).foot("L", fwd=0.2).hips(up=-0.08).v)
+    # IK: wrist reaches a point (well within this body's reach: in front of
+    # and below its right shoulder); feet stay where placed.
+    shoulder = rig.rest_pos[ARM["R"][1]]
+    goal = (-shoulder.x + 0.03, -shoulder.y + 0.30, shoulder.z - 0.25)
+    target = at(*goal)
+    solver.solve(Pose().reach("R", at=goal).foot("L", fwd=0.2).hips(up=-0.08).v)
     err = (solver.P[HAND["R"]] - target).length
     check("reach R wrist on target", err < 1e-3, f"{err * 1000:.2f} mm")
     rest_ankle = rig.rest_pos[LEG["L"][2]]

@@ -9,7 +9,7 @@ Humanoid units (KIND = "humanoid", the default): a rigged Meshy character.
 
     SOURCE = "source/spearman.glb"   # the rigged GLB, relative to art/units/
                                      # (default source/<id>.glb)
-    PROPS = {"Gear_spear": "spear"}  # node name -> prop id: a Meshy prop of
+    PROPS = {"Gear_spear": "short_spear"}  # node name -> prop id: a Meshy prop of
                                      # art/units/meshy_props.py (its model in
                                      # source/props/, a boxy stand-in until
                                      # then) or a boxy kind of lib/props.py
@@ -31,8 +31,8 @@ Humanoid units (KIND = "humanoid", the default): a rigged Meshy character.
     SOURCE_CLIPS = {"Walking": [("source/x.glb", None)]}
                                      # where Walking / Running come from when
                                      # the source GLB has no such action
-                                     # (default: source/<id>_walking.glb, then
-                                     # the peasant's, retargeted)
+                                     # (default: <id>_walking.glb beside the
+                                     # source, then the peasant's, retargeted)
     TEXTURE = 1024                   # base colour texture size, px
     TEXTURE_NAME, BODY_MATERIAL      # names in the GLB (default
                                      # <id>_basecolor, <Id>Body)
@@ -150,12 +150,19 @@ class Unit:
             if unknown or (("shoulder" in sash) != ("hip" in sash)):
                 raise UnitError(f"{path}: SASH takes shoulder and hip (both or neither) and width; got {sorted(sash)}")
         self.sash = sash
-        self.source_clips = get("SOURCE_CLIPS") or {
-            name: [(f"source/{unit_id}_{name.lower()}.glb", None), (FALLBACK_SOURCE, name)]
-            for name in ("Walking", "Running")
-        }
+        self.source_clips = get("SOURCE_CLIPS")
         self.texture_name = get("TEXTURE_NAME", f"{unit_id}_basecolor")
         self.body_material = get("BODY_MATERIAL", f"{_camel(unit_id)}Body")
+
+    def source_files(self, src):
+        """Where Walking / Running come from when the source `src` has no such
+        action: SOURCE_CLIPS, or <id>_walking.glb / _running.glb beside it
+        (Meshy's rigging API), then the peasant's, retargeted."""
+        if self.source_clips:
+            return {k: list(v) for k, v in self.source_clips.items()}
+        folder = os.path.dirname(src)
+        return {name: [(os.path.join(folder, f"{self.id}_{name.lower()}.glb"), None), (FALLBACK_SOURCE, name)]
+                for name in ("Walking", "Running")}
 
     # -- clips ---------------------------------------------------------------
 

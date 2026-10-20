@@ -15,8 +15,8 @@ PROPS = ("Gear_spear",)
 
 def build(clip):
     ready = spear_ready(clip)
-    low = spear_ready_ik().hips(up=-0.13, fwd=0.02, turn=13).spine(bend=10, turn=11)
-    low.wield(at=(0.17, 0.0, 0.89), pitch=78, yaw=-7, roll=-5)
+    low = spear_ready_ik().hips(up=-0.13, fwd=0.02, turn=19).spine(bend=10, turn=16)
+    low.wield(at=(0.21, -0.02, 0.89), pitch=78, yaw=-7, roll=-35)
     low = clip.fk(low)
 
     clip.key(0.0, ready)

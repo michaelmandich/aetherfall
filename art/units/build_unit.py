@@ -79,6 +79,12 @@ def writer(unit_id):
     return f"art/units/build_unit.py --unit {unit_id}"
 
 
+def _box_centre(obj):
+    """World bounding-box centre of a mesh object's vertices."""
+    pts = [obj.matrix_world @ v.co for v in obj.data.vertices]
+    return tuple((min(p[i] for p in pts) + max(p[i] for p in pts)) / 2 for i in range(3))
+
+
 def body_height(body):
     import numpy as np
     dg = bpy.context.evaluated_depsgraph_get()
@@ -108,7 +114,12 @@ def build_humanoid(unit, args, src, out_dir, sheets_dir):
     t0 = time.time()
     for note in unit.prop_notes:
         print(note)
-    arm, body, source_clips = source.load(src, unit.texture_name, unit.body_material, unit.texture)
+    arm, body, source_clips, notes = source.load(src, unit.texture_name, unit.body_material, unit.texture)
+    for note in notes:
+        print(note)
+    source_files = unit.source_files(src)
+    for name in notes.retarget:  # the source's own clip, read by retargeting
+        source_files[name] = [(src, name)] + source_files.get(name, [])
     if args.mixamo_fbx:
         export.export_fbx_for_mixamo(args.mixamo_fbx, arm, body)
         print(f"wrote {args.mixamo_fbx}")
@@ -137,7 +148,7 @@ def build_humanoid(unit, args, src, out_dir, sheets_dir):
             raise SystemExit(f"{unit.id}: unknown clips {unknown}; have {public}")
     else:
         wanted = public
-    ctx = Context(rig, arm, source_clips, modules, source_files=unit.source_clips)
+    ctx = Context(rig, arm, source_clips, modules, source_files=source_files)
     for name in wanted:
         ctx.built(name)
     clips = [ctx.clips[n] for n in wanted]
@@ -170,8 +181,7 @@ def build_humanoid(unit, args, src, out_dir, sheets_dir):
             if clip not in clips:
                 bpy.data.actions.remove(clip.action)
         glb = os.path.join(out_dir, f"{unit.id}.glb")
-        rest = {n: tuple(sum((o.matrix_world @ v.co for v in o.data.vertices), Vector()) / len(o.data.vertices))
-                for n, o in prop_objs.items()}
+        rest = {n: _box_centre(o) for n, o in prop_objs.items()}
         export.export_glb(glb)
         s = export.verify(glb, clips, props.all_prop_names(), rig.order, props.emissive_materials(), rest,
                           texture_size=unit.texture, markers=markers)

@@ -499,6 +499,14 @@ class Solver:
         for s in SIDES:
             self._leg(s)
         self._arms()
+        # Bones no pose number drives (Meshy's head_end leaf) ride along at rest.
+        for name in r.order:
+            if name not in self.W:
+                if self._driven(name):
+                    self._from_base(name)
+                else:
+                    p = r.parent[name]
+                    self._put(name, r.rest_rot[name] if p is None else self.W[p] @ r.rel_rot[name])
 
         basis = {}
         for name in r.order:
