@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "starborn_aerie",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/starborn_aerie/a.glb", min: (-0.816, 0.000, -0.820), max: (0.816, 1.898, 0.820), triangles: 5966),
+    ],
+    stump: None,
+    banner: true,
+)

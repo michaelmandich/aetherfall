@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "berry_bush",
+    fit: Footprint,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/berry_bush/a.glb", min: (-0.933, 0.000, -0.852), max: (0.933, 1.281, 0.852), triangles: 1817),
+    ],
+    stump: None,
+    banner: false,
+)

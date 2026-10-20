@@ -7,8 +7,8 @@
     fit: Box,
     random_yaw: false,
     variants: [
-        (model: "models/static/buildings/stone_wall/a.glb", min: (-0.949, 0.000, -0.309), max: (0.949, 0.732, 0.309), triangles: 5977),
+        (model: "models/static/buildings/stone_wall/a.glb", min: (-0.949, 0.000, -0.309), max: (0.949, 0.732, 0.309), triangles: 5999),
     ],
     stump: None,
-    banner: true,
+    banner: false,
 )

@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "shield_generator",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/shield_generator/a.glb", min: (-0.675, 0.000, -0.675), max: (0.675, 1.901, 0.675), triangles: 5977),
+    ],
+    stump: None,
+    banner: true,
+)

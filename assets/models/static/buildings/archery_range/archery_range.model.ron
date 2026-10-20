@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "archery_range",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/archery_range/a.glb", min: (-0.739, 0.000, -0.935), max: (0.739, 1.079, 0.935), triangles: 5975),
+    ],
+    stump: None,
+    banner: true,
+)

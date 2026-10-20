@@ -70,3 +70,28 @@ banner = [0.55, 0.6, 0.52]  # front-right hip: the flag hangs out past the eave,
 [oak]
 tint = { a = [0.68, 0.76, 0.56] }  # oak_a's canopy came out pale lime; this brings
                                    # it to oak_b's green (value ~0.5, not ~0.68)
+
+# --- Meshy batches 2 and 3 (2026-10-19) ---
+
+# Plain wall segments carry no team banner: a flag every 3 m clutters a wall
+# line. Gates keep theirs.
+[stone_wall]
+banner = false
+
+[palisade_wall]
+banner = false
+
+[reinforced_wall]
+banner = false
+
+[force_wall]
+banner = false
+
+[steppe_palisade]
+banner = false
+
+[sylvan_thornwall]
+banner = false
+
+[archery_range]
+cut_plate = { a = 0.08 }   # Meshy stood it on a dark dirt pad that read as a slab in game

@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "tide_siphon_tower",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/tide_siphon_tower/a.glb", min: (-0.579, 0.000, -0.731), max: (0.579, 1.896, 0.731), triangles: 5977),
+    ],
+    stump: None,
+    banner: true,
+)

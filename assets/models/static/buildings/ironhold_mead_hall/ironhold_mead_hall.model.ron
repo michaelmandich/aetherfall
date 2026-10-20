@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "ironhold_mead_hall",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/ironhold_mead_hall/a.glb", min: (-0.626, 0.000, -0.945), max: (0.626, 1.113, 0.945), triangles: 5976),
+    ],
+    stump: None,
+    banner: true,
+)

@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "silicon_deposit",
+    fit: Footprint,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/silicon_deposit/a.glb", min: (-0.948, 0.000, -0.924), max: (0.948, 0.448, 0.924), triangles: 1999),
+    ],
+    stump: None,
+    banner: false,
+)

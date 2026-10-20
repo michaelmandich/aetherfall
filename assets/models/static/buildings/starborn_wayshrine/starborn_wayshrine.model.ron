@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "starborn_wayshrine",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/starborn_wayshrine/a.glb", min: (-0.754, 0.000, -0.754), max: (0.754, 1.901, 0.754), triangles: 5976),
+    ],
+    stump: None,
+    banner: true,
+)

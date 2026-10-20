@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "gun_turret",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/gun_turret/a.glb", min: (-0.811, 0.000, -0.713), max: (0.811, 1.900, 0.713), triangles: 5968),
+    ],
+    stump: None,
+    banner: true,
+)

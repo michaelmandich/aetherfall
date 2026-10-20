@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "dune_house_of_wisdom",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/dune_house_of_wisdom/a.glb", min: (-0.716, 0.000, -0.736), max: (0.716, 1.884, 0.736), triangles: 5972),
+    ],
+    stump: None,
+    banner: true,
+)

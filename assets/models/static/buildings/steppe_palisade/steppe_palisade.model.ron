@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "steppe_palisade",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/steppe_palisade/a.glb", min: (-0.949, 0.000, -0.279), max: (0.949, 0.602, 0.279), triangles: 5999),
+    ],
+    stump: None,
+    banner: false,
+)

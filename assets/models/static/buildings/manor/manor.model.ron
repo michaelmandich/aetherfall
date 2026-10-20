@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "manor",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/manor/a.glb", min: (-0.748, 0.000, -0.802), max: (0.748, 1.898, 0.802), triangles: 5971),
+    ],
+    stump: None,
+    banner: true,
+)

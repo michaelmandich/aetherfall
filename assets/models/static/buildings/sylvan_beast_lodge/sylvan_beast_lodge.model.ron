@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "sylvan_beast_lodge",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/sylvan_beast_lodge/a.glb", min: (-0.950, 0.000, -0.546), max: (0.950, 0.608, 0.546), triangles: 5967),
+    ],
+    stump: None,
+    banner: true,
+)

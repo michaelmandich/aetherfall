@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "aether_crystal",
+    fit: Footprint,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/aether_crystal/a.glb", min: (-0.698, 0.000, -0.679), max: (0.698, 1.902, 0.679), triangles: 1999),
+    ],
+    stump: None,
+    banner: false,
+)

@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Node,
+    id: "copper_vein",
+    fit: Footprint,
+    random_yaw: true,
+    variants: [
+        (model: "models/static/nodes/copper_vein/a.glb", min: (-0.948, 0.000, -0.528), max: (0.948, 0.669, 0.528), triangles: 2000),
+    ],
+    stump: None,
+    banner: false,
+)

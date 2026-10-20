@@ -1,0 +1,14 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Building,
+    id: "ironhold_deep_mine",
+    fit: Box,
+    random_yaw: false,
+    variants: [
+        (model: "models/static/buildings/ironhold_deep_mine/a.glb", min: (-0.911, 0.000, -0.949), max: (0.911, 1.634, 0.949), triangles: 5971),
+    ],
+    stump: None,
+    banner: true,
+)
