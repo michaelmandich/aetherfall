@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_archon; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_archon/starborn_archon.glb",
+    height: 0.979,
+    clips: {
+    },
+)

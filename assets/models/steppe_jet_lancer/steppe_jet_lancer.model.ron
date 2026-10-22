@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit steppe_jet_lancer; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/steppe_jet_lancer/steppe_jet_lancer.glb",
+    height: 0.977,
+    clips: {
+    },
+)

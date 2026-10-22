@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit steppe_war_ordu; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/steppe_war_ordu/steppe_war_ordu.glb",
+    height: 0.726,
+    clips: {
+    },
+)

@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit steppe_skyrider; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/steppe_skyrider/steppe_skyrider.glb",
+    height: 0.730,
+    clips: {
+    },
+)

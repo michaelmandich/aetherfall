@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit starborn_orbital_lance; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/starborn_orbital_lance/starborn_orbital_lance.glb",
+    height: 0.736,
+    clips: {
+    },
+)

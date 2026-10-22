@@ -119,6 +119,32 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
 this way. A bob or sway for rigid units can come later as a manifest
 field the engine applies.
 
+### Tripo Studio sources
+
+Eleven late-game rigid units (`dune_sandskiff`, `dune_sand_engine`,
+`ironhold_forgefather`, `starborn_orbital_lance`, `starborn_archon`,
+`steppe_skyrider`, `steppe_jet_lancer`, `steppe_war_ordu`,
+`sylvan_starstag_rider`, `sylvan_wisp_swarm`, `tide_bucentaur`) were
+modelled in Tripo Studio (H3.1 image to 3D, 2k PBR GLB) from the concepts
+picked in the Meshy run, not by `tools/meshy/meshy.py` (which leaves a
+picked asset made elsewhere alone). [art/tripo/studio_imports.json](../tripo/studio_imports.json)
+records each one's Studio model id, concept, credits and the untouched
+download (kept outside the repository). A download is about 1.9 million
+triangles and 60 MB, twelve times a Meshy source, so it is reduced before
+it is stored:
+
+```bash
+"$BLENDER" -b -P art/tripo/reduce_source.py -- --in <download>/<id>.glb --out art/units/source/<id>.glb
+```
+
+That welds and collapse-decimates it to 200k triangles with the static
+pipeline's reduce step and keeps its orientation, scale and textures (the
+2k base colour, normal and metallic-roughness JPEGs, byte for byte): about
+9-11 MB. The unit build then treats it like any rigid source. Tripo's
+models are normalised to about 1 m and face either +Z or along X (`YAW`
+in their configs); the skyrider and the wisp are one figure each, the
+band and the swarm being squads of them in the game.
+
 ### Trying a stand-in
 
 `--source` builds a unit from any file, and `--props DIR` takes Meshy prop
@@ -230,7 +256,8 @@ material, the triangle budget) and writes the manifest with no clips.
 art/units/
   build_unit.py        entry point (headless)
   meshy_props.py       how each Meshy weapon / shield model is turned into the prop frame
-  source/              Meshy sources: <id>.glb, <id>_walking.glb..., props/<prop>.glb (written by the generation session)
+  source/              Meshy sources: <id>.glb, <id>_walking.glb..., props/<prop>.glb (written by the generation session);
+                       the Tripo Studio units' reduced sources (art/tripo/reduce_source.py)
   clips/<Clip>.py      shared clips: Idle, IdleFidget, HitReact, Death, Spawn, Cheer, Acknowledge, Walk, Run
   lib/
     config.py          a unit's unit.py, read and checked; the clip modules it builds; the carry layer

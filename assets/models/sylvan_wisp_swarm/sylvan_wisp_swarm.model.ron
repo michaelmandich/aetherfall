@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit sylvan_wisp_swarm; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/sylvan_wisp_swarm/sylvan_wisp_swarm.glb",
+    height: 0.849,
+    clips: {
+    },
+)

@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit sylvan_starstag_rider; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/sylvan_starstag_rider/sylvan_starstag_rider.glb",
+    height: 0.980,
+    clips: {
+    },
+)

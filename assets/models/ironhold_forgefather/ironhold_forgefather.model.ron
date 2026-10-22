@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit ironhold_forgefather; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/ironhold_forgefather/ironhold_forgefather.glb",
+    height: 0.961,
+    clips: {
+    },
+)
