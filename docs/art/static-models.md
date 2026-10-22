@@ -1,20 +1,24 @@
-# Static models: buildings and resource nodes
+# Static models: buildings, resource nodes and decor
 
 Contract between the static art pipeline (`art/static/`, headless Blender)
 and the engine (`af_render`). Static models have no skeleton and no
 animation; the engine moves them (construction rising, a felled tree
 falling, ore shrinking). Units use the animated pipeline instead
-(`docs/art/peasant.md`).
+(`docs/art/peasant.md`). Decor (landscape scenery: mountain pieces, crater
+rims, reeds, sea cliffs, bridges...) goes through the same build but is no
+game entity: the engine places it over the land (see "Decor").
 
 ## Dropping a model in (the whole workflow)
 
 1. Save the model (`.glb`, `.gltf`, `.fbx` or `.obj`; Meshy's GLB is fine,
    polygon count and texture size do not matter) as
    - `art/static/source/buildings/<building id>.glb`, or
-   - `art/static/source/nodes/<node id>.glb`,
-   using the game's id (`town_center`, `house`, `pine`, `stone_outcrop`...).
-   Variants: `pine_a.glb`, `pine_b.glb`, `pine_c.glb` (the engine picks one
-   per tree). A felled-tree stump: `pine_stump.glb` (optional).
+   - `art/static/source/nodes/<node id>.glb`, or
+   - `art/static/source/decor/<decor id>_<variant>.glb`,
+   using the game's id (`town_center`, `house`, `pine`, `stone_outcrop`...;
+   decor: `mountain_peak`, `reeds`... in `art/static/lib/settings.py`
+   `DECOR`). Variants: `pine_a.glb`, `pine_b.glb`, `pine_c.glb` (the engine
+   picks one per tree). A felled-tree stump: `pine_stump.glb` (optional).
 2. Run the build:
    ```bash
    "C:/Program Files/Blender Foundation/Blender 4.4/blender.exe" -b -P art/static/build_static.py
@@ -33,19 +37,24 @@ most models need none.
 - Normalises: base on y = 0, centred on x/z, front facing +Z (a
   `yaw` setting turns a model authored facing another way).
 - Reduces polygons to a triangle budget (defaults: trees 3000, other nodes
-  2000, buildings 6000, `town_center` and `citadel` 10000). Where collapse
-  stalls on non-manifold edges (fronds sharing a stem, planks meeting a
-  rail), those edges are split and collapse runs again.
-- Strips emissive, downsizes textures (nodes 512 px, buildings 1024 px),
-  keeps alpha-cutout leaves working.
+  2000, buildings 6000, `town_center` and `citadel` 10000; decor per id:
+  mountain pieces 4000-8000, meteor-site pieces 3500-5000, small scenery
+  600-2000). Where collapse stalls on non-manifold edges (fronds sharing a
+  stem, planks meeting a rail), those edges are split and collapse runs
+  again.
+- Strips emissive, downsizes textures (nodes and small decor 512 px,
+  buildings and big decor 1024 px), keeps alpha-cutout leaves working.
+- Decor: a long piece whose longer side lies along Z is turned a quarter
+  to lie along X.
 - Buildings: adds a team banner (a pole and flag, node `Team_banner`,
   material `Team`, plain white) at the top front-left corner unless
   `banner = false` or an anchor is given; the engine tints it with the
   owner's faction colour.
 - Writes, per asset:
-  - `assets/models/static/<buildings|nodes>/<id>/<variant>.glb` (and
+  - `assets/models/static/<buildings|nodes|decor>/<id>/<variant>.glb` (and
     `stump.glb` when given),
-  - `assets/models/static/<buildings|nodes>/<id>/<id>.model.ron`, the manifest,
+  - `assets/models/static/<buildings|nodes|decor>/<id>/<id>.model.ron`, the
+    manifest,
 - and the generated registry `assets/visuals/static.ron`.
 - Renders a contact sheet per asset for review (scratch folder, not the repo).
 
@@ -72,7 +81,9 @@ line with the other variants.
 
 Defaults: trees (`pine`, `oak`, `palm`) `fit = "Height"` and
 `random_yaw = true`; other nodes `fit = "Footprint"` and `random_yaw = true`;
-buildings `fit = "Box"`, `random_yaw = false`.
+buildings `fit = "Box"`, `random_yaw = false`; decor per id
+(`settings.DECOR`: fit, `size`, triangles, texture), `random_yaw = true`.
+`size = [w, h, d]` (decor only) sets the size the game draws it at.
 
 ## Fit (how the engine sizes a model to the game's box)
 
@@ -87,7 +98,7 @@ buildings `fit = "Box"`, `random_yaw = false`.
 
 ```ron
 (
-    kind: Node,                       // Node | Building
+    kind: Node,                       // Node | Building | Decor
     id: "pine",
     fit: Height,
     random_yaw: true,
@@ -100,14 +111,20 @@ buildings `fit = "Box"`, `random_yaw = false`.
 )
 ```
 
+A decor manifest has `kind: Decor` and, after `random_yaw`, its drawn size
+`size: (13.000, 8.500, 13.000)` (w, h, d metres; without it the engine uses
+its id's default, `DecorKind::size`). Buildings' and nodes' manifests are
+unchanged.
+
 Registry (`assets/visuals/*.ron`, all files merged; `static.ron` is
-generated, `units.ron` is hand-written):
+generated, `units.ron` is hand-written; every section is optional):
 
 ```ron
 (
     units: { "peasant": "models/peasant/peasant.model.ron" },
     buildings: { "house": "models/static/buildings/house/house.model.ron" },
     nodes: { "pine": "models/static/nodes/pine/pine.model.ron" },
+    decor: { "reeds": "models/static/decor/reeds/reeds.model.ron" },
 )
 ```
 
@@ -170,11 +187,80 @@ Engine details (`af_render::registry`, `af_render::statics`):
 - Dead buildings and nodes remembered in the fog are drawn with their
   models too.
 
+## Decor
+
+Scenery models that dress the land (`af_render::terrain::decor`). Never a
+game entity: nothing in the simulation knows them, units walk on the ground
+as before, and where each stands is a pure function of the map (the drawn
+terrain and `MapFeatures`), hashed from positions and the seed, so every
+player sees the same land. Each placement rule draws from whatever variants
+of its model exist; a model that is missing (or fails to load) places
+nothing, so with no decor at all the land looks as it did before.
+
+| id (variants) | where the engine puts it |
+|---|---|
+| `mountain_peak` (a, b snowy; c bare; d green flanks) | on the summits of the ranges and massifs (the height field's local maxima over mountain cells, the map's and the skirt's), as wide as the rock round the summit allows, rising 0.9-2.4 m above the field's own crest, sunk into it, never above 10.4 m on the map (flyers fly at 12 m); snow on those topping 9.3 m, bare rock from 7.6 m, green flanks below |
+| `mountain_ridge` (a; b snow dust; c grassy) | along each range's spine (`MapFeatures::mountains`) every 10 m between the peaks, laid along the spine, as wide as the range there, just above its crest; shorter or slimmer where it bends or narrows |
+| `mountain_foothill` (a, b, c) | where a range tapers out (carrying its line on) and along the feet of the ranges, lying along the rock's edge; on mountain cells only |
+| `crater_rim` (a short, b long, c crowned) | arcs along the rims of the Crater, Shattered, Lake and Scar sites, their steep inner face (front, +Z) toward the site's centre, each wholly on rim cells (never in a gap, never over the floor or the ground outside), 1.4-2.7 m above the rim (climbers cross it) |
+| `aether_monolith` | three to five standing round the procedural Starspire on its impassable footing (they join it rather than replace it: the heart stays the game's own crystal cluster) |
+| `star_core` (a sunk, b split) | half buried at the Starspire's foot; half sunk in the Crater Lake's deep ring |
+| `impact_scar`, `meteor_shard` (a, b) | sparse, on the rim and footing cells the arcs left free (the rims' torn ends by the gaps, the Starspire's footing) |
+| `reeds` (a, b, c) | in marsh and along the shallows of rivers and lakes (not the sea), over the map and the skirt; a share of the procedural reeds stays between them |
+| `river_rocks` (a, b, c) | in fords and river shallows, just breaking the surface |
+| `lily_pads` | on still lake water 1-6 m from the shore, gathered in coves |
+| `bramble` (a, b, c) | over the thickets (a share of the procedural brambles stays under them) |
+| `fern` (a, b), `shrub` (a gorse, b hazel), `mossy_boulder` (a, b, c) | ferns in thickets and marsh; shrubs on highland and thicket edges; boulders at the feet of mountains; all three at the skirt's wood edges |
+| `sea_stack` (a, b) | in the sea 6-18 m off the shore (a few on the map, more in the skirt) |
+| `beach_rocks` | in the sea's shallows off the beach (never on the sand, which is buildable), and at the skirt's shore |
+| `sea_cliff` (a, b, c) | along the skirt's coast, its sheer face (+Z) to the sea |
+| `shipwreck` | in the skirt's sea near its coast; at most one far out in the map's own sea |
+| `driftwood` | on the skirt's shore |
+| `stone_bridge`, `wooden_footbridge` | over each river where it runs on across the skirt, 14-30 m beyond the edge, spanning bank to bank (stone where the river is wide) |
+| `standing_stones` (a, b), `ruined_watchtower`, `wayside_shrine` | on the skirt's open meadows, well apart (a shrine also by a bridge's end) |
+| `fallen_log` (a, b) | at the skirt's wood edges |
+| `backdrop_mountains` (a, b), `backdrop_forest` (a, b) | in the skirt's outer ring along every side not at sea, facing the map, fading into the haze |
+
+The rules every placement keeps (tested on every kind of generated map,
+`crates/af_render/tests/decor.rs`, through `decor::violations`): no
+footprint covers buildable ground; where units walk only low pieces stand
+(reeds, river rocks, lily pads, brambles, ferns, shrubs, beach rocks, and
+on the climbable rims the rim pieces); the landmarks (stones, ruins,
+shrines, logs, driftwood, bridges, cliffs, backdrops) stand only beyond the
+map's edge; nothing rises above 10.4 m on the map; at most 9000 pieces.
+Nothing may look gatherable (the style guide's node colour code).
+
+Conventions for the models: the front (+Z) is a rim arc's inner face, a
+cliff's sea face, a backdrop's side toward the map; long pieces lie along
+X (the build turns them; `yaw = 180` turns one that faces the wrong way);
+no ground plate.
+
+Engine:
+
+- The land is built once the decor models have finished loading (at most
+  5 s after the map exists; then without the stragglers), once per match.
+- Each placed model's parts are entities sharing the model's meshes, so
+  Bevy batches them; nothing runs per frame for them. Big pieces cast
+  shadows; small scenery casts none and is not drawn from further than
+  340 m (past every play zoom; only the dev overview leaves it out).
+- Each of a model's materials gets one fog-aware copy per match
+  (`DecorMaterial`: its `StandardMaterial`, texture and cutout kept, with
+  the land's fog of war: unexplored near black, out of sight darkened,
+  greyed off the map; spectators see all).
+- Cost, measured on a Huge map (721 m, 8 players, seas: 1,031 pieces), with
+  stand-ins at their triangle budgets (`placeholders.py --heavy`), the game
+  paused, no vsync, median frame (RTX 4070 Ti, the machine otherwise
+  busy): 4.7 ms without decor, 5.0-5.3 ms with it at the start zoom; 4.5
+  against 4.9 ms over the main site; 4.8 against 4.85 ms at the dev
+  overview (the small scenery culled). Planning and spawning it take 38 ms
+  of the land's 295 ms build.
+
 ## Placeholders
 
 `art/static/placeholders.py` writes simple stand-in sources (tree variants
-and stump, rock, crystal, house, town centre, farm) to
-`art/static/placeholders/source/`; building those with
+and stump, rock, crystal, house, town centre, farm, and every decor model)
+to `art/static/placeholders/source/` (decor in `decor/`, not committed);
+building those with
 `--source art/static/placeholders/source --out-root assets/models/_placeholders
 --registry assets/visuals-placeholders/static.ron` gives a full test set.
 Both output folders are git-ignored. Run the game with

@@ -270,7 +270,7 @@ fn rim_shades() -> [[f32; 4]; 4] {
 
 /// The drawn ground's height at a world point (bilinear between its
 /// cell's corners: close enough to set a stone on).
-fn surface(field: &Field, p: Vec2) -> f32 {
+pub(crate) fn surface(field: &Field, p: Vec2) -> f32 {
     let g = (p - field.origin) / field.cell;
     let (x, z) = (g.x.floor() as i32, g.y.floor() as i32);
     let (fx, fz) = (g.x - x as f32, g.y - z as f32);
@@ -289,8 +289,24 @@ fn next_to(field: &Field, x: i32, z: i32, pred: impl Fn(Cover) -> bool) -> Optio
     (away != Vec2::ZERO).then(|| away.normalize_or(Vec2::X))
 }
 
+/// How much of each procedural prop a chunk keeps: all of it, unless a
+/// decor model of the same thing dresses the land too
+/// ([`super::decor::keep_props`]); then a share stays, filling in under
+/// and between the models.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PropKeep {
+    pub brambles: f32,
+    pub reeds: f32,
+}
+
+impl Default for PropKeep {
+    fn default() -> PropKeep {
+        PropKeep { brambles: 1.0, reeds: 1.0 }
+    }
+}
+
 /// The props of one map chunk.
-pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
+pub fn chunk_props(field: &Field, r: ChunkRect, keep: PropKeep) -> PropMesh {
     let mut m = PropMesh::default();
     let salt = field.seed;
     for (x, z) in r.cells() {
@@ -301,17 +317,17 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
         let in_site = field.in_site(centre);
         let in_spire = field.spire.is_some_and(|(c, rad)| centre.distance(c) < rad + 3.0);
         match cover {
-            Cover::Thicket => {
+            Cover::Thicket if keep.brambles >= 1.0 || cell_hash(x, z, salt ^ 0xb7a4) < keep.brambles => {
                 let mut dice = Dice::new(x, z, salt ^ 0xb7a3);
                 let p = jitter(&mut dice);
                 m.bramble(on(p, 0.0), &mut dice);
             }
-            Cover::Marsh if cell_hash(x, z, salt ^ 0x4ee1) < 0.3 => {
+            Cover::Marsh if cell_hash(x, z, salt ^ 0x4ee1) < 0.3 * keep.reeds => {
                 let mut dice = Dice::new(x, z, salt ^ 0x4ee2);
                 let p = jitter(&mut dice);
                 m.reeds(on(p, -0.08), &mut dice);
             }
-            Cover::Shallows if cell_hash(x, z, salt ^ 0x4ee3) < 0.45 && next_to(field, x, z, Cover::is_land).is_some() => {
+            Cover::Shallows if cell_hash(x, z, salt ^ 0x4ee3) < 0.45 * keep.reeds && next_to(field, x, z, Cover::is_land).is_some() => {
                 let mut dice = Dice::new(x, z, salt ^ 0x4ee4);
                 let p = jitter(&mut dice);
                 m.reeds(on(p, -0.3), &mut dice);
@@ -481,7 +497,7 @@ mod tests {
             if !on_map {
                 continue;
             }
-            let props = chunk_props(&f, r);
+            let props = chunk_props(&f, r, PropKeep::default());
             total += props.positions.len();
             assert!(props.indices.iter().all(|i| (*i as usize) < props.positions.len()));
             for tri in props.indices.chunks(3) {
@@ -500,7 +516,10 @@ mod tests {
         }
         assert!(total > 1000, "brambles, reeds and scree: {total} vertices");
         // Deterministic.
-        let again: usize = chunks(&f).iter().filter(|c| c.1).map(|(r, _)| chunk_props(&f, *r).positions.len()).sum();
+        let again: usize = chunks(&f).iter().filter(|c| c.1).map(|(r, _)| chunk_props(&f, *r, PropKeep::default()).positions.len()).sum();
         assert_eq!(again, total);
+        // With decor models of brambles and reeds, a share of each stays.
+        let thinned: usize = chunks(&f).iter().filter(|c| c.1).map(|(r, _)| chunk_props(&f, *r, PropKeep { brambles: 0.4, reeds: 0.4 }).positions.len()).sum();
+        assert!(thinned < total * 9 / 10 && thinned > total / 4, "{thinned} of {total}");
     }
 }

@@ -1,8 +1,8 @@
-//! The static models buildings and nodes are drawn with: read from the
-//! visual registry's `buildings` and `nodes` and the manifests they name at
-//! startup, each variant (and stump) loaded through the asset server and,
-//! once loaded, flattened into the meshes and materials every instance
-//! shares ([`StaticMesh`]).
+//! The static models buildings, nodes and the land's decor are drawn with:
+//! read from the visual registry's `buildings`, `nodes` and `decor` and the
+//! manifests they name at startup, each variant (and stump) loaded through
+//! the asset server and, once loaded, flattened into the meshes and
+//! materials every instance shares ([`StaticMesh`]).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -19,6 +19,7 @@ use super::manifest::{MeshSpec, StaticKind, StaticManifest};
 use crate::assets::BOX_REFLECTANCE;
 use crate::model::library::{TEAM_MATERIAL, fix_materials};
 use crate::registry::{Entry, Registry};
+use crate::terrain::decor::{Catalogue, DecorKind, DecorModel, DecorVariant};
 
 /// Index of a model in the [`StaticLibrary`].
 pub type StaticId = usize;
@@ -134,15 +135,18 @@ impl StaticModel {
     }
 }
 
-/// Every static model and the building and node types drawn with them.
-/// Inserted at startup (or by a test); changed when a model finishes
-/// loading, which rebuilds the visuals of its buildings and nodes.
+/// Every static model and the building and node types (and the decor)
+/// drawn with them. Inserted at startup (or by a test); changed when a
+/// model finishes loading, which rebuilds the visuals of its buildings and
+/// nodes.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct StaticLibrary {
     /// By `BuildingTypeId` index.
     buildings: Vec<Option<StaticId>>,
     /// By `NodeTypeId` index.
     nodes: Vec<Option<StaticId>>,
+    /// By `DecorKind` index.
+    decor: Vec<Option<StaticId>>,
     models: Vec<StaticModel>,
 }
 
@@ -151,6 +155,7 @@ pub struct StaticLibrary {
 pub enum StaticTarget {
     Building(BuildingTypeId),
     Node(NodeTypeId),
+    Decor(DecorKind),
 }
 
 impl StaticLibrary {
@@ -168,6 +173,7 @@ impl StaticLibrary {
         let (slots, index) = match target {
             StaticTarget::Building(k) => (&mut self.buildings, k.index()),
             StaticTarget::Node(k) => (&mut self.nodes, k.index()),
+            StaticTarget::Decor(k) => (&mut self.decor, k.index()),
         };
         if slots.len() <= index {
             slots.resize(index + 1, None);
@@ -205,6 +211,40 @@ impl StaticLibrary {
         self.ready_in(&self.nodes, kind.index())
     }
 
+    /// The decor model of `kind`, once it is ready.
+    pub fn decor(&self, kind: DecorKind) -> Option<(StaticId, &StaticModel)> {
+        self.ready_in(&self.decor, kind.index())
+    }
+
+    /// Some decor model is still loading (the land waits for them, so the
+    /// decor is placed once, from every model there is).
+    pub fn decor_loading(&self) -> bool {
+        self.decor.iter().flatten().any(|id| self.models[*id].loading())
+    }
+
+    /// The decor there is to place: every ready decor model with its loaded
+    /// variants (named after their files: `a.glb` is `a`), and for each
+    /// kind the model and, per catalogue variant, its manifest variant.
+    pub fn decor_catalogue(&self) -> (Catalogue, Vec<(DecorKind, StaticId, Vec<usize>)>) {
+        let mut catalogue = Catalogue::default();
+        let mut models = Vec::new();
+        for kind in DecorKind::ALL {
+            let Some((id, model)) = self.decor(kind) else { continue };
+            let mut variants = Vec::new();
+            let mut index = Vec::new();
+            for (i, spec) in model.manifest.variants.iter().enumerate() {
+                let Some(mesh) = model.variant(i) else { continue };
+                let name = Path::new(&spec.model).file_stem().map_or_else(|| i.to_string(), |s| s.to_string_lossy().into_owned());
+                variants.push(DecorVariant { name, min: mesh.min, max: mesh.max });
+                index.push(i);
+            }
+            let size = model.manifest.size.unwrap_or_else(|| kind.size());
+            catalogue.insert(kind, DecorModel { fit: model.manifest.fit, size, variants });
+            models.push((kind, id, index));
+        }
+        (catalogue, models)
+    }
+
     fn loading(&self) -> bool {
         self.models.iter().any(StaticModel::loading)
     }
@@ -219,33 +259,40 @@ pub struct StaticSources {
     pub warnings: Vec<String>,
 }
 
-/// Read the manifest of each building and node the registry lists through
-/// `read` (asset path -> text), checking it against the content and its
-/// registry section.
+/// Read the manifest of each building, node and decor model the registry
+/// lists through `read` (asset path -> text), checking it against the
+/// content (decor: the kinds the land places) and its registry section.
 pub fn read_sources(data: &GameData, registry: &Registry, read: impl Fn(&str) -> Result<String, String>) -> StaticSources {
     let mut out = StaticSources::default();
-    let sections: [(&BTreeMap<String, Entry>, StaticKind); 2] = [(&registry.buildings, StaticKind::Building), (&registry.nodes, StaticKind::Node)];
+    let sections: [(&BTreeMap<String, Entry>, StaticKind); 3] = [(&registry.buildings, StaticKind::Building), (&registry.nodes, StaticKind::Node), (&registry.decor, StaticKind::Decor)];
     for (section, kind) in sections {
         for (id, entry) in section {
             let target = match kind {
                 StaticKind::Building => data.building_id(id).map(StaticTarget::Building),
                 StaticKind::Node => data.node_id(id).map(StaticTarget::Node),
+                StaticKind::Decor => DecorKind::parse(id).map(StaticTarget::Decor),
             };
             let Some(target) = target else {
-                out.warnings.push(format!("{}: no {} `{id}`", entry.file, if kind == StaticKind::Node { "resource node" } else { "building" }));
+                let what = match kind {
+                    StaticKind::Node => "resource node",
+                    StaticKind::Building => "building",
+                    StaticKind::Decor => "decor the land places",
+                };
+                out.warnings.push(format!("{}: no {what} `{id}`", entry.file));
                 continue;
             };
             let path = &entry.manifest;
             let parsed = read(path).and_then(|text| StaticManifest::parse(&text));
             match parsed {
                 Ok((m, _)) if m.kind != kind => {
-                    out.warnings.push(format!("{path} ({id}): a {:?} model listed under `{}`; drawn as boxes", m.kind, kind.section()));
+                    let fallback = if kind == StaticKind::Decor { "not placed" } else { "drawn as boxes" };
+                    out.warnings.push(format!("{path} ({id}): a {:?} model listed under `{}`; {fallback}", m.kind, kind.section()));
                 }
                 Ok((m, warnings)) => {
                     out.warnings.extend(warnings.into_iter().map(|w| format!("{path}: {w}")));
                     out.entries.push((target, path.clone(), m));
                 }
-                Err(e) => out.warnings.push(format!("{path} ({id}): {e}; drawn as boxes")),
+                Err(e) => out.warnings.push(format!("{path} ({id}): {e}; {}", if kind == StaticKind::Decor { "not placed" } else { "drawn as boxes" })),
             }
         }
     }
@@ -474,6 +521,43 @@ mod tests {
         ] {
             assert!(w.contains(needle), "{needle} in:\n{w}");
         }
+    }
+
+    #[test]
+    fn decor_comes_from_its_own_section_and_becomes_a_catalogue() {
+        let data = test_data();
+        const PEAK: &str = r#"(kind: Decor, id: "mountain_peak", fit: Height, size: (13.0, 8.5, 13.0), variants: [
+            (model: "models/static/decor/mountain_peak/a.glb", min: (-6.0, 0.0, -6.0), max: (6.0, 9.0, 6.0)),
+            (model: "models/static/decor/mountain_peak/c.glb", min: (-5.0, 0.0, -5.0), max: (5.0, 8.0, 5.0)),
+        ])"#;
+        let read = |path: &str| match path {
+            "peak.model.ron" => Ok(PEAK.to_string()),
+            "pine.model.ron" => Ok(PINE.to_string()),
+            _ => Err("not found".to_string()),
+        };
+        let mut registry = Registry::default();
+        registry.decor.insert("mountain_peak".into(), entry("peak.model.ron", "visuals/static.ron"));
+        registry.decor.insert("volcano".into(), entry("peak.model.ron", "visuals/static.ron"));
+        registry.decor.insert("reeds".into(), entry("pine.model.ron", "visuals/static.ron"));
+        let s = read_sources(&data, &registry, read);
+        assert_eq!(s.entries.iter().map(|(t, _, _)| *t).collect::<Vec<_>>(), [StaticTarget::Decor(DecorKind::MountainPeak)]);
+        let w = s.warnings.join("\n");
+        for needle in ["visuals/static.ron: no decor the land places `volcano`", "pine.model.ron (reeds): a Node model listed under `decor`; not placed"] {
+            assert!(w.contains(needle), "{needle} in:\n{w}");
+        }
+        // Loaded (variant c failed): the catalogue has what there is, named by file.
+        let (_, path, m) = s.entries.into_iter().next().unwrap();
+        let mut lib = StaticLibrary::default();
+        let id = lib.insert(StaticTarget::Decor(DecorKind::MountainPeak), &path, m.clone(), vec![MeshState::Loading(Handle::default()), MeshState::Loading(Handle::default())], None);
+        assert!(lib.decor_loading() && lib.decor_catalogue().0.is_empty());
+        lib.model_mut(id).variants = vec![MeshState::Failed, mesh(Vec3::new(-5.0, 0.0, -5.0), Vec3::new(5.0, 8.0, 5.0))];
+        assert!(!lib.decor_loading());
+        let (catalogue, models) = lib.decor_catalogue();
+        let peak = catalogue.get(DecorKind::MountainPeak).expect("ready");
+        assert_eq!(peak.variants.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["c"]);
+        assert_eq!((peak.fit, peak.size), (Fit::Height, Vec3::new(13.0, 8.5, 13.0)));
+        assert_eq!(models, [(DecorKind::MountainPeak, id, vec![1])], "catalogue variant 0 is manifest variant 1");
+        assert!(lib.node(data.node_id("pine").unwrap()).is_none(), "decor serves no node");
     }
 
     fn manifest(text: &str) -> StaticManifest {

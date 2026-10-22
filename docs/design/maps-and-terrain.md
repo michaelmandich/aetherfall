@@ -397,6 +397,35 @@ berries (berry bush), no bright violet crystals (aether), no gold-veined
 charred rock (adamant), no scorched rings (vent), no free-standing trees
 (every tree is a wood node).
 
+**Decor models** (`af_render::terrain::decor`; the static build's `decor`
+kind, from Tripo) dress the land beside the procedural props, by the same
+principles: placed from the map alone (the field and `MapFeatures`, hashed
+from positions and the seed), never a sim entity, never on buildable
+ground, and where units walk only low things they wade through (reeds,
+river rocks, lily pads, brambles, ferns, shrubs, beach rocks; the rim arcs
+on the climbable rims):
+
+* mountains read as craggy ranges: peaks on the height field's summits
+  (scaled to the local height and width, sunk into the field, which stays
+  the base; snow on the tallest; never above 10.4 m), ridges along the
+  ranges' spines, foothills at their ends and feet;
+* crater rim arcs along every rimmed site's rim, facing in, never in a gap;
+  monoliths join the Starspire on its footing; star cores at its foot and
+  in the Crater Lake; impact scars and meteor shards on the rims' free
+  cells;
+* reeds on shores and in marsh, river rocks in fords, lily pads on still
+  lake water, brambles over thickets (a share of the procedural brambles
+  and reeds stays), ferns, shrubs and mossy boulders at the edges of
+  thickets, highlands, mountains and woods;
+* the coast: sea stacks offshore, beach rocks at the waterline, sea cliffs
+  along the skirt's coast, wrecks and driftwood there;
+* landmarks units would walk through stand only in the skirt: bridges over
+  its rivers, standing stones, ruins and shrines on its meadows, fallen
+  logs at its woods, and distant mountains and forest in its outer ring.
+
+Each rule uses whichever of its models exist; with none the land looks as
+it did before them. The full table: `docs/art/static-models.md`, "Decor".
+
 ### 6.4 Light
 
 A brighter, warmer afternoon: a warm sun, sky-tinted ambient light, a light
@@ -469,4 +498,7 @@ found, and the unit stops on the near bank). So:
   the rivers asked for, carving tallied by cause) and a diagnostic listing every
   problem over a wide sample.
 * af_render: walkable cells drawn at `ground_height`; mountains under 10.5 m;
-  every water bed below the water surface; chunks cover the map once.
+  every water bed below the water surface; chunks cover the map once; decor
+  (`crates/af_render/tests/decor.rs`, over generated maps of every site
+  kind and water level) keeps its rules (above), is deterministic and
+  bounded, and dresses rims, ranges, shores and the skirt's rivers.
