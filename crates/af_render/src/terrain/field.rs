@@ -874,7 +874,7 @@ fn spire_base(d: f32) -> f32 {
 pub(crate) mod tests {
     use super::*;
     use af_core::ext::map::{MeteorSite, MountainRange, ResolvedMapOptions, RiverLine, MapSize, WaterLevel};
-    use af_core::ext::render::corner_ground;
+    use af_core::ext::render::{corner_ground, ground_height};
     use af_core::testing::{new_nav, test_data};
 
     /// A map with every terrain: a mountain range across the middle, a
@@ -949,6 +949,33 @@ pub(crate) mod tests {
                     if touches_land {
                         assert_eq!(f.height(fx, fz), corner_ground(&data, &nav, IVec2::new(x, z)), "corner {x},{z} (features: {})", features.is_some());
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_river_runs_off_the_map_at_its_wading_ground() {
+        // The river leaves the map at both ends: the cells just beyond the
+        // edge are its water (with or without its line carried on across
+        // the skirt), and units wading in its last row stay at the same
+        // ground as further in, instead of rising toward grass.
+        let data = test_data();
+        let nav = painted(&data, 128);
+        let features = painted_features();
+        for features in [None, Some(&features)] {
+            let f = build(&data, &nav, features);
+            for x in 86..=93 {
+                for z in [-1, 128] {
+                    let (fx, fz) = (x + f.skirt, z + f.skirt);
+                    assert_eq!(f.cover_at(fx, fz).is_water(), f.cover_at(fx, fz.clamp(f.skirt, f.skirt + 127)).is_water(), "first ring at {x},{z}");
+                }
+            }
+            for (edge, inside) in [(0.05, 6.5), (127.95, 120.5)] {
+                for x in [88.6, 90.5, 91.2] {
+                    let at_edge = ground_height(&data, &nav, Vec2::new(x, edge));
+                    let further_in = ground_height(&data, &nav, Vec2::new(x, inside));
+                    assert!((at_edge - further_in).abs() < 1e-6 && at_edge < WATER_LEVEL, "wading at {x},{edge}: {at_edge} vs {further_in}");
                 }
             }
         }

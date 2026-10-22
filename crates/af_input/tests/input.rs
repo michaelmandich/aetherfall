@@ -449,7 +449,7 @@ fn cursor_picks_on_the_drawn_mountains() {
     let peak = focus + right * 12.0;
     let corner = |i: u32| Vec2::new((i % 129) as f32, (i / 129) as f32);
     let top = (0..129 * 129).map(|i| if corner(i).distance(peak) <= 3.0 { 8.0 } else { 0.0 }).collect();
-    m.app.world_mut().insert_resource(TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 129, height: 129, top });
+    m.app.world_mut().insert_resource(TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 129, height: 129, top, split: Vec::new() });
     // The ray through the pillar's top meets the y = 0 plane well behind
     // it: a unit stands there.
     let summit = Vec3::new(peak.x, 8.0, peak.y);
