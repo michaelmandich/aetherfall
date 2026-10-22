@@ -394,8 +394,9 @@ fn every_ground_class_reaches_every_start_spot_and_site() {
             }
         }
     }
-    // Crossings, gaps and passes are planned wide enough: carving is rare.
-    assert!(carved * 10 <= sample().len(), "{carved} of {} maps needed a route carved", sample().len());
+    // Crossings, gaps, passes and ramps are planned wide and open enough:
+    // carving is rare (about one map in eighty over the full sweep).
+    assert!(carved * 20 <= sample().len(), "{carved} of {} maps needed a route carved", sample().len());
 }
 
 #[test]
@@ -789,30 +790,55 @@ fn sweep_every_option() {
     let data = test_data();
     let grass = data.terrain_id("grass").unwrap();
     let started = Instant::now();
-    let (mut maps, mut carved, mut slowest) = (0, 0, (0.0f32, String::new()));
-    for players in 2..=8 {
-        for size in MapSize::ALL {
-            for water in WaterLevel::ALL {
-                for rivers in [1, 2] {
-                    for site in SiteKind::ALL {
-                        for seed in 0..3 {
-                            let t = Instant::now();
-                            let case = Case::new(&data, players, seed * 7919 + players as u64, options(size, water, rivers, site));
-                            let took = t.elapsed().as_secs_f32();
-                            if took > slowest.0 {
-                                slowest = (took, case.at());
+    // One thread per player count; every problem is listed before failing.
+    let results: Vec<(usize, usize, Vec<String>, Vec<String>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (2..=8usize)
+            .map(|players| {
+                let data = &data;
+                scope.spawn(move || {
+                    let (mut maps, mut carved, mut problems, mut why) = (0, 0, Vec::new(), Vec::new());
+                    for size in MapSize::ALL {
+                        for water in WaterLevel::ALL {
+                            for rivers in [1, 2] {
+                                for site in SiteKind::ALL {
+                                    for seed in 0..3 {
+                                        let case = Case::new(data, players, seed * 7919 + players as u64, options(size, water, rivers, site));
+                                        let map = &case.map;
+                                        maps += 1;
+                                        carved += !map.carved.is_empty() as usize;
+                                        // "Tracked: spot 3 at (..)" -> "Tracked: spot".
+                                        why.extend(map.carved.iter().map(|c| c.split(|ch: char| ch.is_ascii_digit() || ch == '(').next().unwrap_or(c).trim().to_string()));
+                                        if !map.cut_off.is_empty() {
+                                            problems.push(format!("cut off {:?} ({})", map.cut_off, case.at()));
+                                        }
+                                        if map.features.rivers.len() != rivers as usize {
+                                            problems.push(format!("{} river(s) ({})", map.features.rivers.len(), case.at()));
+                                        }
+                                        if !map.starts.iter().all(|s| map.terrain_at(*s) == Some(grass)) {
+                                            problems.push(format!("a start off grass ({})", case.at()));
+                                        }
+                                    }
+                                }
                             }
-                            let map = &case.map;
-                            maps += 1;
-                            carved += !map.carved.is_empty() as usize;
-                            assert!(map.cut_off.is_empty(), "{:?} ({})", map.cut_off, case.at());
-                            assert_eq!(map.features.rivers.len(), rivers as usize, "{}", case.at());
-                            assert!(map.starts.iter().all(|s| map.terrain_at(*s) == Some(grass)), "{}", case.at());
                         }
                     }
-                }
-            }
-        }
+                    (maps, carved, problems, why)
+                })
+            })
+            .collect();
+        workers.into_iter().map(|w| w.join().expect("sweep thread")).collect()
+    });
+    let maps: usize = results.iter().map(|r| r.0).sum();
+    let carved: usize = results.iter().map(|r| r.1).sum();
+    let problems: Vec<&String> = results.iter().flat_map(|r| &r.2).collect();
+    for p in &problems {
+        println!("{p}");
     }
-    println!("{maps} maps in {:?}; {carved} needed a carve; slowest {:.2} s ({})", started.elapsed(), slowest.0, slowest.1);
+    let mut why: Vec<&String> = results.iter().flat_map(|r| &r.3).collect();
+    why.sort();
+    for kind in why.iter().copied().collect::<std::collections::BTreeSet<_>>() {
+        println!("carved {:>4} x {kind}", why.iter().filter(|w| **w == kind).count());
+    }
+    println!("{maps} maps in {:?}; {carved} needed a carve; {} problems", started.elapsed(), problems.len());
+    assert!(problems.is_empty());
 }

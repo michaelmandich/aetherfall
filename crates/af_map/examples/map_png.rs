@@ -37,6 +37,7 @@ const HELP: &str = "map_png: draw generated maps to PNG.
   --site S            crater|shattered|lake|scar|spire|random (default random)
   --out PATH          output PNG (default map.png)
   --scale S           pixels per metre for one map (default 2)
+  --crop X,Y,R        one map: only the square of half side R m round X,Y
   --sheet             a contact sheet instead of one map
   --seeds A-B         sheet: seeds A to B (default the one seed)
   --vary OPT          sheet: one row per value of site|water|rivers|map|players
@@ -59,6 +60,21 @@ impl Canvas {
         if x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h {
             self.px[y as usize * self.w + x as usize] = c;
         }
+    }
+
+    /// The square of half side `r` pixels round `c` (clipped to the canvas).
+    fn crop(&self, c: Vec2, r: f32) -> Canvas {
+        let x0 = (c.x - r).max(0.0) as usize;
+        let y0 = (c.y - r).max(0.0) as usize;
+        let x1 = ((c.x + r) as usize).min(self.w);
+        let y1 = ((c.y + r) as usize).min(self.h);
+        let mut out = Canvas::new(x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1), [0, 0, 0]);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                out.px[(y - y0) * out.w + x - x0] = self.px[y * self.w + x];
+            }
+        }
+        out
     }
 
     fn blit(&mut self, other: &Canvas, ox: usize, oy: usize) {
@@ -246,6 +262,7 @@ struct Args {
     map_size: f32,
     out: String,
     scale: f32,
+    crop: Option<(f32, f32, f32)>,
     sheet: bool,
     seeds: (u64, u64),
     vary: Option<String>,
@@ -261,6 +278,7 @@ fn parse() -> Result<Args, String> {
         map_size: 0.0,
         out: "map.png".to_string(),
         scale: 2.0,
+        crop: None,
         sheet: false,
         seeds: (1, 1),
         vary: None,
@@ -282,6 +300,11 @@ fn parse() -> Result<Args, String> {
             "--site" => a.options.site = SiteChoice::parse(&value()?).ok_or("--site: crater|shattered|lake|scar|spire|random")?,
             "--out" => a.out = value()?,
             "--scale" => a.scale = value()?.parse().map_err(|e| format!("--scale: {e}"))?,
+            "--crop" => {
+                let v: Vec<f32> = value()?.split(',').map(|s| s.trim().parse::<f32>()).collect::<Result<_, _>>().map_err(|e| format!("--crop: {e}"))?;
+                let [x, y, r] = v[..] else { return Err("--crop X,Y,R".to_string()) };
+                a.crop = Some((x, y, r));
+            }
             "--sheet" => a.sheet = true,
             "--seeds" => {
                 let v = value()?;
@@ -344,7 +367,11 @@ fn main() {
     let data = test_data();
     if !a.sheet {
         let map = generate_logged(&data, a.players, a.seed, a.map_size, &a.options);
-        if let Err(e) = render(&data, &map, a.scale).save(&a.out) {
+        let mut canvas = render(&data, &map, a.scale);
+        if let Some((x, y, r)) = a.crop {
+            canvas = canvas.crop(Vec2::new(x, y) * a.scale, r * a.scale);
+        }
+        if let Err(e) = canvas.save(&a.out) {
             eprintln!("saving {}: {e}", a.out);
             std::process::exit(1);
         }
