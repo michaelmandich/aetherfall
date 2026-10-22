@@ -12,8 +12,8 @@
 //! | | `collect_requests` | new goals and repath wishes: a path at once when no search is needed (flyers, straight lines, a groupmate's search or route), else `Pending` + queue; a unit that got stuck asks for a way round the units near it |
 //! | | `service_paths` | budgeted FIFO A*, each request first offered the routes found before it; a search the tick's budget cuts short goes on next tick |
 //! | `Movement` | `steer` | arrival, waypoints, avoidance, turning (as far as there is room), terrain speed |
-//! | | `resolve_collisions` | SAT push-out vs units, obstacles, terrain, map edge; then the final word on pairs: none ends the tick overlapping past 0.05 m, or deeper than it began, and an overlap a tick began with is parted within a few ticks without big jumps |
-//! | | `track_progress` | `Velocity`, stuck detection |
+//! | | `resolve_collisions` | SAT push-out vs units, obstacles, terrain, map edge; then the final word on pairs: none ends the tick overlapping past 0.05 m, or deeper than it began, and an overlap a tick began with is parted within a few ticks without big jumps; notes who waits its turn in a queue |
+//! | | `track_progress` | `Velocity`, stuck detection (waiting its turn in a queue that moves on is not being stuck) |
 //!
 //! Contract: reads `MoveGoal` (af_behavior, af_economy), writes `PathState`,
 //! `Position`, `Facing` (while moving) and `Velocity` of units, and keeps
@@ -27,7 +27,10 @@
 //! point, counts as arrived although its centre may be farther than `arrive`
 //! from the goal. A group ordered to one spot thus settles into a blob
 //! instead of pushing forever, and so do units rallied one by one to where
-//! the earlier ones stand. Follow goals always arrive by box gap.
+//! the earlier ones stand. Not in a passage (a gap in a cliff, a slot
+//! between buildings) on the way to a goal outside it, though: the unit
+//! would stop in the gap the rest still need. Follow goals always arrive by
+//! box gap.
 //!
 //! [`af_core::ext::movement::CollisionStats`] counts what the collision
 //! solver's final word did (for tests and reports).

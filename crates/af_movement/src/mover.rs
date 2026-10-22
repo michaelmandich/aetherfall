@@ -68,6 +68,15 @@ pub(crate) struct Mover {
     /// ids do not tell age: Bevy orders them by opaque bits, the generation
     /// of a recycled slot first.
     pub born: u64,
+    /// Ticks the unit goes on giving way to walkers it meets head-on (the
+    /// collision solver sets it while the unit gives way, and counts it
+    /// down after): a file that gave way to a column keeps giving way to
+    /// the rest of that column, whatever their ages.
+    pub give_way: u8,
+    /// The collision solver found the unit waiting its turn this tick:
+    /// pressed against a walker ahead of it going its way that moves on (a
+    /// queue at a gap). Not being stuck (see `track_progress`).
+    pub waiting: bool,
 }
 
 impl Default for Mover {
@@ -96,6 +105,8 @@ impl Default for Mover {
             fresh: false,
             overlapped_for: 0,
             born: 0,
+            give_way: 0,
+            waiting: false,
         }
     }
 }
@@ -113,6 +124,7 @@ impl Mover {
             fresh: self.fresh,
             overlapped_for: self.overlapped_for,
             born: self.born,
+            give_way: self.give_way,
             ..Mover::default()
         };
         self.restart_window(pos, facing);

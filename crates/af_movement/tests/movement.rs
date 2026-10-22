@@ -22,6 +22,14 @@ fn unit_with(data: &GameData, loco: MoveFlag) -> UnitTypeId {
         .unwrap_or_else(|| panic!("no {loco:?} unit"))
 }
 
+/// The narrowest common Foot unit at least `width` wide (metres).
+fn foot_at_least(data: &GameData, width: f32) -> UnitTypeId {
+    data.unit_ids()
+        .filter(|u| data.unit(*u).locomotion == MoveFlag::Foot && !data.unit(*u).has_tag(Tag::Giant) && data.unit(*u).size[0] >= width)
+        .min_by(|a, b| data.unit(*a).size[0].total_cmp(&data.unit(*b).size[0]))
+        .unwrap_or_else(|| panic!("no Foot unit {width} m wide"))
+}
+
 /// A faction whose Foot units get `flag`.
 fn faction_granting(data: &GameData, flag: MoveFlag) -> String {
     data.factions
@@ -745,6 +753,67 @@ fn allies_meeting_head_on_in_a_narrow_gap_both_get_through() {
     );
     assert!(done, "a {:?} at {}, b {:?} at {}", status(&app, a), pos(&app, a), status(&app, b), pos(&app, b));
     assert!(worst < 0.05, "overlap {worst}");
+}
+
+/// A crowd ordered through a gap one cell wide in a cliff band: the two
+/// units that reach its mouth abreast slip in one after the other (round
+/// the corners of the cliff) and the rest wait their turn, so all of them
+/// get through and none gives up (before, two stood abreast in the mouth,
+/// each held back by a corner of the gap, and the queue behind them gave
+/// up within seconds, as the chokepoint bench found).
+#[test]
+fn a_crowd_files_through_a_cliff_gap_one_cell_wide() {
+    let data = test_data();
+    let plain = faction_without(&data, &[MoveFlag::Climber]);
+    let (mut app, p) = world(80.0, &[(&plain, 0)]);
+    // A cliff band six cells thick with a gap one cell wide at y = 40..41.
+    paint(&mut app, "cliff", 38..44, 0..40);
+    paint(&mut app, "cliff", 38..44, 41..80);
+    // Infantry: two abreast (1.4 m) do not fit the gap, nor stand clear of it.
+    let foot = foot_at_least(&data, 0.7);
+    let units: Vec<Entity> = (0..24).map(|i| spawn(&mut app, p[0], foot, Vec2::new(33.0 - (i / 6) as f32 * 1.2, 37.5 + (i % 6) as f32 * 1.2))).collect();
+    run_ticks(&mut app, 1);
+    for &u in &units {
+        order(&mut app, u, MoveGoal::point(Vec2::new(60.0, 40.5), 0.5));
+    }
+    let done = run_until(&mut app, 60, |_| {}, |app| units.iter().all(|u| status(app, *u) != PathStatus::Following));
+    let report: Vec<_> = units.iter().map(|&u| (status(&app, u), pos(&app, u))).collect();
+    assert!(done && units.iter().all(|&u| status(&app, u) == PathStatus::Arrived && pos(&app, u).x > 44.0), "{report:?}");
+}
+
+/// Two hostile columns crossing each other in a channel two cells wide and
+/// eight long, their units of interleaved ages: a file that gives way to
+/// the other column goes on giving way to the rest of it, and backs out
+/// behind its front instead of squeezing it, so both columns get through
+/// (before, the right of way flipped with every new pair that met, the
+/// columns packed the channel and gave up in it).
+#[test]
+fn columns_crossing_in_a_channel_two_cells_wide_both_get_through() {
+    let data = test_data();
+    let plain = faction_without(&data, &[MoveFlag::Climber]);
+    let (mut app, p) = world(80.0, &[(&plain, 0), (&plain, 1)]);
+    // Cliffs leave a channel along y = 40..42, x = 36..44.
+    paint(&mut app, "cliff", 36..44, 0..40);
+    paint(&mut app, "cliff", 36..44, 42..80);
+    let foot = unit_with(&data, MoveFlag::Foot);
+    let (mut east, mut west) = (Vec::new(), Vec::new());
+    for i in 0..12 {
+        let (rank, col) = ((i / 4) as f32 * 1.2, (i % 4) as f32 * 1.2 - 1.8);
+        east.push(spawn(&mut app, p[0], foot, Vec2::new(31.0 - rank, 41.0 + col)));
+        west.push(spawn(&mut app, p[1], foot, Vec2::new(49.0 + rank, 41.0 + col)));
+    }
+    run_ticks(&mut app, 1);
+    for &e in &east {
+        order(&mut app, e, MoveGoal::point(Vec2::new(58.0, 41.0), 0.5));
+    }
+    for &w in &west {
+        order(&mut app, w, MoveGoal::point(Vec2::new(22.0, 41.0), 0.5));
+    }
+    let all: Vec<Entity> = east.iter().chain(&west).copied().collect();
+    let done = run_until(&mut app, 90, |_| {}, |app| all.iter().all(|u| status(app, *u) != PathStatus::Following));
+    let report: Vec<_> = all.iter().map(|&u| (status(&app, u), pos(&app, u))).collect();
+    let through = east.iter().all(|&e| pos(&app, e).x > 44.0) && west.iter().all(|&w| pos(&app, w).x < 36.0);
+    assert!(done && through && all.iter().all(|&u| status(&app, u) == PathStatus::Arrived), "{report:?}");
 }
 
 /// A worker walking up to a bush behind two others that leave a slot
