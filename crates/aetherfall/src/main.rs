@@ -74,8 +74,8 @@
 //!                           the window centre). Screenshot and --place runs
 //!                           always ignore the real mouse.
 //!   --battle-demo A,B[,N]   once the map is built, N (default 8) units of type A
-//!                           for player 0 and of B for player 1 fight at the
-//!                           crater (reveals the map)
+//!                           for player 0 and of B for player 1 fight on the open
+//!                           ground nearest the main meteor site (reveals the map)
 //!   --autoplay              the AI plays the local player's slot (its HUD shows)
 //!   --pause-at S            pause the game at S seconds (shots still due are
 //!                           then taken, paused, one a frame)
