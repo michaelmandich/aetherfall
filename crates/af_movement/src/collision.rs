@@ -18,25 +18,52 @@
 //!    into big jumps;
 //!
 //!    Of two walkers meeting head-on (any owners), the younger *gives way*
-//!    for the tick, and so does every walker following close behind it in
-//!    its lane: they yield to the walker they give way to and step aside, so
-//!    it walks them back out of a gap one unit wide (between two farms, two
-//!    trees) instead of the pair, or a pair of columns, deadlocking in it.
-//!    A unit giving way that is braced (the gap is too narrow to pass beside
-//!    it) is pushed straight back along the other's heading, a little per
-//!    pass, rather than squeezed sideways into a jam past it, even once the
-//!    two stand side by side in the gap. Likewise two walkers going the same
-//!    way that reach a gap abreast, too narrow for both (each pinned against
-//!    a wall on its side), are parted along their way into single file, and
-//!    any two units squeezed between two walls (each pushed back by its own)
-//!    slip apart along another axis instead of being pushed into the walls
-//!    and straight back every pass;
+//!    for the tick, unless the other gave way lately (within
+//!    [`GIVE_WAY_MEMORY`]): then that one gives way again, whatever their
+//!    ages, so a file that gave way to a column goes on giving way to the
+//!    rest of it instead of the right of way flipping with every new pair
+//!    that meets. Every walker following close behind one that gives way,
+//!    in its lane, gives way too: they yield to the walker they give way to
+//!    and step aside, and each yields to the one ahead of it in its file as
+//!    that one is backed into it, so the walker walks the whole file back
+//!    out of a gap one unit wide (between two farms, two trees) instead of
+//!    the pair, or a pair of columns, deadlocking in it, or the front of the
+//!    file being squeezed between the walker and its own followers. A unit
+//!    giving way that is braced and in the walker's lane (the gap is too
+//!    narrow to pass beside it) is pushed straight back along the walker's
+//!    heading, a little per pass, rather than squeezed sideways into a jam
+//!    past it, even once the two stand side by side in the gap; one only
+//!    grazing it from the next lane of a wider passage is pushed across,
+//!    into its own lane, and the two pass. Likewise two walkers going the
+//!    same way that reach a gap abreast, too narrow for both (each pinned
+//!    against a wall on its side), are parted along their way into single
+//!    file, and any two units squeezed between two walls (each pushed back
+//!    by its own) slip apart along another axis instead of being pushed into
+//!    the walls and straight back every pass;
 //! 2. ground unit vs static obstacles (buildings, foundations, blocking
 //!    nodes): full push-out; a gate never blocks its own team. A walker
 //!    whose push-out would shove it straight back against its heading, while
 //!    a short sideways step clears the box, takes the step instead: it slips
 //!    round the corner its path line grazes;
-//! 3. ground unit vs impassable terrain cells and the map edge: full push-out.
+//! 3. ground unit vs impassable terrain cells and the map edge: full
+//!    push-out, with the same slip round a corner of the terrain (the step
+//!    leads onto open ground, not along the face of a cliff): two units
+//!    reaching the mouth of a gap in a cliff abreast, each half in it, slip
+//!    in one after the other instead of each being held back by a corner of
+//!    the gap for good.
+//!
+//! A walker pressed against a walker ahead of it going its way (ahead along
+//! both their headings, so no two wait on each other) that moves on (more
+//! than [`QUEUE_FLOW`] of its steps go through, or it waits so itself) is
+//! *waiting its turn*: `track_progress` does not count it as stuck
+//! (`Mover::waiting`). A crowd queueing at a gap keeps its orders however
+//! long the queue takes, instead of giving up within seconds and standing
+//! idle in and around the gap for good; a queue whose front is stuck is
+//! stuck too, and gives up as before. And a walker touching an arrived
+//! groupmate counts as arrived (crowd arrival) only outside a passage
+//! ([`in_passage`]), or with its goal in one: on its way through a gap to a
+//! point past it, it would stop in the gap the rest of the crowd still
+//! needs.
 //!
 //! Then the final word on obstacles: a ground unit's centre never ends on
 //! terrain it cannot enter, and a unit never ends wedged into a static
@@ -92,6 +119,13 @@ const SKIN: f32 = 0.002;
 const IDLE_RESIST: f32 = 0.1;
 /// Resistance factor of a walker giving way (see the module docs).
 const GIVE_WAY_RESIST: f32 = 0.1;
+/// Ticks a walker that gave way goes on giving way to walkers it meets
+/// head-on, whatever their ages (see the module docs).
+const GIVE_WAY_MEMORY: u8 = 60;
+/// A walker that got no more than this share of its steps through lately
+/// (`Mover::flow`), and does not wait its turn itself, is stuck: the queue
+/// behind it is not waiting (see the module docs).
+const QUEUE_FLOW: f32 = 0.2;
 /// Walkers whose headings agree at least this much (cosine) walk in file:
 /// one following close behind a unit that gives way gives way too.
 const IN_FILE: f32 = 0.5;
@@ -136,6 +170,9 @@ const EJECT_RADIUS: f32 = 8.0;
 const HEAD_ON_PUSH: f32 = 0.5;
 /// Groupmates whose point goals are this close share a crowd (metres).
 const CROWD_GOAL_TOLERANCE: f32 = 1.0;
+/// A spot with ground a unit cannot use within this many nav cells on
+/// either side of it (across x or across z) is in a passage.
+const PASSAGE_CELLS: i32 = 2;
 /// Deepest overlap two ground units may keep at the end of a tick (metres).
 /// The solver passes nearly always get there; the few pairs they leave
 /// deeper (a crowd squeezed against a wall past what the passes untangle, a
@@ -225,6 +262,14 @@ struct Body {
     yields: bool,
     /// Walking, but giving way this tick (see the module docs).
     gives_way: bool,
+    /// Gave way lately (`Mover::give_way`): of a head-on pair, it gives way again.
+    gave_way: bool,
+    /// Pressed this tick against a walker ahead of it going its way that
+    /// moves on: waiting its turn (`Mover::waiting`).
+    waits: bool,
+    /// Moves on: more than [`QUEUE_FLOW`] of steering's steps went through
+    /// lately (`Mover::flow`), or it waited its turn last tick.
+    moves_on: bool,
     /// Unit direction steering moved the unit in this tick (zero when standing).
     heading: Vec2,
     mobility: u16,
@@ -537,6 +582,9 @@ pub(crate) fn resolve_collisions(
             resist: 4.0 * fp.half.x * fp.half.y * factor + 1e-4,
             yields,
             gives_way: false,
+            gave_way: mover.give_way > 0,
+            waits: false,
+            moves_on: mover.flow > QUEUE_FLOW || mover.waiting,
             heading: mover.intended.normalize_or_zero(),
             mobility: mob.mobility.0,
             team: players.team(owner.0),
@@ -588,6 +636,11 @@ pub(crate) fn resolve_collisions(
     let overlapped = mark_overlapped(&mut s.ground, &s.ground_contacts.pairs);
     let parting = s.solve_ground(&nav, &reg);
     record(&mut stats, &s.ground, &parting, overlapped, clock.elapsed);
+    // No crowd arrival in a passage on the way to a goal past it: the
+    // walker would stand in the gap the rest of the crowd still needs.
+    for b in s.ground.iter_mut().filter(|b| b.crowd) {
+        b.crowd = !in_passage(&nav, b.pos, b.mobility) || b.heading_to.is_some_and(|goal| in_passage(&nav, goal, b.mobility));
+    }
     for _ in 0..MIN_ITERATIONS {
         separate_pairs(&mut s.air, &mut s.air_contacts, origin, size, FLYER_SOFTNESS, false);
     }
@@ -619,6 +672,13 @@ pub(crate) fn resolve_collisions(
         }
         if mover.overlapped_for != b.overlapped_for {
             mover.overlapped_for = b.overlapped_for;
+        }
+        let give_way = if b.gives_way { GIVE_WAY_MEMORY } else { mover.give_way.saturating_sub(1) };
+        if mover.give_way != give_way {
+            mover.give_way = give_way;
+        }
+        if mover.waiting != b.waits {
+            mover.waiting = b.waits;
         }
     }
 }
@@ -1519,7 +1579,21 @@ fn resolve_pair(bodies: &mut [Body], a: usize, b: usize, softness: f32, sidestep
     bodies[b].pos -= push * (1.0 - share_a) - step_b;
     note_crowd(bodies, a, b);
     note_crowd(bodies, b, a);
+    for (u, v) in [(a, b), (b, a)] {
+        if queues_behind(&bodies[u], &bodies[v]) {
+            bodies[u].waits = true;
+        }
+    }
     depth
+}
+
+/// `body` walks into `ahead`, a walker going its way, ahead of it along
+/// both their headings, that moves on: it waits its turn in a queue (see
+/// the module docs).
+#[inline]
+fn queues_behind(body: &Body, ahead: &Body) -> bool {
+    let rel = ahead.pos - body.pos;
+    walking(body) && walking(ahead) && ahead.moves_on && body.heading.dot(ahead.heading) >= IN_FILE && rel.dot(body.heading) > 0.0 && rel.dot(ahead.heading) > 0.0
 }
 
 /// How hard `body` resists being moved along `push` by `other` this pass:
@@ -1530,7 +1604,7 @@ fn resolve_pair(bodies: &mut [Body], a: usize, b: usize, softness: f32, sidestep
 /// resistance).
 #[inline]
 fn pushed_resist(body: &Body, other: &Body, push: Vec2) -> f32 {
-    let resist = if yields_to(body, other) {
+    let resist = if yields_to(body, other) || backs_off_for(body, other) {
         body.resist * GIVE_WAY_RESIST
     } else if makes_way_for(body, other) {
         body.resist * IDLE_RESIST
@@ -1552,12 +1626,22 @@ fn yields_to(yielder: &Body, walker: &Body) -> bool {
     yielder.gives_way && !walker.gives_way && walking(walker) && (yielder.pos - walker.pos).dot(walker.heading) > 0.0
 }
 
-/// One of the pair gives way to the other and is braced (too little room
-/// to pass beside it): a push along the walker's heading, which walks the
-/// yielder back out of the gap, at most [`BACK_OUT`] per pass (later passes
-/// go on; else `None`: the usual push-out). Like an MTV, it moves `a` out
-/// of `b`. Even a pair already squeezed side by side in the gap is parted
-/// so, instead of jamming there for good.
+/// `body` gives way, and so does `leader`, a unit ahead of it: backed out,
+/// the leader backs the file out behind it instead of being squeezed
+/// between it and the walker it gives way to.
+#[inline]
+fn backs_off_for(body: &Body, leader: &Body) -> bool {
+    body.gives_way && leader.gives_way && walking(leader) && (leader.pos - body.pos).dot(body.heading) > 0.0
+}
+
+/// One of the pair gives way to the other, is braced and stands in the
+/// other's lane (too little room to pass beside it): a push along the
+/// walker's heading, which walks the yielder back out of the gap, at most
+/// [`BACK_OUT`] per pass (later passes go on; else `None`: the usual
+/// push-out). Like an MTV, it moves `a` out of `b`. Even a pair already
+/// squeezed side by side in the gap is parted so, instead of jamming there
+/// for good; a pair in two lanes of a wider passage only grazing each
+/// other is pushed apart across, into its lanes, and passes.
 fn back_out(a: &Body, b: &Body, fa: &Frame, fb: &Frame) -> Option<Vec2> {
     let (yielder, walker) = if yields_to(a, b) {
         (a, b)
@@ -1566,7 +1650,8 @@ fn back_out(a: &Body, b: &Body, fa: &Frame, fb: &Frame) -> Option<Vec2> {
     } else {
         return None;
     };
-    if !yielder.braced() {
+    let lane = (yielder.half.x + walker.half.x) * SAME_LANE;
+    if !yielder.braced() || walker.heading.perp_dot(yielder.pos - walker.pos).abs() >= lane {
         return None;
     }
     let axis = walker.heading;
@@ -1670,7 +1755,14 @@ fn mark_giving_way(bodies: &mut [Body], pairs: &[(u32, u32)]) {
             bodies[i].contacts = bodies[i].contacts.saturating_add(1);
         }
         if head_on(&bodies[a], &bodies[b]) {
-            let young = if younger(&bodies[a], &bodies[b]) { a } else { b };
+            // One that gave way lately gives way again: a file keeps giving
+            // way to the column it met until that column has passed.
+            let young = match (bodies[a].gave_way, bodies[b].gave_way) {
+                (true, false) => a,
+                (false, true) => b,
+                _ if younger(&bodies[a], &bodies[b]) => a,
+                _ => b,
+            };
             bodies[young].gives_way = true;
         }
     }
@@ -1747,6 +1839,18 @@ fn sidestep(idle: &Body, walker: &Body, amount: f32) -> Vec2 {
     let right = Vec2::new(walker.heading.y, -walker.heading.x);
     let side = if walker.heading.perp_dot(idle.pos - walker.pos) > 0.0 { -1.0 } else { 1.0 };
     right * side * amount * SIDESTEP
+}
+
+/// Is `p` in a passage: ground a unit of `mobility` cannot use (terrain,
+/// static obstacles) within [`PASSAGE_CELLS`] on both sides of it, across
+/// x or across z?
+fn in_passage(nav: &NavGrid, p: Vec2, mobility: u16) -> bool {
+    let shut = |q: Vec2| {
+        let c = nav.cell_of(q);
+        !nav.terrain_passable(c, mobility) || nav.is_walk_blocked(c)
+    };
+    let walled = |d: Vec2| (1..=PASSAGE_CELLS).any(|k| shut(p + d * (k as f32 * nav.cell_size())));
+    (walled(Vec2::X) && walled(Vec2::NEG_X)) || (walled(Vec2::Y) && walled(Vec2::NEG_Y))
 }
 
 /// `walker` touched `other`: if `other` already arrived where `walker` is
@@ -1842,8 +1946,11 @@ fn push_out_terrain(b: &mut Body, nav: &NavGrid, cells: &CellBoxes) {
             if nav.terrain_passable(c, b.mobility) {
                 continue;
             }
-            if let Some(m) = b.frame().mtv(&cells.at(nav.cell_center(c))) {
-                b.pos += with_skin(m);
+            let (me, cell) = (b.frame(), cells.at(nav.cell_center(c)));
+            if let Some(m) = me.mtv(&cell) {
+                // A corner of the terrain only: the step leads onto open ground.
+                let open = |step: &Vec2| nav.terrain_passable(nav.cell_of(cell.center + step.normalize_or_zero() * nav.cell_size()), b.mobility);
+                b.pos += with_skin(corner_slip(&me, &cell, m, b.heading).filter(open).unwrap_or(m));
             }
         }
     }
@@ -1977,6 +2084,9 @@ mod tests {
             resist: 0.36 * if idle { IDLE_RESIST } else { 1.0 },
             yields: idle,
             gives_way: false,
+            gave_way: false,
+            waits: false,
+            moves_on: false,
             heading,
             mobility: 1,
             team,
@@ -2478,5 +2588,135 @@ mod tests {
             let young = usize::from(!younger_first);
             assert!(after[young].restore_yaw && !after[1 - young].restore_yaw, "younger listed first: {younger_first}");
         }
+    }
+
+    /// A foot walker of `body`'s size heading along `heading` (it cannot
+    /// enter cliffs).
+    fn foot(id: u32, pos: Vec2, heading: Vec2) -> Body {
+        Body { mobility: Mobility::of(MoveFlag::Foot).0, ..body(id, pos, heading, 0) }
+    }
+
+    /// A 40 m grass grid with a cliff band over x = 20..26 but for the
+    /// rows `gap` (a gap through it).
+    fn cliff_band(gap: std::ops::Range<i32>) -> NavGrid {
+        let data = af_core::testing::test_data();
+        let mut nav = af_core::testing::new_nav(&data, 40, 40, data.terrain_id("grass").expect("grass"));
+        let cliff = data.terrain_id("cliff").expect("cliff");
+        for y in (0..40).filter(|y| !gap.contains(y)) {
+            for x in 20..26 {
+                nav.set_terrain(IVec2::new(x, y), cliff.0);
+            }
+        }
+        nav
+    }
+
+    /// A walker whose nose touches the cliff beside the mouth of a gap
+    /// one cell wide, a fifth of its box below the gap, slips sideways
+    /// into the gap instead of being pushed straight back; one as close to
+    /// the gap's corner but pressed against the face of the cliff (the
+    /// step would lead along it, onto cliff) is pushed straight back.
+    #[test]
+    fn a_walker_slips_round_a_corner_of_the_terrain() {
+        let nav = cliff_band(20..21);
+        let cells = CellBoxes::new(&nav);
+        // Box over x 19.45..20.05, y 19.8..20.4: 0.05 m into cell (20, 19)
+        // across, 0.2 m along; it slips 0.2 m up, all of it in the gap.
+        let mut mouth = foot(1, Vec2::new(19.75, 20.1), Vec2::X);
+        push_out_terrain(&mut mouth, &nav, &cells);
+        assert!((mouth.pos.x - 19.75).abs() < 1e-4 && (mouth.pos.y - 20.3).abs() < 0.01, "into the gap: {}", mouth.pos);
+        // Box over y 18.85..19.45: 0.15 m over cell (20, 18), the rest
+        // against cell (20, 19), cliff too.
+        let mut face = foot(2, Vec2::new(19.75, 19.15), Vec2::X);
+        push_out_terrain(&mut face, &nav, &cells);
+        assert!((face.pos.y - 19.15).abs() < 1e-4 && face.pos.x < 19.71, "pushed back: {}", face.pos);
+    }
+
+    /// Of two walkers meeting head-on, one that gave way lately gives way
+    /// again although it is the elder, and the walker filing in behind it
+    /// with it; when both or neither did, the younger gives way.
+    #[test]
+    fn a_walker_that_gave_way_lately_gives_way_again() {
+        let meet = |gave: [bool; 2]| {
+            let mut bodies = vec![
+                Body { gave_way: gave[0], ..body(1, Vec2::new(0.0, 0.0), Vec2::Y, 0) },
+                Body { gave_way: gave[1], ..body(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1) },
+                body(3, Vec2::new(0.05, -0.62), Vec2::Y, 0), // files in behind 1
+            ];
+            mark_giving_way(&mut bodies, &[(0, 1), (0, 2)]);
+            bodies.iter().map(|b| b.gives_way).collect::<Vec<_>>()
+        };
+        assert_eq!(meet([true, false]), [true, false, true], "the elder gave way lately");
+        assert_eq!(meet([false, false]), [false, true, false]);
+        assert_eq!(meet([true, true]), [false, true, false]);
+    }
+
+    /// A unit giving way yields to the unit ahead of it in its file when
+    /// that one gives way too (backed into it, it backs off), not to the
+    /// one behind it; and one that does not give way holds.
+    #[test]
+    fn a_file_giving_way_backs_off_behind_its_front() {
+        let mut front = body(1, Vec2::new(0.0, 0.6), Vec2::Y, 0);
+        let mut behind = body(2, Vec2::new(0.05, 0.0), Vec2::Y, 0);
+        (front.gives_way, behind.gives_way) = (true, true);
+        let back = Vec2::new(0.0, -0.1);
+        assert!((pushed_resist(&behind, &front, back) - behind.resist * GIVE_WAY_RESIST).abs() < 1e-6);
+        assert_eq!(pushed_resist(&front, &behind, -back), front.resist);
+        behind.gives_way = false;
+        assert_eq!(pushed_resist(&behind, &front, back), behind.resist);
+    }
+
+    /// A braced unit giving way in the walker's lane is backed out along
+    /// the walker's heading; one grazing it from the next lane is not (the
+    /// usual push-out parts the two across, into their lanes).
+    #[test]
+    fn only_a_yielder_in_the_walkers_lane_is_backed_out() {
+        let walker = body(1, Vec2::ZERO, Vec2::X, 0);
+        let yielder = |at: Vec2| {
+            let mut y = body(2, at, -Vec2::X, 1);
+            y.gives_way = true;
+            y.brace(Vec2::NEG_Y); // a wall on its far side
+            y
+        };
+        let in_lane = yielder(Vec2::new(0.55, 0.1));
+        let push = back_out(&in_lane, &walker, &in_lane.frame(), &walker.frame()).expect("backed out");
+        assert!(push.x > 0.0 && push.y == 0.0 && push.length() <= BACK_OUT + 1e-6, "{push}");
+        let next_lane = yielder(Vec2::new(0.5, 0.5));
+        assert!(pair_depth(&next_lane, &walker) > 0.0);
+        assert_eq!(back_out(&next_lane, &walker, &next_lane.frame(), &walker.frame()), None);
+    }
+
+    /// A walker pressed against one ahead of it going its way waits its
+    /// turn, the one ahead does not; nor does one pressed against a unit
+    /// standing, coming the other way, or stuck (its steps not going
+    /// through, and not waiting itself); and of two converging at an angle,
+    /// neither waits on the other.
+    #[test]
+    fn a_walker_pressed_against_one_moving_on_ahead_waits() {
+        let moving_on = |id: u32, at: Vec2, heading: Vec2| Body { moves_on: true, ..body(id, at, heading, 0) };
+        let mut bodies = vec![moving_on(1, Vec2::ZERO, Vec2::X), moving_on(2, Vec2::new(0.55, 0.1), Vec2::X)];
+        resolve_pair(&mut bodies, 0, 1, 1.0, false);
+        assert!(bodies[0].waits && !bodies[1].waits);
+        let behind = moving_on(1, Vec2::ZERO, Vec2::X);
+        assert!(!queues_behind(&behind, &moving_on(2, Vec2::new(0.55, 0.0), Vec2::ZERO)), "standing");
+        assert!(!queues_behind(&behind, &moving_on(2, Vec2::new(0.55, 0.0), -Vec2::X)), "oncoming");
+        assert!(!queues_behind(&behind, &body(2, Vec2::new(0.55, 0.0), Vec2::X, 0)), "stuck");
+        // Converging at 60 degrees, each ahead of the other along its own heading.
+        let (up, down) = (Vec2::new(0.866, 0.5), Vec2::new(0.866, -0.5));
+        let (a, b) = (moving_on(1, Vec2::ZERO, up), moving_on(2, Vec2::new(0.0, 0.6), down));
+        assert!(!queues_behind(&a, &b) && !queues_behind(&b, &a));
+    }
+
+    /// A spot with a cliff or buildings close on both sides is in a
+    /// passage; one beside a single face, or in the open, is not.
+    #[test]
+    fn a_passage_has_walls_close_on_both_sides() {
+        let mobility = Mobility::of(MoveFlag::Foot).0;
+        let nav = cliff_band(20..22);
+        assert!(in_passage(&nav, Vec2::new(23.0, 21.0), mobility), "in the gap");
+        assert!(!in_passage(&nav, Vec2::new(17.5, 21.0), mobility), "before its mouth");
+        assert!(!in_passage(&nav, Vec2::new(19.5, 10.5), mobility), "beside the cliff");
+        let (nav, _) = surroundings(&corridor(19.6, 20.4));
+        assert!(in_passage(&nav, Vec2::new(20.0, 20.0), mobility), "between two walls");
+        assert!(!in_passage(&nav, Vec2::new(20.0, 25.0), mobility));
     }
 }
