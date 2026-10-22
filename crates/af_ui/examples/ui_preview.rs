@@ -9,15 +9,20 @@
 //! cargo run -p af_ui --example ui_preview -- hud --select workers  # or: army, mixed, none
 //! cargo run -p af_ui --example ui_preview -- hud --hover Peasant   # hover a button by its label
 //! cargo run -p af_ui --example ui_preview -- hud --game-over
+//! cargo run -p af_ui --example ui_preview -- hud --world 1024 --painted   # a big painted map
 //! ... --screenshot shot.png                                     # save a screenshot and exit
 //! ```
 //!
-//! The HUD world is flat grass with a town centre (with a queue), a few
-//! workers, soldiers and an enemy army. Nothing moves (no simulation crate
-//! is loaded) and there are no 3D visuals.
+//! The HUD world is flat grass (`--world` metres square, 240 by default)
+//! with a town centre (with a queue), a few workers, soldiers and an enemy
+//! army. `--painted` paints it like a generated map (a sea edge, two rivers
+//! with fords, a lake, mountains with a pass, highlands, marsh, thickets, a
+//! cratered meteor site) and gives it map features, so the minimap and the
+//! match's map notice can be checked. Nothing moves (no simulation crate is
+//! loaded) and there are no 3D visuals.
 
 use af_core::ext::input::{ControlGroups, RtsCamera};
-use af_core::ext::map::{MapSize, RiverCount, SiteChoice, WaterLevel};
+use af_core::ext::map::{MapEdge, MapFeatures, MapSize, MeteorSite, ResolvedMapOptions, RiverCount, RiverLine, SiteChoice, SiteKind, WaterLevel};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, test_data, with_commands};
 use af_ui::menu::MenuSettings;
@@ -61,7 +66,18 @@ fn main() -> AppExit {
         }
     }
     if hud {
-        flat_world(&mut app, 240.0, &[("ironhold", 0), ("dune", 1), ("sylvan", 2)]);
+        let side = match arg_value(&args, "--world").map(|v| v.parse::<f32>()) {
+            None => 240.0,
+            Some(Ok(side)) if (160.0..=1500.0).contains(&side) => side,
+            Some(_) => {
+                eprintln!("ui_preview: --world wants a side in metres, 160-1500");
+                return AppExit::error();
+            }
+        };
+        flat_world(&mut app, side, &[("ironhold", 0), ("dune", 1), ("sylvan", 2)]);
+        if args.iter().any(|a| a == "--painted") {
+            paint_map(&mut app, side);
+        }
         app.insert_resource(LocalPlayer(Some(PlayerId(0))));
         populate(&mut app, arg_value(&args, "--select").as_deref().unwrap_or("tc"));
         app.add_systems(OnEnter(GameState::Playing), |mut commands: Commands| {
@@ -108,6 +124,80 @@ fn menu_settings(args: &[String]) -> Result<MenuSettings, String> {
         s.map_metres = v.parse().map_err(|_| bad("--map-size", &v))?;
     }
     Ok(s)
+}
+
+/// Paint the flat world like a generated map and publish its features: an
+/// ocean edge in the north with shallows and a beach, two rivers (one a
+/// tributary) with fords, a lake, a mountain range with a pass, highlands,
+/// marsh, thickets and a cratered meteor site in the middle.
+fn paint_map(app: &mut App, s: f32) {
+    let data = app.world().resource::<Data>().0.clone();
+    let world = app.world_mut();
+    let mut nav = world.resource_mut::<Nav>();
+    let mut paint = |id: &str, points: &[Vec2], half: f32| {
+        let t = data.terrain_id(id).unwrap_or_else(|| panic!("no terrain {id}")).0;
+        for seg in points.windows(2) {
+            let (a, b) = (seg[0], seg[1]);
+            let (lo, hi) = ((a.min(b) - half).floor().as_ivec2(), (a.max(b) + half).ceil().as_ivec2());
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    let k = if a == b { 0.0 } else { ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0) };
+                    if p.distance(a + (b - a) * k) <= half && nav.in_bounds(IVec2::new(x, y)) {
+                        nav.set_terrain(IVec2::new(x, y), t);
+                    }
+                }
+            }
+        }
+    };
+    let at = |x: f32, z: f32| Vec2::new(x * s, z * s);
+    // The sea along the north edge (z = s), with a wavy shore.
+    let shore: Vec<Vec2> = (0..=40).map(|i| at(i as f32 / 40.0, 0.86 + 0.02 * (i as f32 * 0.9).sin())).collect();
+    paint("sand", &shore, 0.04 * s);
+    paint("shallow_water", &shore.iter().map(|p| *p + Vec2::new(0.0, 0.03 * s)).collect::<Vec<_>>(), 0.025 * s);
+    for k in 0..6 {
+        paint("ocean", &shore.iter().map(|p| *p + Vec2::new(0.0, 0.06 * s + k as f32 * 0.02 * s)).collect::<Vec<_>>(), 0.02 * s);
+    }
+    // Marsh and thickets.
+    paint("marsh", &[at(0.12, 0.3), at(0.2, 0.35)], 0.03 * s);
+    paint("thicket", &[at(0.7, 0.2), at(0.78, 0.26)], 0.025 * s);
+    paint("thicket", &[at(0.3, 0.72), at(0.36, 0.7)], 0.02 * s);
+    // Highlands and a mountain range with a pass; an edge massif.
+    paint("cliff", &[at(0.6, 0.65), at(0.72, 0.6)], 0.02 * s);
+    paint("mountain", &[at(0.08, 0.6), at(0.2, 0.55), at(0.3, 0.58)], 0.022 * s);
+    paint("mountain", &[at(0.34, 0.6), at(0.42, 0.66)], 0.022 * s);
+    paint("mountain", &[at(1.0, 0.1), at(0.94, 0.04)], 0.06 * s);
+    // A lake.
+    paint("shallow_water", &[at(0.78, 0.42), at(0.82, 0.44)], 0.045 * s);
+    paint("deep_water", &[at(0.78, 0.42), at(0.82, 0.44)], 0.03 * s);
+    // Two rivers: one from the west edge to the sea, a tributary from the south.
+    let river = [at(0.0, 0.18), at(0.22, 0.24), at(0.38, 0.4), at(0.52, 0.52), at(0.55, 0.7), at(0.5, 0.88)];
+    let tributary = [at(0.62, 0.0), at(0.6, 0.18), at(0.66, 0.3), at(0.52, 0.52)];
+    for line in [&river[..], &tributary[..]] {
+        paint("shallow_water", line, 4.5);
+        paint("deep_water", line, 2.5);
+    }
+    let fords = [river[1].lerp(river[2], 0.5), river[3].lerp(river[4], 0.4), tributary[1].lerp(tributary[2], 0.5)];
+    for f in fords {
+        paint("ford", &[f, f], 6.0);
+    }
+    // The meteor site: a cliff rim with gaps round a scorched floor.
+    let (centre, rim) = (at(0.5, 0.5), 0.1 * s);
+    paint("scorched", &[centre, centre], rim);
+    let arc = |from: f32, to: f32| (0..=12).map(|i| centre + Vec2::from_angle(from + (to - from) * i as f32 / 12.0) * rim).collect::<Vec<_>>();
+    for (from, to) in [(0.3, 1.8), (2.3, 3.6), (4.1, 5.9)] {
+        paint("cliff", &arc(from, to), 1.5);
+    }
+    let points = |line: &[Vec2]| line.to_vec();
+    world.insert_resource(MapFeatures {
+        options: ResolvedMapOptions { size: MapSize::Huge, water: WaterLevel::Coast, rivers: 2, site: SiteKind::Crater },
+        land_min: Vec2::ZERO,
+        land_max: Vec2::new(s, 0.86 * s),
+        ocean_edges: vec![MapEdge::North],
+        sites: vec![MeteorSite { kind: SiteKind::Crater, center: centre, radius: rim }],
+        rivers: vec![RiverLine { points: points(&river), half_widths: vec![2.5; river.len()], fords: vec![1, 3] }],
+        mountains: Vec::new(),
+    });
 }
 
 fn populate(app: &mut App, select: &str) {

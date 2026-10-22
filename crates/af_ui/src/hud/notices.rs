@@ -1,6 +1,8 @@
 //! The notices feed: the viewed player's (and global) recent notices,
-//! coloured by kind and fading out. Never blocks world clicks.
+//! coloured by kind and fading out. Never blocks world clicks. A match
+//! opens with a notice naming its map.
 
+use af_core::ext::map::{MapFeatures, MapSetupSet};
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -12,7 +14,15 @@ use crate::theme::{self, set_display, set_text, text, FONT_BODY};
 struct NoticeLine(usize);
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, update_notices.in_set(HudSet::Panels));
+    app.add_systems(OnEnter(GameState::Playing), announce_map.after(MapSetupSet)).add_systems(Update, update_notices.in_set(HudSet::Panels));
+}
+
+/// Once the map is built, tell everyone which map this is ("Large - Lakes -
+/// 2 rivers - The Shattered Fall"). Nothing on a map without features.
+fn announce_map(features: Option<Res<MapFeatures>>, clock: Option<Res<SimClock>>, notices: Option<ResMut<Notices>>) {
+    let (Some(features), Some(mut notices)) = (features, notices) else { return };
+    let now = clock.map_or(0.0, |c| c.elapsed);
+    notices.push(None, NoticeKind::Info, format::map_title(&features.options), None, now);
 }
 
 pub(super) fn spawn(root: &mut ChildSpawnerCommands) {

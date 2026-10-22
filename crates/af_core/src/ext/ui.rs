@@ -17,3 +17,10 @@ pub struct CardPage {
     pub open: bool,
     pub close: bool,
 }
+
+/// Hides the whole in-match HUD (panels, minimap, notices, overlays) while
+/// present and `true`, so a screenshot shows only the world (the dev flag
+/// `--no-hud`). The HUD still runs underneath; setting it back to `false`
+/// shows it again. Absent means shown.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HudHidden(pub bool);
