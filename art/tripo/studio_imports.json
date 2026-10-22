@@ -1,0 +1,215 @@
+{
+  "_about": "Unit models made in Tripo Studio (not through tools/meshy/meshy.py) from the concept picked in the Meshy run (art/meshy/ledger.json; the concept images live in the git-ignored art/meshy/out/). The untouched downloads are kept outside the repository (`download`: name, size, SHA-256, triangles); the stored `source` is that file reduced by art/tripo/reduce_source.py (welded and collapse-decimated to 200k triangles, orientation, scale and the 2k base colour, normal and metallic-roughness JPEGs unchanged). The unit build (art/units/build_unit.py, art/units/<id>/unit.py) makes the game model from `source`. meshy.py leaves these picked assets alone (made outside Meshy).",
+  "imports": {
+    "dune_sand_engine": {
+      "studio_model_id": "cbe4b746-7fbe-4c93-ae6a-7b641bc8e1be",
+      "concept": "art/meshy/out/dune_sand_engine/concept_0_01a1570b-c912-747c-80a3-e30053ebbfc4.png",
+      "concept_task": "01a1570b-c912-747c-80a3-e30053ebbfc4",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "dune_sand_engine.glb",
+        "bytes": 58714884,
+        "sha256": "814f6fcfb3fb2c225cd94f94e16037f063489ac245804a32f2fb94c2fd9c1eb6",
+        "triangles": 1832853
+      },
+      "source": {
+        "file": "art/units/source/dune_sand_engine.glb",
+        "bytes": 10247600,
+        "triangles": 199997
+      }
+    },
+    "dune_sandskiff": {
+      "studio_model_id": "86db9538-f071-4d9b-a148-5025e5bf5305",
+      "concept": "art/meshy/out/dune_sandskiff/concept_0_01a1570b-bb1c-75bc-8e3b-efcbcbe98a5e.png",
+      "concept_task": "01a1570b-bb1c-75bc-8e3b-efcbcbe98a5e",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "dune_sandskiff.glb",
+        "bytes": 61894920,
+        "sha256": "e16358150ecaaad63aa8c156595e05285d3aa83e89f16620707bc7691519edd4",
+        "triangles": 1892086
+      },
+      "source": {
+        "file": "art/units/source/dune_sandskiff.glb",
+        "bytes": 9564208,
+        "triangles": 200000
+      }
+    },
+    "ironhold_forgefather": {
+      "studio_model_id": "aacf6c4e-3c48-48c4-a76f-16cb01c6633a",
+      "concept": "art/meshy/out/ironhold_forgefather/concept_0_01a1570b-d07e-72ce-9f9f-f869a998b11e.png",
+      "concept_task": "01a1570b-d07e-72ce-9f9f-f869a998b11e",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "ironhold_forgefather.glb",
+        "bytes": 62582568,
+        "sha256": "a84f10228b2915b34c2cbbf29b263c48c5fd99797147bf3a310bf9800a222d80",
+        "triangles": 1976731
+      },
+      "source": {
+        "file": "art/units/source/ironhold_forgefather.glb",
+        "bytes": 9657948,
+        "triangles": 199999
+      }
+    },
+    "starborn_archon": {
+      "studio_model_id": "8f3fce4a-10b2-450a-a3f9-018126fb3623",
+      "concept": "art/meshy/out/starborn_archon/concept_0_01a1570b-d920-702e-ab9c-668e6ec85b8a.png",
+      "concept_task": "01a1570b-d920-702e-ab9c-668e6ec85b8a",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "starborn_archon.glb",
+        "bytes": 62318404,
+        "sha256": "1fd71be589ac9064998118dcd70d8035d89910953960cd22a6723156ded36c76",
+        "triangles": 1961131
+      },
+      "source": {
+        "file": "art/units/source/starborn_archon.glb",
+        "bytes": 8855704,
+        "triangles": 199999
+      }
+    },
+    "starborn_orbital_lance": {
+      "studio_model_id": "2c5c28f4-0f93-4c3d-a98b-9f39d3125c6e",
+      "concept": "art/meshy/out/starborn_orbital_lance/concept_0_01a1570b-c305-706c-be95-dd0d924fef15.png",
+      "concept_task": "01a1570b-c305-706c-be95-dd0d924fef15",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "starborn_orbital_lance.glb",
+        "bytes": 63622220,
+        "sha256": "e0f1bf56eee197cc616d2894965a8feb2a2ad128c985c17594a05f5b2e1942f0",
+        "triangles": 1917928
+      },
+      "source": {
+        "file": "art/units/source/starborn_orbital_lance.glb",
+        "bytes": 8942548,
+        "triangles": 200000
+      }
+    },
+    "steppe_jet_lancer": {
+      "studio_model_id": "5bbb2daa-60a0-4a85-9947-50a32d0ffd9b",
+      "concept": "art/meshy/out/steppe_jet_lancer/concept_0_01a1570b-ccaf-71c7-ac9f-dc1deb25da28.png",
+      "concept_task": "01a1570b-ccaf-71c7-ac9f-dc1deb25da28",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "steppe_jet_lancer.glb",
+        "bytes": 62068244,
+        "sha256": "ce48c40f83ea29953f155ee5e4fe68e09de8cd70be7207e6fcde2e1e7009dbc4",
+        "triangles": 1990666
+      },
+      "source": {
+        "file": "art/units/source/steppe_jet_lancer.glb",
+        "bytes": 9354808,
+        "triangles": 199999
+      }
+    },
+    "steppe_skyrider": {
+      "studio_model_id": "d5f83212-ae38-4e30-976b-964e2918767b",
+      "concept": "art/meshy/out/steppe_skyrider/concept_0_01a1570b-bf39-77cb-880c-71d0778f57dc.png",
+      "concept_task": "01a1570b-bf39-77cb-880c-71d0778f57dc",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "steppe_skyrider.glb",
+        "bytes": 62105848,
+        "sha256": "db8634520dc2724bd2e5581b4f3dcb1e419815de2b37fefcd9f70f4a895304e7",
+        "triangles": 1993304
+      },
+      "source": {
+        "file": "art/units/source/steppe_skyrider.glb",
+        "bytes": 9256292,
+        "triangles": 200000
+      }
+    },
+    "steppe_war_ordu": {
+      "studio_model_id": "1ca946dd-93c8-4a7f-ad6e-7d5e757a426a",
+      "concept": "art/meshy/out/steppe_war_ordu/concept_0_01a1570b-df48-71af-92ce-e3aef43ff69b.png",
+      "concept_task": "01a1570b-df48-71af-92ce-e3aef43ff69b",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 0,
+      "date": "2026-10-22",
+      "download": {
+        "file": "steppe_war_ordu.glb",
+        "bytes": 62017148,
+        "sha256": "f540537c9a7acc82fb5985d0d52baca048c948ce9be661634999e4e70db7089a",
+        "triangles": 1936046
+      },
+      "source": {
+        "file": "art/units/source/steppe_war_ordu.glb",
+        "bytes": 10569416,
+        "triangles": 199998
+      },
+      "note": "made on the Tripo Studio free trial"
+    },
+    "sylvan_starstag_rider": {
+      "studio_model_id": "6544878b-e5ac-4650-8cae-19c9bb05ab90",
+      "concept": "art/meshy/out/sylvan_starstag_rider/concept_0_01a1570b-d53a-7077-85db-1758228c849f.png",
+      "concept_task": "01a1570b-d53a-7077-85db-1758228c849f",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "sylvan_starstag_rider.glb",
+        "bytes": 59535664,
+        "sha256": "b885515dbd1e1f4941cc46bb6c02520cb8416a4f3fe81cde438bb4e28423a491",
+        "triangles": 1922056
+      },
+      "source": {
+        "file": "art/units/source/sylvan_starstag_rider.glb",
+        "bytes": 8753912,
+        "triangles": 200000
+      }
+    },
+    "sylvan_wisp_swarm": {
+      "studio_model_id": "5bba069a-0dd5-4945-9d93-5970ce0567a6",
+      "concept": "art/meshy/out/sylvan_wisp_swarm/concept_0_01a1570b-c5fc-705f-8181-26456f49be94.png",
+      "concept_task": "01a1570b-c5fc-705f-8181-26456f49be94",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "sylvan_wisp_swarm.glb",
+        "bytes": 62543936,
+        "sha256": "07e960c450adb500a9e351a978a26a237b758a06cdc4da5dc853b7fda6bf9fd7",
+        "triangles": 1988614
+      },
+      "source": {
+        "file": "art/units/source/sylvan_wisp_swarm.glb",
+        "bytes": 8770564,
+        "triangles": 199999
+      }
+    },
+    "tide_bucentaur": {
+      "studio_model_id": "8e665382-3a78-44c1-934b-d3f9e2d97e0b",
+      "concept": "art/meshy/out/tide_bucentaur/concept_0_01a1570b-dc16-73f1-9e5d-557afe8209e7.png",
+      "concept_task": "01a1570b-dc16-73f1-9e5d-557afe8209e7",
+      "method": "Tripo Studio H3.1 image-to-3D, 2k PBR GLB export",
+      "credits": 55,
+      "date": "2026-10-22",
+      "download": {
+        "file": "tide_bucentaur.glb",
+        "bytes": 61234220,
+        "sha256": "c42fe60f97b397d6a037aafe5e46d2caff8d9ca3d56c68417cc8cc6b5dab6685",
+        "triangles": 1888695
+      },
+      "source": {
+        "file": "art/units/source/tide_bucentaur.glb",
+        "bytes": 10162860,
+        "triangles": 199999
+      }
+    }
+  }
+}
