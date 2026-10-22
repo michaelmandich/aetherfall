@@ -194,6 +194,9 @@ const CARD_WIDTH: f32 = 324.0;
 const SETTINGS_WIDTH: f32 = 540.0;
 const OPPONENT_NAME_WIDTH: f32 = 262.0;
 const OPPONENT_NAME_CHARS: usize = (OPPONENT_NAME_WIDTH / (FONT_SMALL * theme::GLYPH_ADVANCE)) as usize;
+/// Padding of the settings panel: its first and last rows clear of the
+/// frame's corner plates, with an opponent's row still fitting across.
+const SETTINGS_PADDING: UiRect = UiRect::axes(Val::Px(10.0), Val::Px(12.0));
 
 fn spawn_menu(mut commands: Commands, data: Res<Data>) {
     commands.spawn((Camera2d, DespawnOnExit(GameState::Menu)));
@@ -231,7 +234,7 @@ fn spawn_menu(mut commands: Commands, data: Res<Data>) {
                     });
                     body.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(12), width: px(SETTINGS_WIDTH), ..default() }).with_children(|right| {
                         right.spawn(text("Match", FONT_LARGE, TEXT));
-                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), ..default() }), theme::panel_colors(), SkinPanel::Panel)).with_children(spawn_settings);
+                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), padding: SETTINGS_PADDING, ..default() }), theme::panel_colors(), SkinPanel::Panel)).with_children(spawn_settings);
                         right.spawn((skinned_button(Node { height: px(48), ..default() }, Color::srgb(0.16, 0.36, 0.18), ButtonSkin::Train), MenuButton::Start)).with_child(text("Start", FONT_LARGE, TEXT));
                         right.spawn((skinned_button(Node { height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command), MenuButton::Spectate))
                             .with_child(text("Spectate AI match", FONT_LARGE, TEXT));
@@ -283,7 +286,7 @@ fn row() -> Node {
 }
 
 fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: MenuButton) {
-    parent.spawn((button(Node { width: px(30), height: px(26), padding: UiRect::ZERO, ..default() }, theme::BUTTON), action)).with_child(text(label, FONT_BODY, TEXT));
+    parent.spawn((button(Node { width: px(30), height: px(26), padding: UiRect::all(px(2)), ..default() }, theme::BUTTON), action)).with_child(text(label, FONT_BODY, TEXT));
 }
 
 fn labeled_button(parent: &mut ChildSpawnerCommands, action: MenuButton, label: MenuLabel, width: f32) {

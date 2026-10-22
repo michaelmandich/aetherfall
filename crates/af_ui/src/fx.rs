@@ -2,8 +2,9 @@
 //! and springs back past its size, flashes, and (for the command card's
 //! build, train, research and upgrade buttons) sweeps a shine across
 //! itself and throws a ring of light and sparks; a refused press shakes
-//! and flashes red. Everything runs on real time, so it plays while the
-//! game is paused.
+//! and flashes red; a press that turns the card's page springs the new
+//! page's buttons in, column by column. Everything runs on real time, so
+//! it plays while the game is paused.
 //!
 //! * [`PressFx`] on a button holds the press playing on it. Plain buttons
 //!   start one when clicked ([`press_plain_buttons`]); the command card
@@ -31,9 +32,14 @@ pub enum PressKind {
     /// A command card press that makes something (build, train, research,
     /// upgrade): deep squash, flash, shine, ring and sparks.
     Full,
-    /// Any other command card press (orders, stances, pages): a lighter
-    /// squash and the flash.
+    /// Any other command card press (orders, stances): a lighter squash
+    /// and the flash.
     Light,
+    /// A press that turned the command card's page (a build page, More,
+    /// Back), played on the new page's buttons: they appear squashed and
+    /// spring out with a faint flash, a column at a time
+    /// ([`turn_start`]).
+    Turn,
     /// A command card press that was refused (unavailable, unaffordable):
     /// a shake and a red flash.
     Refused,
@@ -46,6 +52,7 @@ pub enum PressKind {
 pub fn press_kind(action: CardAction) -> PressKind {
     match action {
         CardAction::Build(_) | CardAction::Train(_) | CardAction::Research(_) | CardAction::Upgrade { .. } => PressKind::Full,
+        CardAction::BuildPage(_) | CardAction::More | CardAction::Back => PressKind::Turn,
         _ => PressKind::Light,
     }
 }
@@ -72,6 +79,9 @@ const SHINE_TIME: f32 = 0.3;
 const SHINE_WIDTH: f32 = 36.0;
 /// Colour of a refused press's flash.
 const REFUSED: Color = Color::srgb(1.0, 0.26, 0.2);
+/// A page turn reaches each column of the card this much later than the
+/// one before.
+const TURN_RIPPLE: f32 = 0.025;
 
 impl PressKind {
     /// How far the button squashes (fraction of its size).
@@ -79,6 +89,7 @@ impl PressKind {
         match self {
             PressKind::Full => 0.1,
             PressKind::Light => 0.07,
+            PressKind::Turn => 0.06,
             PressKind::Plain => 0.05,
             PressKind::Refused => 0.0,
         }
@@ -89,6 +100,7 @@ impl PressKind {
         match self {
             PressKind::Full => 0.95,
             PressKind::Light => 0.6,
+            PressKind::Turn => 0.3,
             PressKind::Refused => 0.8,
             PressKind::Plain => 0.0,
         }
@@ -99,7 +111,7 @@ impl PressKind {
         match self {
             PressKind::Refused => SHAKE_TIME.max(FLASH_TIME),
             PressKind::Full => SETTLE_TIME.max(SHINE_DELAY + SHINE_TIME),
-            PressKind::Light | PressKind::Plain => SETTLE_TIME,
+            PressKind::Light | PressKind::Turn | PressKind::Plain => SETTLE_TIME,
         }
     }
 }
@@ -138,6 +150,13 @@ pub fn flash(kind: PressKind, t: f32) -> f32 {
     }
     let fade = 1.0 - t / FLASH_TIME;
     kind.flash() * fade * fade
+}
+
+/// When a page turn starts on a button in card column `column`, for a
+/// turn at real time `now`: the first column already squashed (the new
+/// buttons appear small and spring out), each next one a little later.
+pub fn turn_start(now: f32, column: usize) -> f32 {
+    now - SQUASH_TIME + column as f32 * TURN_RIPPLE
 }
 
 /// How far across the button the shine of a full press is (0 to 1), and
@@ -433,7 +452,7 @@ mod tests {
         assert!(c == REFUSED && f > 0.3);
         assert_eq!(fx.flash(1.0 + FLASH_TIME + 1e-3), None);
         // Every part of a press is over by its duration.
-        for kind in [PressKind::Full, PressKind::Light, PressKind::Refused, PressKind::Plain] {
+        for kind in [PressKind::Full, PressKind::Light, PressKind::Turn, PressKind::Refused, PressKind::Plain] {
             let d = kind.duration();
             assert_eq!((press_scale(d, kind.depth()), shake(d), flash(kind, d)), (1.0, 0.0, 0.0), "{kind:?}");
         }
@@ -480,8 +499,26 @@ mod tests {
         assert_eq!(press_kind(CardAction::Train(UnitTypeId(0))), PressKind::Full);
         assert_eq!(press_kind(CardAction::Research(TechId(0))), PressKind::Full);
         assert_eq!(press_kind(CardAction::Upgrade { to: BuildingTypeId(0) }), PressKind::Full);
-        for a in [CardAction::Move, CardAction::Stop, CardAction::Stance(Stance::Defensive), CardAction::More, CardAction::Back] {
+        for a in [CardAction::Move, CardAction::Stop, CardAction::Stance(Stance::Defensive), CardAction::Rally] {
             assert_eq!(press_kind(a), PressKind::Light, "{a:?}");
         }
+        // Paging presses play on the page they open.
+        for a in [CardAction::BuildPage(crate::card::BuildCategory::Economy), CardAction::More, CardAction::Back] {
+            assert_eq!(press_kind(a), PressKind::Turn, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_turn_ripples_across_the_card() {
+        // The first column appears squashed and springs out at once ...
+        let t0 = 1.0 - turn_start(1.0, 0);
+        assert!((press_scale(t0, PressKind::Turn.depth()) - (1.0 - PressKind::Turn.depth())).abs() < 1e-4);
+        // ... the last starts a little later, and the whole card is still
+        // within half a second.
+        let t4 = 1.0 - turn_start(1.0, 4);
+        assert!(t4 < t0 && press_scale(t4, PressKind::Turn.depth()) > press_scale(t0, PressKind::Turn.depth()));
+        const { assert!(SETTLE_TIME - SQUASH_TIME + 4.0 * TURN_RIPPLE < 0.5) };
+        assert!(flash(PressKind::Turn, 0.0) < flash(PressKind::Light, 0.0), "a faint flash");
+        assert_eq!(PressKind::Turn.duration(), SETTLE_TIME);
     }
 }

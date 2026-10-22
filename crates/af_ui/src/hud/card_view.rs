@@ -6,7 +6,8 @@
 //! techs); availability, queue counts and highlights refresh every frame.
 //! In the skin a slot wears its action's family ([`skin::card_skin`]),
 //! its hotkey and queued count sit on the frame's two corner plaques, and
-//! a press (mouse or hotkey) plays its [`fx`] feedback.
+//! a press (mouse or hotkey) plays its [`fx`] feedback; a press that turns
+//! the card's page plays on the new page's slots instead.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -19,7 +20,7 @@ use super::overlays::GameOverState;
 use super::{HudSet, SelectionInfo};
 use crate::card::{self, card_for, Card, CardAction, CardMenu, CardSelection, COLS, HOTKEY_LABELS, ROWS, SLOTS};
 use crate::fx::{self, PressFx, PressKind};
-use crate::skin::{self, ButtonSkin, SkinButton, SkinLook, SkinPanel, Skinned, UiSkin, Usable};
+use crate::skin::{self, ButtonSkin, SkinButton, SkinLook, SkinPanel, SkinPlaques, Skinned, UiSkin, Usable};
 use crate::theme::{self, rgb, set_color, set_display, set_text, text, FONT_LARGE, FONT_SMALL, GLYPH_ADVANCE, TEXT, TEXT_DIM};
 use crate::tooltip::{self, Tooltip};
 
@@ -99,7 +100,14 @@ struct CostChipText(usize);
 /// Presses of the card's slots this frame (mouse or hotkey), and how each
 /// went: recorded by [`card_input`], played by [`play_card_presses`].
 #[derive(Resource, Default)]
-pub(crate) struct CardPresses(pub [Option<PressKind>; SLOTS]);
+pub(crate) struct CardPresses {
+    slots: [Option<PressKind>; SLOTS],
+    /// A press turned the page (a build page, More, Back). The pressed
+    /// slot is laid out again the next frame, gone or holding another
+    /// action, so [`rebuild_card`] plays a [`PressKind::Turn`] on the new
+    /// page's slots instead.
+    turned: bool,
+}
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CardState>()
@@ -150,7 +158,7 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                     BackgroundColor(theme::BUTTON),
                     BorderColor::all(theme::PANEL_BORDER),
                     Visibility::Hidden,
-                    (SkinButton(ButtonSkin::Plain), SkinLook::default(), PressFx::card_slot()),
+                    (SkinButton(ButtonSkin::Plain), SkinPlaques, SkinLook::default(), PressFx::card_slot()),
                 ))
                 .with_children(|b| {
                     b.spawn((text(*hotkey, FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(HOTKEY_PLAQUE, 1)));
@@ -234,7 +242,10 @@ fn rebuild_card(
     mut panel: Query<&mut Visibility, (With<CardPanel>, Without<CardSlot>)>,
     mut slots: Query<(&CardSlot, &mut Visibility), Without<CardPanel>>,
     mut labels: Query<(&SlotLabel, &mut Text, &mut TextFont)>,
+    mut presses: ResMut<CardPresses>,
 ) {
+    // Asked for by last frame's press, so this frame's layout is the new page.
+    let turned = std::mem::take(&mut presses.turned);
     if sel.card != card.selection {
         card.selection = sel.card;
         card.menu = CardMenu::Root;
@@ -265,6 +276,11 @@ fn rebuild_card(
     }
     for (slot, mut v) in &mut slots {
         v.set_if_neq(if card.slots[slot.0].is_some() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    if turned {
+        for (press, action) in presses.slots.iter_mut().zip(card.slots) {
+            *press = action.map(|_| PressKind::Turn);
+        }
     }
     let pages = player.map_or(1, |p| card::pages_for(&data, p, &sel.card, card.menu));
     for (label, mut t, mut font) in &mut labels {
@@ -337,10 +353,13 @@ fn card_input(
         if let Err(reason) = card::action_state(&data, player, sel.card.building, action) {
             let why = tooltip::reason_text(&data, player, sel.card.building, action, reason);
             notices.push(Some(player.id), NoticeKind::Warning, why, None, press.now);
-            presses.0[slot] = Some(PressKind::Refused);
+            presses.slots[slot] = Some(PressKind::Refused);
             continue;
         }
-        presses.0[slot] = Some(fx::press_kind(action));
+        match fx::press_kind(action) {
+            PressKind::Turn => presses.turned = true,
+            kind => presses.slots[slot] = Some(kind),
+        }
         execute(action, &press, &mut card, &mut mode, &mut inbox, &queues);
     }
 }
@@ -481,7 +500,8 @@ fn refresh_card(
 
 /// Plays this frame's presses on their slots: the squash or shake and the
 /// flash, and for a full press a burst of light from the slot's centre
-/// (when the skin is in, and while there is room for more particles).
+/// (when the skin is in, and while there is room for more particles); a
+/// page turn ripples across the card a column at a time.
 fn play_card_presses(
     mut commands: Commands,
     mut presses: ResMut<CardPresses>,
@@ -491,15 +511,16 @@ fn play_card_presses(
     particles: Query<(), With<fx::Particle>>,
     mut bursts: Local<u32>,
 ) {
-    if presses.0.iter().all(Option::is_none) {
+    if presses.slots.iter().all(Option::is_none) {
         return;
     }
     let now = time.elapsed_secs();
     let skin = skin.filter(|s| s.ready());
     let mut live = particles.iter().count();
     for (slot, mut press, at, node) in &mut slots {
-        let Some(kind) = presses.0[slot.0].take() else { continue };
-        press.start(kind, now);
+        let Some(kind) = presses.slots[slot.0].take() else { continue };
+        let start = if kind == PressKind::Turn { fx::turn_start(now, slot.0 % COLS) } else { now };
+        press.start(kind, start);
         if let Some(skin) = skin.as_deref()
             && kind == PressKind::Full
             && live < fx::MAX_PARTICLES
@@ -511,7 +532,7 @@ fn play_card_presses(
             live += sparks + 1;
         }
     }
-    presses.0 = [None; SLOTS];
+    presses.slots = [None; SLOTS];
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]

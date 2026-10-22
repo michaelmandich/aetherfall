@@ -138,7 +138,8 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
             panel.spawn((SingleView, Node { flex_direction: FlexDirection::Column, row_gap: px(3), width: percent(100), ..default() })).with_children(|v| {
                 v.spawn(Node { column_gap: px(12), align_items: AlignItems::Baseline, ..default() }).with_children(|r| {
                     r.spawn((text("", FONT_LARGE, theme::HIGHLIGHT), SingleText::Name));
-                    r.spawn((text("", FONT_SMALL, TEXT_DIM), SingleText::Owner));
+                    // In the owner's colour: the shadow keeps it readable on the planks.
+                    r.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), SingleText::Owner));
                 });
                 spawn_bar(v, BarKind::Hp);
                 spawn_bar(v, BarKind::Shield);
@@ -149,14 +150,21 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                     for i in 1..=QUEUE_SLOTS {
                         row.spawn((
                             theme::skinned_button(
-                                Node { width: px(60), height: px(26), padding: UiRect::ZERO, overflow: Overflow::clip(), display: Display::None, ..default() },
+                                Node {
+                                    width: px(QUEUE_SLOT.x),
+                                    height: px(QUEUE_SLOT.y),
+                                    padding: UiRect::axes(px(QUEUE_PADDING), px(0)),
+                                    overflow: Overflow::clip(),
+                                    display: Display::None,
+                                    ..default()
+                                },
                                 theme::group_color(crate::card::ActionGroup::Train),
                                 ButtonSkin::Train,
                             ),
                             QueueSlot(i),
                             Tip::default(),
                         ))
-                        .with_child((text("", FONT_SMALL, TEXT), TextLayout::no_wrap(), QueueSlotLabel(i)));
+                        .with_child((text("", QUEUE_FONT, TEXT), theme::text_shadow(), TextLayout::no_wrap(), QueueSlotLabel(i)));
                     }
                 });
             });
@@ -346,13 +354,19 @@ fn cell_label(name: &str, count: u32) -> (f32, String) {
     (12.0, format!("{}{suffix}", format::elide(name, fits.saturating_sub(suffix.len()))))
 }
 
+/// A queue slot: its size, its side padding, and its label's font size
+/// and length, which fit inside the slot's frame.
+const QUEUE_SLOT: Vec2 = Vec2::new(60.0, 26.0);
+const QUEUE_PADDING: f32 = 3.0;
+const QUEUE_FONT: f32 = 12.0;
+const QUEUE_CHARS: usize = 7;
+
 /// A queue slot's text: the name cut to fit the button.
 fn short_name(name: &str) -> String {
-    const MAX: usize = 7;
-    if name.chars().count() <= MAX {
+    if name.chars().count() <= QUEUE_CHARS {
         name.to_string()
     } else {
-        format!("{}.", name.chars().take(MAX - 1).collect::<String>().trim_end())
+        format!("{}.", name.chars().take(QUEUE_CHARS - 1).collect::<String>().trim_end())
     }
 }
 
@@ -758,6 +772,9 @@ mod tests {
         assert_eq!(short_name("Peasant"), "Peasant");
         assert_eq!(short_name("Spearman"), "Spearm.");
         assert_eq!(short_name("Raise the Banners"), "Raise.");
+        // Inside the slot's padding and border, clear of its frame.
+        let room = QUEUE_SLOT.x - 2.0 * (QUEUE_PADDING + 1.0);
+        assert!(QUEUE_CHARS as f32 * QUEUE_FONT * theme::GLYPH_ADVANCE <= room, "{room}");
     }
 
     #[test]

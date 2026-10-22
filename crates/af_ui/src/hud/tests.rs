@@ -20,7 +20,7 @@ use super::selection::QueueSlot;
 use super::{HudRoot, HudView, SelectionInfo};
 use crate::card::{BuildCategory, CardAction, CardMenu};
 use crate::fx::{Burst, Particle};
-use crate::skin::{ButtonSkin, SkinButton, SkinPanel, SkinState, Skinned, UiSkin};
+use crate::skin::{ButtonSkin, SkinButton, SkinGlow, SkinLook, SkinPanel, SkinState, Skinned, UiSkin, Usable};
 use crate::{HudPlugin, MinimapGeometry};
 
 fn add_client_resources(app: &mut App) {
@@ -885,13 +885,28 @@ fn glow_of(app: &App, e: Entity) -> Color {
     app.world().get::<ImageNode>(glow).unwrap().color
 }
 
-/// The HUD app with the skin's textures in memory (blank images), as if
-/// they had loaded from disk.
+/// Puts the skin's textures in memory as blank images (the buttons at the
+/// art's size, so their plaque-free copies can be made), as if they had
+/// loaded from disk.
+fn load_blank_skin(app: &mut App) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+    let button = Image::new_fill(
+        Extent3d { width: 168, height: 124, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        &[90, 60, 30, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    let skin = UiSkin::new(|file| images.add(if file.starts_with("button_") { button.clone() } else { Image::default() }));
+    app.insert_resource(skin);
+}
+
+/// The HUD app with the skin's textures in memory.
 fn skinned_hud_app() -> App {
     let mut app = hud_app();
-    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-    let skin = UiSkin::new(|_| images.add(Image::default()));
-    app.insert_resource(skin);
+    load_blank_skin(&mut app);
     run_ticks(&mut app, 2);
     assert_eq!(app.world().resource::<UiSkin>().state, SkinState::Ready);
     app
@@ -899,12 +914,20 @@ fn skinned_hud_app() -> App {
 
 #[test]
 fn without_its_textures_the_ui_keeps_its_flat_look() {
-    // The tests have no PNG loader (nor the files): the skin never loads.
+    // The tests have no PNG loader (nor the files): the skin fails to load,
+    // once the asset server, on threads of its own, has said so.
     let mut app = hud_app();
     let tc = spawn_building_at(&mut app, 0, "town_center", Vec2::new(40.0, 40.0));
     select(&mut app, &[tc]);
+    for _ in 0..400 {
+        if app.world().resource::<UiSkin>().state != SkinState::Loading {
+            break;
+        }
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(app.world().resource::<UiSkin>().state, SkinState::Failed);
     run_ticks(&mut app, 3);
-    assert_ne!(app.world().resource::<UiSkin>().state, SkinState::Ready);
     assert_eq!(count::<With<Skinned>>(&mut app), 0);
     assert_eq!(count::<(With<ImageNode>, Or<(With<SkinPanel>, With<SkinButton>)>)>(&mut app), 0, "no textures on any panel or button");
     let peasant = card_slot(&mut app, 0);
@@ -950,13 +973,19 @@ fn the_skin_dresses_panels_and_buttons_by_family() {
         app.world().get::<ImageNode>(e).unwrap().image.clone()
     };
     assert_eq!(image(&mut app, CardAction::Move), skin.button(ButtonSkin::Command));
+    // Only the card's slots show their plaques; other buttons wear the
+    // plaque-free copy of their family.
+    assert_ne!(skin.plain_button(ButtonSkin::Plain), skin.button(ButtonSkin::Plain));
+    let menu = button(&mut app, "Menu (F10)");
+    assert_eq!(app.world().get::<ImageNode>(menu).map(|i| i.image.clone()), Some(skin.plain_button(ButtonSkin::Plain)));
     assert_eq!(image(&mut app, CardAction::Stance(Stance::Defensive)), skin.button(ButtonSkin::Stance));
     for (cat, family) in [(BuildCategory::Economy, ButtonSkin::Economy), (BuildCategory::Military, ButtonSkin::Military), (BuildCategory::Defence, ButtonSkin::Defence)] {
         assert_eq!(image(&mut app, CardAction::BuildPage(cat)), skin.button(family), "{cat:?}");
     }
     // The military page's buildings are military; Back is a nav button.
     tap(&mut app, KeyCode::KeyX);
-    app.update();
+    // The new page's buttons spring in (and flash) first.
+    run_ticks(&mut app, 12);
     let barracks = test_data().building_id("barracks").unwrap();
     assert_eq!(image(&mut app, CardAction::Build(barracks)), skin.button(ButtonSkin::Military));
     assert_eq!(image(&mut app, CardAction::Back), skin.button(ButtonSkin::Nav));
@@ -1021,4 +1050,117 @@ fn presses_squash_flash_and_burst_or_shake_when_refused() {
         .collect();
     assert!(shifts.iter().any(|x| *x > 0.5) && shifts.iter().any(|x| *x < -0.5), "shakes both ways: {shifts:?}");
     assert!((scale_of(&app, button) - 1.0).abs() < 1e-6, "without a squash");
+}
+
+#[test]
+fn a_page_turn_plays_on_the_page_it_opens() {
+    let mut app = skinned_hud_app();
+    let worker = spawn_unit_at(&mut app, 0, "peasant", Vec2::new(40.0, 40.0));
+    select(&mut app, &[worker]);
+    run_ticks(&mut app, 2);
+    let economy = slot_of(&app, CardAction::BuildPage(BuildCategory::Economy));
+    press_slot(&mut app, economy);
+    // The pressed slot is laid out again: the new page's buttons spring in
+    // instead, and the slots it leaves empty never move.
+    let mut least = [1.0f32; crate::card::SLOTS];
+    let mut moved_hidden = Vec::new();
+    for _ in 0..16 {
+        app.update();
+        let shown = app.world().resource::<CardState>().slots;
+        for (slot, action) in shown.iter().enumerate() {
+            let e = card_slot(&mut app, slot);
+            let scale = scale_of(&app, e);
+            least[slot] = least[slot].min(scale);
+            if action.is_none() && app.world().get::<UiTransform>(e) != Some(&UiTransform::IDENTITY) {
+                moved_hidden.push(slot);
+            }
+        }
+    }
+    let card = app.world().resource::<CardState>();
+    assert_eq!(card.menu, CardMenu::Build(BuildCategory::Economy));
+    for (slot, action) in card.slots.iter().enumerate() {
+        if action.is_some() {
+            assert!(least[slot] < 0.98, "slot {slot} ({action:?}) springs in: {}", least[slot]);
+        }
+    }
+    assert!(moved_hidden.is_empty(), "hidden slots moved: {moved_hidden:?}");
+    assert_eq!(count::<With<Burst>>(&mut app), 0, "no burst for a page");
+    // Everything at rest again.
+    for slot in 0..crate::card::SLOTS {
+        let e = card_slot(&mut app, slot);
+        assert_eq!(app.world().get::<UiTransform>(e), Some(&UiTransform::IDENTITY), "slot {slot}");
+    }
+}
+
+#[test]
+fn hovered_buttons_show_their_tip_by_the_mouse() {
+    let mut app = skinned_hud_app();
+    // The stand-in mouse of a scripted run counts as the mouse.
+    app.insert_resource(af_core::ext::input::CursorOverride(Some(Vec2::new(400.0, 300.0))));
+    let tip = "Leave the match, or bring back the game-over screen (F10)";
+    let menu = button(&mut app, "Menu (F10)");
+    app.world_mut().entity_mut(menu).insert(Interaction::Hovered);
+    app.update();
+    let world = app.world_mut();
+    let panel = world.query::<(&ChildOf, &Text)>().iter(world).find(|(_, t)| t.0 == tip).map(|(c, _)| c.parent()).expect("the tip is shown");
+    let node = world.get::<Node>(panel).unwrap();
+    assert_eq!((node.display, node.left, node.top), (Display::Flex, Val::Px(414.0), Val::Px(320.0)), "below-right of the mouse");
+    assert_eq!(node.padding, UiRect::axes(Val::Px(8.0), Val::Px(4.0)), "its own padding, inside its frame");
+    assert_eq!(world.get::<SkinPanel>(panel), Some(&SkinPanel::Bar));
+    assert!(world.get::<Skinned>(panel).is_some() && world.get::<ImageNode>(panel).is_some(), "planks in a frame");
+    app.world_mut().entity_mut(menu).insert(Interaction::None);
+    app.update();
+    assert_eq!(app.world().get::<Node>(panel).map(|n| n.display), Some(Display::None));
+}
+
+/// The faction card showing `name` (the card around that text).
+fn faction_card(app: &mut App, name: &str) -> Entity {
+    let world = app.world_mut();
+    let text = world.query::<(Entity, &Text)>().iter(world).find(|(_, t)| t.0 == name).map(|(e, _)| e).unwrap_or_else(|| panic!("no {name:?}"));
+    let mut e = text;
+    while world.get::<SkinGlow>(e).is_none() {
+        e = world.get::<ChildOf>(e).unwrap_or_else(|| panic!("{name:?} is on no faction card")).parent();
+    }
+    e
+}
+
+#[test]
+fn the_menu_wears_the_skin_and_lights_the_chosen_faction() {
+    let mut app = App::new();
+    app.set_error_handler(bevy::ecs::error::warn);
+    app.add_plugins((MinimalPlugins, StatesPlugin));
+    app.insert_state(GameState::Menu);
+    app.insert_resource(Data(test_data()));
+    app.add_plugins(af_core::CorePlugin);
+    add_client_resources(&mut app);
+    load_blank_skin(&mut app);
+    app.update();
+    app.update();
+    let skin = app.world().resource::<UiSkin>().clone();
+    assert_eq!(skin.state, SkinState::Ready);
+    assert_eq!(count::<(Or<(With<SkinPanel>, With<SkinButton>)>, Without<Skinned>)>(&mut app), 0, "everything marked is dressed");
+    // Start and Spectate in their families, the small buttons plain; none with plaques.
+    for (label, family) in [("Start", ButtonSkin::Train), ("Spectate AI match", ButtonSkin::Command), ("+", ButtonSkin::Plain), ("Randomise", ButtonSkin::Plain)] {
+        let e = button(&mut app, label);
+        assert_eq!(app.world().get::<ImageNode>(e).map(|i| i.image.clone()), Some(skin.plain_button(family)), "{label}");
+    }
+    // Every faction is a framed card; the chosen one (the first) glows in its colour.
+    let data = test_data();
+    assert_eq!(count::<(With<SkinGlow>, With<Skinned>)>(&mut app), data.factions.len());
+    let first = faction_card(&mut app, &data.factions[0].name);
+    let second = faction_card(&mut app, &data.factions[1].name);
+    let colour = |i: usize| crate::theme::rgb(data.factions[i].color);
+    let look = |app: &App, e: Entity| *app.world().get::<SkinLook>(e).unwrap();
+    assert_eq!(look(&app, first), SkinLook { usable: Usable::Yes, active: true, accent: Some(colour(0)) });
+    assert!(!look(&app, second).active);
+    assert_eq!(glow_of(&app, first), colour(0).with_alpha(glow_of(&app, first).alpha()));
+    assert!(glow_of(&app, first).alpha() > 0.5, "{:?}", glow_of(&app, first));
+    assert_eq!(glow_of(&app, second).alpha(), 0.0);
+    // Choosing another moves the light to it.
+    press(&mut app, second);
+    app.world_mut().entity_mut(second).insert(Interaction::None);
+    app.update();
+    assert_eq!(look(&app, second), SkinLook { usable: Usable::Yes, active: true, accent: Some(colour(1)) });
+    assert!(!look(&app, first).active);
+    assert!(glow_of(&app, second).alpha() > 0.5 && glow_of(&app, first).alpha() == 0.0);
 }

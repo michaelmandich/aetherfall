@@ -8,7 +8,7 @@
 //! ends, a defeated player may wait on the others) they open the leave
 //! panel, which asks before going back to the menu.
 
-use af_core::ext::input::{PlacementGhost, PlacementPreview};
+use af_core::ext::input::{CursorOverride, PlacementGhost, PlacementPreview};
 use af_core::prelude::*;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
@@ -278,15 +278,18 @@ fn update_drag_box(drag: Res<DragSelect>, mut boxes: Query<&mut Node, With<DragB
     }
 }
 
+/// The tip of the hovered node, below-right of the mouse (or of its
+/// stand-in, `CursorOverride`, in a scripted run).
 fn update_hover_tip(
     tips: Query<(&Interaction, &Tip)>,
     window: Query<&Window, With<PrimaryWindow>>,
+    stand_in: Option<Res<CursorOverride>>,
     mut panel: Query<(&mut Node, &Children), With<HoverTip>>,
     mut texts: Query<&mut Text>,
 ) {
     let tip = tips.iter().find(|(i, t)| **i == Interaction::Hovered && !t.0.is_empty()).map(|(_, t)| t);
     let window = window.single().ok();
-    let cursor = window.and_then(Window::cursor_position);
+    let cursor = stand_in.and_then(|o| o.0).or_else(|| window.and_then(Window::cursor_position));
     for (mut node, children) in &mut panel {
         let (Some(tip), Some(cursor)) = (tip, cursor) else {
             set_display(&mut node, false);
@@ -482,12 +485,13 @@ fn show_game_over(
     let Ok(table) = table.single() else { return };
     commands.entity(table).with_children(|grid| {
         for (i, h) in STATS_COLUMNS.into_iter().enumerate() {
-            grid.spawn((text(h, FONT_SMALL, TEXT_DIM), stats_cell(i)));
+            grid.spawn((text(h, FONT_SMALL, TEXT_DIM), theme::text_shadow(), stats_cell(i)));
         }
+        // Shadowed: names in player colours stay readable on the planks.
         for p in players.iter() {
             for (i, cell) in stats_row(&data, p, outcome.winning_team).into_iter().enumerate() {
                 let color = if i == 0 { theme::player_text(p.color) } else { TEXT };
-                grid.spawn((text(cell, FONT_BODY, color), TextLayout::no_wrap(), stats_cell(i)));
+                grid.spawn((text(cell, FONT_BODY, color), theme::text_shadow(), TextLayout::no_wrap(), stats_cell(i)));
             }
         }
     });

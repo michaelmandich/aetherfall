@@ -100,6 +100,15 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   a command card slot), all `Pickable::IGNORE`, and clears the node's flat
   colours. Until then, or for good when a texture is missing (the headless
   tests have no PNG loader), the flat `theme` colours stay.
+  `theme::panel_node` and `theme::button` keep the padding a caller asks
+  for (8 px and 10 by 5 px only fill in an unset one), which keeps content
+  off the frames' metal: the game-over and leave panels pad 24 px, the
+  pause banner 28 by 10.
+* **Plaques:** the button textures carry the hotkey and count plaques in
+  their top corners. Only the command card's slots (`SkinPlaques`) show
+  them; every other button wears a copy made once the textures load, its
+  top 40 texture rows replaced by its bottom ones mirrored
+  (`skin::without_plaques`), so "Start" or "Resume" has no empty gems.
 * **Command card:** a slot wears its action's family (a build page button
   and its buildings the page's colours, else the action group's), with
   its hotkey and queued count on the frame's two corner plaques.
@@ -115,12 +124,18 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   it gold, sweep a shine across it and throw a ring and sparks from its
   centre (on a root node over the HUD, at most 64 particles alive); other
   orders get a lighter squash and flash; a refused press shakes and
-  flashes red. Plain buttons squash when clicked. Scale and shake are
+  flashes red. A press that turns the card's page (a build page, More,
+  Back) lays the pressed slot out anew, so it plays on the new page
+  instead: its buttons appear squashed and spring out with a faint flash,
+  a column at a time. Plain buttons squash when clicked. Scale and shake are
   `UiTransform`s, so nothing is laid out again, and nothing runs for a
   button at rest.
 * **Checking it:** `cargo run -p af_ui --example ui_preview [-- hud ...]
   --screenshot shot.png`, or the game with `--script` to catch a press
-  part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`).
+  part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`; with
+  `--speed 0.5` the shots fall on more frames, as script times are sim
+  seconds). The floating hover tip follows the stand-in mouse of a
+  scripted run (`--hover LABEL --cursor X,Y`).
 
 ## Visual models
 

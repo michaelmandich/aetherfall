@@ -8,6 +8,10 @@
 //!   panels and thin strips), `button_<skin>.png` per [`ButtonSkin`],
 //!   `glow.png` (hover, armed and press light) and the press effects'
 //!   `burst_ring.png`, `spark.png` and `shine.png` ([`crate::fx`]).
+//! * The button textures carry a hotkey and a count plaque in their top
+//!   corners, for the command card ([`SkinPlaques`]). Every other button
+//!   wears a copy made once they load, whose top edge is its bottom edge
+//!   mirrored ([`without_plaques`]): no empty gems on "Start" or "Resume".
 //! * Spawn functions only mark nodes: [`SkinPanel`] or [`SkinButton`]
 //!   (plus [`SkinGlow`] for a panel that lights up on hover). Once every
 //!   texture has loaded, [`apply_skin`] gives each marked node its image
@@ -147,6 +151,11 @@ pub enum SkinPanel {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SkinButton(pub ButtonSkin);
 
+/// A [`SkinButton`] whose frame keeps its hotkey and count plaques (the
+/// command card's slots, which print theirs on them).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct SkinPlaques;
+
 /// A skinned panel that is also a button (a faction card): it gets the
 /// buttons' glow on hover and while chosen ([`SkinLook`]).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -205,6 +214,10 @@ pub struct UiSkin {
     pub panel_frame: Handle<Image>,
     pub bar_frame: Handle<Image>,
     pub buttons: [Handle<Image>; ButtonSkin::ALL.len()],
+    /// The buttons without their plaques ([`without_plaques`]), made once
+    /// they load (until then, or for a texture that cannot be copied so,
+    /// the textures themselves).
+    pub plain_buttons: [Handle<Image>; ButtonSkin::ALL.len()],
     pub glow: Handle<Image>,
     pub burst_ring: Handle<Image>,
     pub spark: Handle<Image>,
@@ -215,11 +228,13 @@ pub struct UiSkin {
 impl UiSkin {
     /// The skin with each texture file's handle from `handle` (by file name).
     pub fn new(mut handle: impl FnMut(&str) -> Handle<Image>) -> UiSkin {
+        let buttons = ButtonSkin::ALL.map(|s| handle(s.file()));
         UiSkin {
             panel_wood: handle("panel_wood.png"),
             panel_frame: handle("panel_frame.png"),
             bar_frame: handle("bar_frame.png"),
-            buttons: ButtonSkin::ALL.map(|s| handle(s.file())),
+            plain_buttons: buttons.clone(),
+            buttons,
             glow: handle("glow.png"),
             burst_ring: handle("burst_ring.png"),
             spark: handle("spark.png"),
@@ -233,8 +248,17 @@ impl UiSkin {
         UiSkin::new(|file| server.load(format!("{folder}/{file}")))
     }
 
+    /// A button's texture, with its plaques ([`UiSkin::plain_button`]: without).
     pub fn button(&self, skin: ButtonSkin) -> Handle<Image> {
         self.buttons[skin.index()].clone()
+    }
+
+    pub fn plain_button(&self, skin: ButtonSkin) -> Handle<Image> {
+        self.plain_buttons[skin.index()].clone()
+    }
+
+    fn button_for(&self, skin: ButtonSkin, plaques: bool) -> Handle<Image> {
+        if plaques { self.button(skin) } else { self.plain_button(skin) }
     }
 
     pub fn ready(&self) -> bool {
@@ -279,9 +303,10 @@ pub fn skin_ready(skin: Option<Res<UiSkin>>) -> bool {
     skin.is_some_and(|s| s.ready())
 }
 
-/// Watches the textures load: ready once all are in, failed (with one
-/// warning) as soon as one cannot be loaded.
-fn track_skin_load(skin: Option<ResMut<UiSkin>>, server: Res<AssetServer>, images: Res<Assets<Image>>) {
+/// Watches the textures load: ready once all are in (and the buttons'
+/// plaque-free copies made), failed (with one warning) as soon as one
+/// cannot be loaded.
+fn track_skin_load(skin: Option<ResMut<UiSkin>>, server: Res<AssetServer>, mut images: ResMut<Assets<Image>>) {
     let Some(mut skin) = skin else { return };
     if skin.state != SkinState::Loading {
         return;
@@ -291,8 +316,39 @@ fn track_skin_load(skin: Option<ResMut<UiSkin>>, server: Res<AssetServer>, image
         warn!("UI skin: {} did not load; the UI keeps its flat colours", path.unwrap_or_default());
         skin.state = SkinState::Failed;
     } else if skin.handles().all(|h| images.contains(h)) {
+        for i in 0..ButtonSkin::ALL.len() {
+            if let Some(plain) = images.get(&skin.buttons[i]).and_then(without_plaques) {
+                skin.plain_buttons[i] = images.add(plain);
+            }
+        }
         skin.state = SkinState::Ready;
     }
+}
+
+/// Texture rows at the top of a button that its plaques reach into
+/// (centred 20 px down and up to 30 px across, per the art contract): the
+/// depth of its top slice.
+const PLAQUE_ROWS: usize = 40;
+
+/// A button texture without its hotkey and count plaques: its top
+/// [`PLAQUE_ROWS`] rows replaced by its bottom ones mirrored, so its top
+/// edge and corners are its bottom's. `None` for a texture that cannot be
+/// copied so (compressed, layered, or too short).
+pub fn without_plaques(image: &Image) -> Option<Image> {
+    let desc = &image.texture_descriptor;
+    let data = image.data.as_ref()?;
+    let (w, h) = (desc.size.width as usize, desc.size.height as usize);
+    if desc.format.is_compressed() || desc.size.depth_or_array_layers != 1 || desc.mip_level_count != 1 || w == 0 || h < 2 * PLAQUE_ROWS || data.len() % (w * h) != 0 {
+        return None;
+    }
+    let row = data.len() / h;
+    let mut plain = image.clone();
+    let pixels = plain.data.as_mut()?;
+    for y in 0..PLAQUE_ROWS {
+        let from = (h - 1 - y) * row;
+        pixels.copy_within(from..from + row, y * row);
+    }
+    Some(plain)
 }
 
 fn slicer(border: BorderRect, sides: SliceScaleMode) -> NodeImageMode {
@@ -348,6 +404,7 @@ type Unskinned<'w, 's> = Query<
         &'static mut Node,
         Option<&'static SkinPanel>,
         Option<&'static SkinButton>,
+        Has<SkinPlaques>,
         Has<SkinGlow>,
         Option<&'static PressFx>,
         Option<&'static mut BackgroundColor>,
@@ -360,9 +417,11 @@ type Unskinned<'w, 's> = Query<
 /// (under its content), a button's glow, the shine of a button with press
 /// bursts.
 pub(crate) fn apply_skin(mut commands: Commands, skin: Res<UiSkin>, mut nodes: Unskinned) {
-    for (e, mut node, panel, button, glows, press, bg, border) in &mut nodes {
-        // The decorations cover the border box: clip only outside it.
-        if node.overflow != Overflow::visible() {
+    for (e, mut node, panel, button, plaques, glows, press, bg, border) in &mut nodes {
+        // A clipping panel's frame (a child) covers its border box: clip
+        // only outside that. A button's frame is its own image, so its
+        // label stays clipped inside its border (as without the skin).
+        if panel.is_some() && node.overflow != Overflow::visible() {
             node.overflow_clip_margin = OverflowClipMargin::border_box();
         }
         if let Some(mut bg) = bg {
@@ -389,7 +448,8 @@ pub(crate) fn apply_skin(mut commands: Commands, skin: Res<UiSkin>, mut nodes: U
                 Pickable::IGNORE,
             ));
         } else if let Some(&SkinButton(kind)) = button {
-            entity.insert(ImageNode { image: skin.button(kind), image_mode: button_mode(), visual_box: VisualBox::BorderBox, color: grey(NORMAL), ..default() });
+            let image = skin.button_for(kind, plaques);
+            entity.insert(ImageNode { image, image_mode: button_mode(), visual_box: VisualBox::BorderBox, color: grey(NORMAL), ..default() });
         }
         if button.is_some() || glows {
             // Under the label, over the wood: hover, armed and press light.
@@ -411,10 +471,10 @@ pub(crate) fn apply_skin(mut commands: Commands, skin: Res<UiSkin>, mut nodes: U
 
 /// A command card slot changed family with its action: its texture follows.
 #[allow(clippy::type_complexity)]
-fn swap_button_images(skin: Option<Res<UiSkin>>, mut buttons: Query<(&SkinButton, &mut ImageNode), (Changed<SkinButton>, With<Skinned>)>) {
+fn swap_button_images(skin: Option<Res<UiSkin>>, mut buttons: Query<(&SkinButton, Has<SkinPlaques>, &mut ImageNode), (Changed<SkinButton>, With<Skinned>)>) {
     let Some(skin) = skin else { return };
-    for (b, mut image) in &mut buttons {
-        let handle = skin.button(b.0);
+    for (b, plaques, mut image) in &mut buttons {
+        let handle = skin.button_for(b.0, plaques);
         if image.image != handle {
             image.image = handle;
         }
@@ -514,6 +574,26 @@ mod tests {
         assert_eq!(card_skin(CardAction::Upgrade { to: house }, CardMenu::Root, none), ButtonSkin::Upgrade);
         assert_eq!(card_skin(CardAction::More, CardMenu::Build(BuildCategory::Economy), none), ButtonSkin::Nav);
         assert_eq!(card_skin(CardAction::Back, CardMenu::Build(BuildCategory::Economy), none), ButtonSkin::Nav);
+    }
+
+    #[test]
+    fn plain_buttons_mirror_their_bottom_edge_over_the_plaques() {
+        use bevy::asset::RenderAssetUsages;
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        // A button texture whose every row is filled with its own index.
+        let (w, h) = (6u32, 124u32);
+        let data: Vec<u8> = (0..h).flat_map(|y| std::iter::repeat_n(y as u8, 4 * w as usize)).collect();
+        let size = Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+        let button = Image::new(size, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
+        let plain = without_plaques(&button).unwrap();
+        let row = |img: &Image, y: usize| img.data.as_ref().unwrap()[y * 4 * w as usize];
+        assert_eq!(row(&plain, 0), 123, "the top edge is the bottom edge");
+        assert_eq!(row(&plain, PLAQUE_ROWS - 1), (h as usize - PLAQUE_ROWS) as u8);
+        for y in PLAQUE_ROWS..h as usize {
+            assert_eq!(row(&plain, y), y as u8, "the rest is untouched");
+        }
+        // Too short to hold both edges (the tests' blank 1x1 textures): none.
+        assert!(without_plaques(&Image::default()).is_none());
     }
 
     #[test]
