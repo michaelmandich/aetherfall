@@ -80,15 +80,15 @@ impl NavRegions {
     /// metres of it. Flyers reach everything, and so does a mover with no
     /// open ground about (the path service sorts that out).
     pub fn reachable(&self, from: Vec2, to: Vec2, mobility: Mobility, radius: f32, near: f32) -> bool {
-        let Some(m) = self.map(mobility, radius) else { return true };
-        let region = m.region_near(from, START_SEARCH_RADIUS);
-        if region == 0 {
-            return true;
-        }
-        match m.region_at(to) {
-            0 => m.touches(region, to, near),
-            r => r == region,
-        }
+        self.from(from, mobility, radius).reaches(to, near)
+    }
+
+    /// What a mover of this class standing at `from` can reach: for testing
+    /// many targets at the cost of one lookup.
+    pub fn from(&self, from: Vec2, mobility: Mobility, radius: f32) -> ReachFrom {
+        let map = self.map(mobility, radius);
+        let region = map.as_ref().map_or(0, |m| m.region_near(from, START_SEARCH_RADIUS));
+        ReachFrom { map, region, from }
     }
 
     /// Are `a` and `b` in one region for this class? True for flyers and
@@ -107,11 +107,11 @@ impl NavRegions {
     /// ground about. Costs a coarse search when the line is not open:
     /// rank many targets from one place with [`NavRegions::field`].
     pub fn route_distance(&self, from: Vec2, to: Vec2, mobility: Mobility, radius: f32) -> Option<f32> {
-        let Some(m) = self.map(mobility, radius) else { return Some(from.distance(to)) };
-        let (Some(a), Some(b)) = (m.open_near(from, START_SEARCH_RADIUS), m.open_near(to, GOAL_SEARCH_RADIUS)) else {
+        let reach = self.from(from, mobility, radius);
+        if reach.region == 0 {
             return Some(from.distance(to));
-        };
-        m.distance(a, b).map(|d| d + from.distance(a) + to.distance(b))
+        }
+        reach.route_distance(to)
     }
 
     /// The coarse route from `from` to `to` for this class (see
@@ -138,6 +138,50 @@ impl NavRegions {
         let start = map.open_near(from, START_SEARCH_RADIUS)?;
         let field = map.field(start, max)?;
         Some(RouteField { map, field, from })
+    }
+}
+
+/// What a mover of one class at one place can reach (see
+/// [`NavRegions::from`]; [`reach_from`] makes one with or without regions).
+#[derive(Clone, Debug)]
+pub struct ReachFrom {
+    map: Option<Arc<RegionMap>>,
+    /// The mover's region (0: nowhere open about, or no map).
+    region: RegionId,
+    from: Vec2,
+}
+
+impl ReachFrom {
+    /// Reaches everything, by the straight line (no regions, or a flyer).
+    pub fn anything(from: Vec2) -> ReachFrom {
+        ReachFrom { map: None, region: 0, from }
+    }
+
+    /// See [`NavRegions::reachable`].
+    pub fn reaches(&self, to: Vec2, near: f32) -> bool {
+        let Some(m) = self.map.as_deref().filter(|_| self.region != 0) else { return true };
+        match m.region_at(to) {
+            0 => m.touches(self.region, to, near),
+            r => r == self.region,
+        }
+    }
+
+    /// See [`NavRegions::route_distance`].
+    pub fn route_distance(&self, to: Vec2) -> Option<f32> {
+        let Some(m) = self.map.as_deref().filter(|_| self.region != 0) else { return Some(self.from.distance(to)) };
+        let (Some(a), Some(b)) = (m.open_near(self.from, START_SEARCH_RADIUS), m.open_near(to, GOAL_SEARCH_RADIUS)) else {
+            return Some(self.from.distance(to));
+        };
+        m.distance(a, b).map(|d| d + self.from.distance(a) + to.distance(b))
+    }
+}
+
+/// What a mover of this class at `from` can reach, with regions or (all of
+/// it, by the straight line) without.
+pub fn reach_from(regions: Option<&NavRegions>, from: Vec2, mobility: Mobility, radius: f32) -> ReachFrom {
+    match regions {
+        Some(r) => r.from(from, mobility, radius),
+        None => ReachFrom::anything(from),
     }
 }
 

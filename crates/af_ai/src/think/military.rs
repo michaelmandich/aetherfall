@@ -17,7 +17,9 @@ use crate::{MAX_QUEUE, RESEND_DELAY};
 
 /// Alerts this close to an own building trigger defence ...
 const DEFEND_RADIUS: f32 = 30.0;
-/// ... and so do alerts this close to the main hall (workers in the fields).
+/// ... and so do alerts this close to the main hall (workers in the fields;
+/// this and the other military radii marked so grow with the map, see
+/// `AiView::map_scale`).
 const HOME_RADIUS: f32 = 70.0;
 /// Hostile army this close to the alert counts as the raid's strength.
 const THREAT_RADIUS: f32 = 20.0;
@@ -36,11 +38,12 @@ const LOSING_LOSS: f32 = 0.5;
 const LOSING_ODDS: f32 = 1.3;
 /// Defence stays active this long after the last alert.
 const DEFEND_TIME: f32 = 20.0;
-/// Army units this close to the alert or home respond.
+/// Army units this close to the alert or home respond (grows with the map).
 const DEFEND_RANGE: f32 = 90.0;
 /// Defenders are re-targeted at most this often.
 const DEFEND_RESEND: f32 = 8.0;
-/// An attack this far from home is recalled when nobody else can defend.
+/// An attack this far from home is recalled when nobody else can defend
+/// (grows with the map).
 const RECALL_DISTANCE: f32 = 60.0;
 /// Idle army units farther than this from the rally point walk back to it.
 const RALLY_RADIUS: f32 = 12.0;
@@ -48,7 +51,8 @@ const RALLY_RADIUS: f32 = 12.0;
 const GATHERED_RADIUS: f32 = 2.0 * RALLY_RADIUS;
 /// An attacker this close to the objective has arrived.
 const ARRIVE_RADIUS: f32 = 12.0;
-/// The attack group must get this much closer to its goal ...
+/// The attack group must get this much closer to its goal (by the way
+/// round: the route distance left, see [`Think::way_left`]) ...
 const PROGRESS_STEP: f32 = 3.0;
 /// ... within this many seconds, or it is stuck.
 const STALL_TIME: f32 = 45.0;
@@ -116,7 +120,8 @@ impl Think<'_, '_> {
         }
         let snap = self.view.snap;
         let home = self.plan.home;
-        let near_base = |at: Vec2| at.distance(home) < HOME_RADIUS || snap.buildings.iter().any(|b| b.pos.distance(at) < DEFEND_RADIUS);
+        let scale = self.view.map_scale();
+        let near_base = |at: Vec2| at.distance(home) < HOME_RADIUS * scale || snap.buildings.iter().any(|b| b.pos.distance(at) < DEFEND_RADIUS);
         let fresh = alerts.iter().rev().find(|a| near_base(a.at)).copied();
         if let Some(a) = fresh {
             self.mem.defend_pos = a.attacker;
@@ -132,7 +137,7 @@ impl Think<'_, '_> {
             .iter()
             .filter(|a| {
                 !self.mem.is_attacker(a.entity)
-                    && (a.pos.distance(at) < DEFEND_RANGE || a.pos.distance(home) < DEFEND_RANGE)
+                    && (a.pos.distance(at) < DEFEND_RANGE * scale || a.pos.distance(home) < DEFEND_RANGE * scale)
                     && !self.mem.moved_within(a.entity, now, DEFEND_RESEND)
             })
             .map(|a| a.entity)
@@ -147,7 +152,7 @@ impl Think<'_, '_> {
         if fresh.is_some()
             && outnumbered
             && let AttackState::Attacking { goal, .. } = self.mem.attack
-            && goal.pos.distance(home) > RECALL_DISTANCE
+            && goal.pos.distance(home) > RECALL_DISTANCE * scale
         {
             let group = std::mem::take(&mut self.mem.attackers);
             self.mem.attack = AttackState::Gathering;
@@ -458,13 +463,17 @@ impl Think<'_, '_> {
             && pos.distance(goal.pos) > ARRIVE_RADIUS
         {
             goal.pos = pos;
-            best_dist = group.iter().map(|a| a.pos.distance(pos)).fold(f32::INFINITY, f32::min);
+            let straight = group.iter().map(|a| a.pos.distance(pos)).fold(f32::INFINITY, f32::min);
+            best_dist = self.way_left(&group, pos).unwrap_or(straight);
             self.mem.attack = AttackState::Attacking { goal, since, best_dist, progress_at, razing: false };
             self.move_army(group.iter().map(|a| a.entity).collect(), CommandKind::AttackMove(pos));
         }
         let group_pop: u32 = group.iter().map(|a| a.pop).sum();
         let front = group.iter().min_by(|a, b| a.pos.distance_squared(goal.pos).total_cmp(&b.pos.distance_squared(goal.pos))).copied();
         let closest = front.map_or(f32::INFINITY, |a| a.pos.distance(goal.pos));
+        // Progress is the way left, not the straight line: a group going
+        // round by a ford gets closer all the way.
+        let left = self.way_left(&group, goal.pos).unwrap_or(closest);
         let mut razing = self.should_raze(goal, &group, front.map(|a| a.pos), was_razing);
         let spent = (group_pop as f32) < self.mem.wave_pop as f32 * RETREAT_SHARE && now - since > 20.0;
         if (spent && !razing) || self.losing(&group, group_pop) {
@@ -517,8 +526,8 @@ impl Think<'_, '_> {
             }
             razing = keep_razing && next.building().is_some() && front.is_some_and(|a| a.pos.distance(next.pos) < RAZE_RADIUS);
             goal = next;
-        } else if arrived || closest < best_dist - PROGRESS_STEP {
-            self.mem.attack = AttackState::Attacking { goal, since, best_dist: closest.min(best_dist), progress_at: now, razing };
+        } else if arrived || left < best_dist - PROGRESS_STEP {
+            self.mem.attack = AttackState::Attacking { goal, since, best_dist: left.min(best_dist), progress_at: now, razing };
         } else if now - progress_at > STALL_TIME {
             // No closer for a long time: break through a wall in the way, or give the goal up.
             match front.and_then(|a| self.hostile_wall_near(a.pos)) {
@@ -563,6 +572,15 @@ impl Think<'_, '_> {
         if !self.defending {
             self.reinforce(goal.pos, razing);
         }
+    }
+
+    /// The route distance left to `goal` for the attack group: the least
+    /// over its units, by the way of the unit most of the army is (one
+    /// search from the goal). Infinite when none of them can get there;
+    /// `None` without regions (then the straight line counts).
+    fn way_left(&self, group: &[ArmyInfo], goal: Vec2) -> Option<f32> {
+        let field = self.view.route_field(self.view.lead_unit(), goal)?;
+        Some(group.iter().filter_map(|a| field.get(a.pos, ARRIVE_RADIUS)).fold(f32::INFINITY, f32::min))
     }
 
     /// Should the attack group raze the town of its building goal? Its front

@@ -495,7 +495,7 @@ impl<'m, 'v> Think<'m, 'v> {
     /// Issue a placement already validated by `check_placement`.
     fn commit_place(&mut self, kind: BuildingTypeId, p: Placement, builders: usize, cost: ResAmounts) -> bool {
         let mut crew = Vec::new();
-        pick_workers(self.view.snap, p.pos, builders, &self.taken, &mut crew);
+        pick_workers(&self.view, p.pos, builders, &self.taken, &mut crew);
         if crew.is_empty() {
             self.mem.no_spot.push((kind, self.now() + NO_SPOT_RETRY));
             return false;
@@ -860,7 +860,7 @@ impl<'m, 'v> Think<'m, 'v> {
                 continue;
             }
             let mut crew = Vec::new();
-            pick_workers(snap, b.pos, 1, &self.taken, &mut crew);
+            pick_workers(&self.view, b.pos, 1, &self.taken, &mut crew);
             let Some(&w) = crew.first() else { break };
             self.claim_worker(w, Entity::PLACEHOLDER);
             self.mem.builder_sent.push((b.entity, now));

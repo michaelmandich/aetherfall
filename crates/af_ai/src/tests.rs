@@ -5,6 +5,8 @@
 use std::sync::Arc;
 
 use af_core::ext::economy::RevealedPlayers;
+use af_core::ext::map::MapFeatures;
+use af_core::ext::movement::NavRegions;
 use af_core::spawn;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use bevy::ecs::system::RunSystemOnce;
@@ -156,6 +158,8 @@ impl Match {
         )
         .expect("player exists")
         .with_revealed(w.get_resource::<RevealedPlayers>())
+        .with_regions(w.get_resource::<NavRegions>())
+        .with_features(w.get_resource::<MapFeatures>())
     }
 
     /// Run one think for player `i` with `mem`, returning its commands.
@@ -3297,4 +3301,195 @@ fn remnants_are_tracked_only_for_realms_with_nothing_left() {
     let all = team_bit(0) | team_bit(1);
     m.app.world_mut().entity_mut(b).insert(SeenBy { teams: all, visible: all });
     assert!(remnants(&mut m).is_empty(), "a building that keeps it in the game is known");
+}
+
+// ---------------------------------------------------------------------------
+// Big maps: regions, routes and the map's size
+// ---------------------------------------------------------------------------
+
+impl Match {
+    /// Paint deep water over x in `x` the whole height of the map, crossed
+    /// by `crossing` (a terrain id) over y in its range, and publish the
+    /// regions as af_movement does.
+    fn river(&mut self, x: std::ops::Range<i32>, crossing: Option<(&str, std::ops::Range<i32>)>) {
+        let id = |n: &str| self.data.terrain_id(n).unwrap_or_else(|| panic!("no terrain {n}")).0;
+        let deep = id("deep_water");
+        let crossing = crossing.map(|(t, ys)| (id(t), ys));
+        let world = self.app.world_mut();
+        let mut nav = world.resource_mut::<Nav>();
+        for y in 0..nav.height() as i32 {
+            for xx in x.clone() {
+                let t = match &crossing {
+                    Some((t, ys)) if ys.contains(&y) => *t,
+                    _ => deep,
+                };
+                nav.set_terrain(IVec2::new(xx, y), t);
+            }
+        }
+        let regions = NavRegions::new(&nav);
+        world.insert_resource(regions);
+    }
+}
+
+/// Player 0 of two starts at (160, 100), the crater is at (100, 100): a
+/// river between them at x = 125..131 with a ford far north (y 170..177)
+/// bends the way to the middle, and the army's front faces along it.
+#[test]
+fn the_front_faces_along_the_way_to_the_middle() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    m.workers(0, 3, m.start(0));
+    m.tick();
+    let straight = {
+        let snap = m.snapshot(0);
+        Plan::new(&m.view(0, &snap), &AiMemory::default()).front
+    };
+    assert!(straight.distance(Vec2::new(-1.0, 0.0)) < 1e-3, "straight at the crater without regions: {straight}");
+    m.river(125..131, Some(("ford", 170..177)));
+    let snap = m.snapshot(0);
+    let plan = Plan::new(&m.view(0, &snap), &AiMemory::default());
+    assert!(plan.front.y > 0.5, "toward the ford, up the bank: {}", plan.front);
+    assert!(plan.rally.x > 131.0, "the rally point stays on the home bank: {}", plan.rally);
+}
+
+/// A remote wood cluster across the river is passed over for a farther
+/// one the workers can walk to.
+#[test]
+fn remote_resources_across_the_river_are_passed_over() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    let across = Vec2::new(104.0, 100.0);
+    let this_side = Vec2::new(160.0, 32.0);
+    m.node("oak", across);
+    m.node("oak", this_side);
+    m.tick();
+    let wood = m.data.resource_id("wood").expect("wood");
+    let home = m.start(0);
+    let snap = m.snapshot(0);
+    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[]), Some(across), "the nearest without regions");
+    m.river(125..131, None);
+    let snap = m.snapshot(0);
+    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[]), Some(this_side));
+}
+
+/// A building spot sought from the bank never lands across the water.
+#[test]
+fn build_spots_stay_on_the_workers_bank() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.river(125..131, None);
+    m.tick();
+    let house = m.building_id("house");
+    let q = SpotQuery { kind: house, anchor: Vec2::new(137.0, 100.0), toward: Vec2::new(-1.0, 0.0), min_r: 12.0, max_r: 30.0, gap: 1.0 };
+    let snap = m.snapshot(0);
+    let spot = find_build_spot(&m.view(0, &snap), &q, &[], &[]).expect("a spot");
+    assert!(spot.pos.x > 131.0, "on the home bank: {}", spot.pos);
+}
+
+/// Of two hostile buildings, the one across the river (nearer in a
+/// straight line, far round by the ford) is not the first target: the way
+/// round decides. Without regions the straight line does.
+#[test]
+fn attack_targets_are_ranked_by_the_way_round() {
+    let mut m = Match::new(&["ironhold", "dune", "sylvan"]);
+    m.hall(0);
+    let home = m.start(0);
+    let across = m.known(1, Vec2::new(105.0, 100.0));
+    let this_side = m.known(2, Vec2::new(160.0, 30.0));
+    m.tick();
+    let mem = AiMemory { known: vec![across, this_side], ..default() };
+    let snap = m.snapshot(0);
+    assert_eq!(choose_target(&m.view(0, &snap), &mem, home).map(|o| o.pos), Some(across.pos), "straight without regions");
+    m.river(125..131, Some(("ford", 185..192)));
+    let snap = m.snapshot(0);
+    assert_eq!(choose_target(&m.view(0, &snap), &mem, home).map(|o| o.pos), Some(this_side.pos));
+}
+
+/// An attack going round by the ford makes progress although it gets no
+/// nearer in a straight line: it is not taken for stuck.
+#[test]
+fn an_attack_round_by_the_ford_is_progress() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    let goal = m.known(1, Vec2::new(110.0, 100.0));
+    let group = m.army(0, "spearman", Vec2::new(138.0, 96.0), 6);
+    m.river(125..131, Some(("ford", 170..177)));
+    m.tick();
+    let objective = Objective { player: m.p(1), aim: Aim::Building(goal.entity), pos: goal.pos };
+    let mut mem = attacking(&group, objective, 0.0);
+    mem.known.push(goal);
+    mem.wave_pop = 6;
+    m.set_time(1.0);
+    m.think(0, &mut mem);
+    let AttackState::Attacking { best_dist: first, .. } = mem.attack else { panic!("attacking: {:?}", mem.attack) };
+    assert!(first > 120.0, "the way left is round by the ford: {first}");
+    // Halfway up the bank to the ford: farther in a straight line, nearer by the way.
+    for (k, &u) in group.iter().enumerate() {
+        m.app.world_mut().entity_mut(u).insert(Position(Vec2::new(138.0 + (k % 3) as f32, 148.0 + (k / 3) as f32)));
+    }
+    m.tick();
+    m.set_time(40.0);
+    m.think(0, &mut mem);
+    let AttackState::Attacking { best_dist, progress_at, .. } = mem.attack else { panic!("still attacking: {:?}", mem.attack) };
+    assert!(best_dist < first - 20.0 && progress_at == 40.0, "progress: {best_dist} at {progress_at}");
+    m.set_time(80.0);
+    m.think(0, &mut mem);
+    assert!(matches!(mem.attack, AttackState::Attacking { goal: g, .. } if g.pos == goal.pos), "not given up 40 s after its last progress");
+    assert!(!mem.is_unreachable(goal.pos));
+}
+
+/// Siege on wheels is left out of the army mix while only a shallow
+/// crossing leads from home to the middle; a ford brings it back.
+#[test]
+fn units_with_no_way_to_the_middle_are_left_out_of_the_mix() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    m.tick();
+    let (ram, spear) = (m.unit_id("battering_ram"), m.unit_id("spearman"));
+    let comp = vec![(ram, 1.0), (spear, 2.0)];
+    let home = m.start(0);
+    m.river(125..131, Some(("shallow_water", 96..104)));
+    let snap = m.snapshot(0);
+    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone()), vec![(spear, 2.0)]);
+    m.river(125..131, Some(("ford", 96..104)));
+    let snap = m.snapshot(0);
+    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone()), comp);
+}
+
+/// Builders are picked among the workers that can walk to the site.
+#[test]
+fn builders_come_from_the_sites_bank() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    let kind = m.data.faction(m.player(0).faction).worker_id;
+    let near_across = m.unit(0, kind, Vec2::new(122.0, 100.0));
+    let far_this_side = m.unit(0, kind, Vec2::new(160.0, 130.0));
+    m.river(125..131, None);
+    m.tick();
+    let snap = m.snapshot(0);
+    let mut crew = Vec::new();
+    pick_workers(&m.view(0, &snap), Vec2::new(140.0, 100.0), 1, &[], &mut crew);
+    assert_eq!(crew, vec![far_this_side], "not {near_across}");
+}
+
+/// The military radii grow with the map beyond the size they were tuned for.
+#[test]
+fn the_map_scale_grows_with_big_maps() {
+    let m = Match::new(&["ironhold", "dune"]);
+    let snap = Snapshot::default();
+    assert_eq!(m.view(0, &snap).map_scale(), 1.0);
+    let mut big = sim_app(test_data());
+    let players = flat_world(&mut big, 768.0, &[("ironhold", 0), ("dune", 1)]);
+    let w = big.world();
+    let view = AiView::new(
+        &w.resource::<Data>().0,
+        w.resource::<Players>(),
+        players[0],
+        &w.resource::<Nav>().0,
+        w.resource::<SpatialIndex>(),
+        w.get_resource::<MapInfo>(),
+        0.0,
+        w.resource::<FogOfWar>(),
+        &snap,
+    )
+    .expect("player");
+    assert_eq!(view.map_scale(), 2.0);
 }

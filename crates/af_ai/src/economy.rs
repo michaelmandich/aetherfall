@@ -30,6 +30,9 @@ pub const MIN_CLUSTER_AMOUNT: f32 = 300.0;
 const MAX_CLUSTER_SEEDS: usize = 32;
 /// Workers one gatherable node comfortably takes (for farm planning).
 pub const WORKERS_PER_NODE: u32 = 2;
+/// A node counts as in a worker's reach when its ground comes this close to
+/// it (metres; nodes stand on open ground, so this only matters for odd ones).
+const NODE_REACH: f32 = 2.0;
 
 /// Base demand of the first `eco_focus` resource; later ones get less.
 const FOCUS_BASE: f32 = 300.0;
@@ -218,12 +221,14 @@ impl Sources {
     }
 
     /// Add gatherable nodes (of `only`, if given) within `radius` of `center`
-    /// that are not listed yet.
+    /// that are not listed yet and that a worker at `center` can get to
+    /// (not the trees across the river from home).
     fn push_near(&mut self, view: &AiView, center: Vec2, radius: f32, only: Option<ResourceId>, skip: &impl Fn(Entity) -> bool) {
         let home = only.is_none();
         let listed = self.nodes.len();
+        let reach = view.reach_from(view.worker_kind(), center);
         view.spatial.for_each_near(center, radius, |e| {
-            if e.kind != SpatialKind::Node || e.pos.distance(center) > radius || skip(e.entity) {
+            if e.kind != SpatialKind::Node || e.pos.distance(center) > radius || skip(e.entity) || !reach.reaches(e.pos, NODE_REACH) {
                 return;
             }
             if self.nodes[..listed].iter().any(|n| n.entity == e.entity) {
@@ -256,17 +261,17 @@ impl Sources {
 }
 
 /// The nearest gatherable node of `r` beyond [`HOME_RADIUS`] of `from` and
-/// outside the clusters around `known`.
+/// outside the clusters around `known`: nearest by the workers' way round,
+/// among those they can get to (see `AiView::nearest_by_route`).
 pub fn find_remote(view: &AiView, from: Vec2, r: ResourceId, known: &[Vec2]) -> Option<Vec2> {
     let clear = |p: Vec2| known.iter().all(|k| k.distance(p) > REMOTE_CLUSTER_RADIUS + CLUSTER_RADIUS);
-    view.spatial
-        .nearest_anywhere(from, |e| {
-            e.kind == SpatialKind::Node && e.pos.distance(from) > HOME_RADIUS && clear(e.pos) && {
-                let def = view.data.node(NodeTypeId(e.type_index));
-                def.resource_id == r && def.requires_building_id.is_none()
-            }
-        })
-        .map(|e| e.pos)
+    view.nearest_by_route(view.worker_kind(), from, |e| {
+        e.kind == SpatialKind::Node && e.pos.distance(from) > HOME_RADIUS && clear(e.pos) && {
+            let def = view.data.node(NodeTypeId(e.type_index));
+            def.resource_id == r && def.requires_building_id.is_none()
+        }
+    })
+    .map(|e| e.pos)
 }
 
 /// The remote clusters of `r` nearest `from` (see [`find_remote`]): more

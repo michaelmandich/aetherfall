@@ -83,6 +83,21 @@
 //!   for it before cheaper units, and builds its workshop first. Later
 //!   waves turn on the realm razed lately before a fresh one.
 //!
+//! # Big maps
+//!
+//! What the terrain lets units reach comes from af_movement's
+//! `NavRegions` (absent in flat-world tests, where everything is reachable
+//! by the straight line): remote resources, vents, building spots and the
+//! workers sent to them are taken in the workers' region, nearest by the
+//! way round; attack targets in the army's (by the class most of the army
+//! is: siege on wheels crosses rivers at fords only), and an attack's
+//! progress is the route distance left, so a detour round by a ford is no
+//! stall. Army units no wheeled or tracked route leads from home to the
+//! contested middle are left out of the mix. The army's front faces along
+//! the way from home toward the main meteor site (af_map's `MapFeatures`,
+//! else `MapInfo`'s crater), and the military radii (defence, home, recall)
+//! grow with the map beyond [`TUNED_MAP_SIDE`].
+//!
 //! Everything is driven by content: the faction's worker, `ai` profile,
 //! tags, weapon bonuses and the rules' menus; no unit or building id is
 //! hard-coded. Memory between thinks (pending placements, assigned workers,
@@ -111,6 +126,8 @@ mod view;
 mod tests;
 
 use af_core::ext::economy::{RevealedPlayers, keeps_player_alive};
+use af_core::ext::map::MapFeatures;
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -141,7 +158,7 @@ pub use progress::{
     AgeUpStep, age_up_step, first_production_building, is_tower, max_production, missing_trainer, next_production_building,
     production_targets, tower_kind, tower_target, wall_kind,
 };
-pub use view::{AiView, ArmyInfo, BuildingInfo, FieldInfo, KnownBuilding, Snapshot, WorkerInfo, WorkerTask, collect_snapshot};
+pub use view::{AiView, ArmyInfo, BuildingInfo, FieldInfo, KnownBuilding, Snapshot, TUNED_MAP_SIDE, WorkerInfo, WorkerTask, collect_snapshot};
 
 /// Ticks between two thinks of one AI (0.5 s at 30 Hz).
 pub const THINK_INTERVAL_TICKS: u64 = 15;
@@ -208,6 +225,7 @@ fn think(
     map: Option<Res<MapInfo>>,
     clock: Res<SimClock>,
     (fog, outcome, revealed): (Res<FogOfWar>, Res<GameOutcome>, Option<Res<RevealedPlayers>>),
+    (regions, features): (Option<Res<NavRegions>>, Option<Res<MapFeatures>>),
     mut inbox: ResMut<CommandInbox>,
     mut brains: ResMut<AiBrains>,
     units: view::UnitQuery,
@@ -232,7 +250,8 @@ fn think(
         update_intel(mem, p, &players, &fog, data, &units, clock.elapsed, &mut seen);
         update_remnants(mem, p, &players, revealed, &units);
         let Some(view) = AiView::new(data, &players, p.id, &nav.0, &spatial, map.as_deref(), clock.elapsed, &fog, &snap) else { continue };
-        think::run(&view.with_revealed(revealed), mem, &mut out);
+        let view = view.with_revealed(revealed).with_regions(regions.as_deref()).with_features(features.as_deref());
+        think::run(&view, mem, &mut out);
         inbox.pending.append(&mut out);
     }
 }

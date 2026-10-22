@@ -699,7 +699,7 @@ impl RegionMap {
         }
         let mut expansions = 0;
         let mut points = vec![from];
-        if s != t {
+        if s != t && !self.line_open(from, to) {
             points.extend(self.astar(s, t, from, to, &mut expansions)?);
         }
         points.push(to);

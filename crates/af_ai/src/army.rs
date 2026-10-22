@@ -598,6 +598,9 @@ const SEARCH_SIGHT: f32 = 6.0;
 const EXPLORED_PENALTY: f32 = 80.0;
 /// How far from a grid spot its walkable stand-in may be (metres).
 const SEARCH_SNAP: f32 = 8.0;
+/// A target counts as in the army's reach when its ground comes this close
+/// to it (metres): close enough to strike a building's walls or shoot.
+const TARGET_REACH: f32 = 12.0;
 
 /// Where to send a new wave from `from`: see [`choose_target_for`].
 pub fn choose_target(view: &AiView, mem: &AiMemory, from: Vec2) -> Option<Objective> {
@@ -616,30 +619,49 @@ pub fn choose_target(view: &AiView, mem: &AiMemory, from: Vec2) -> Option<Object
 /// (finish it off), and pushed away by the latest waves in a row aimed at
 /// them (so waves spread over the neighbours, a realm being finished off
 /// aside) and by having to be searched for.
-/// Goals the army recently could not reach are skipped.
+/// Goals the army recently could not reach are skipped, and so are goals
+/// the terrain keeps from it; distances are the army's way round (the way
+/// of the unit most of the army is, see `AiView::lead_unit`: a river
+/// between is crossed at a ford, not swum).
 pub fn choose_target_for(view: &AiView, mem: &AiMemory, from: Vec2, current: Option<PlayerId>) -> Option<Objective> {
     let me = view.me.id;
+    let lead = view.lead_unit();
+    let reach = view.reach_from(lead, from);
+    let field = view.route_field(lead, from);
+    let way = |p: Vec2| -> Option<f32> {
+        if !reach.reaches(p, TARGET_REACH) {
+            return None;
+        }
+        Some(field.as_ref().and_then(|f| f.get(p, TARGET_REACH)).unwrap_or_else(|| p.distance(from)))
+    };
     let mut best: Option<(f32, Objective)> = None;
     for p in view.players.iter() {
         if p.defeated || !view.players.hostile(me, p.id) {
             continue;
         }
         let production_pull = if current == Some(p.id) { PRESS_PRODUCTION_PULL } else { PRODUCTION_PULL };
-        let reach = |k: &KnownBuilding| {
+        let pulled = |k: &KnownBuilding| -> Option<f32> {
             let pull = if is_production_building(view.data, p.faction, k.kind) { production_pull } else { 1.0 };
-            k.pos.distance(from) * pull
+            way(k.pos).map(|d| d * pull)
         };
-        let known =
-            mem.known.iter().filter(|k| k.owner == p.id && !mem.is_unreachable(k.pos)).min_by(|a, b| reach(a).total_cmp(&reach(b)));
+        let known = mem
+            .known
+            .iter()
+            .filter(|k| k.owner == p.id && !mem.is_unreachable(k.pos))
+            .filter_map(|k| pulled(k).map(|d| (d, k)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, k)| k);
         let remnant = mem
             .remnants
             .iter()
             .filter(|r| r.0 == p.id && !mem.is_unreachable(r.2) && !mem.lost_prey.iter().any(|l| l.0 == r.1))
-            .min_by(|a, b| a.2.distance_squared(from).total_cmp(&b.2.distance_squared(from)).then(a.1.cmp(&b.1)));
+            .filter_map(|r| way(r.2).map(|d| (d, r)))
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.1.cmp(&b.1.1)))
+            .map(|(_, r)| r);
         let candidate = match (known, remnant) {
             (Some(k), _) => Objective { player: p.id, aim: Aim::Building(k.entity), pos: k.pos },
             (None, Some(&(_, unit, pos))) => Objective { player: p.id, aim: Aim::Remnant(unit), pos },
-            (None, None) if !mem.visited.contains(&p.id) && !mem.is_unreachable(p.start_pos) => {
+            (None, None) if !mem.visited.contains(&p.id) && !mem.is_unreachable(p.start_pos) && way(p.start_pos).is_some() => {
                 Objective { player: p.id, aim: Aim::Start, pos: p.start_pos }
             }
             (None, None) => match search_spot(view, mem, p, from) {
@@ -647,7 +669,7 @@ pub fn choose_target_for(view: &AiView, mem: &AiMemory, from: Vec2, current: Opt
                 None => continue,
             },
         };
-        let mut d = candidate.pos.distance(from);
+        let Some(mut d) = way(candidate.pos) else { continue };
         if candidate.aim == Aim::Search {
             d += SEARCH_DETOUR;
         }
@@ -672,8 +694,9 @@ pub fn choose_target_for(view: &AiView, mem: &AiMemory, from: Vec2, current: Opt
 /// Where to look for `target`, none of whose buildings is known and whose
 /// start position was found empty: the best spot of a [`SEARCH_STEP`] grid
 /// over the map that the team does not see now, was not searched lately
-/// (see `AiMemory::searched`) and can be walked to, preferring spots near
-/// the target's start, then spots never explored, then spots near `from`.
+/// (see `AiMemory::searched`) and the army can walk to (by the way of the
+/// unit most of it is, see `AiView::lead_unit`), preferring spots near the
+/// target's start, then spots never explored, then spots near `from`.
 /// `None` when nothing is left to search (or the fog is off: then nothing
 /// can hide).
 pub fn search_spot(view: &AiView, mem: &AiMemory, target: &PlayerState, from: Vec2) -> Option<Vec2> {
@@ -697,9 +720,11 @@ pub fn search_spot(view: &AiView, mem: &AiMemory, target: &PlayerState, from: Ve
     spots.sort_by(|a, b| a.0.total_cmp(&b.0));
     // The nav lookup is the costly part: only until a walkable spot turns up.
     // Goals are remembered where they were walked to, so check that point too.
-    let mask = view.ground_mask();
+    let lead = view.lead_unit();
+    let (mobility, radius) = view.unit_class(lead);
+    let reach = view.reach_from(lead, from);
     spots
         .into_iter()
-        .filter_map(|(_, spot)| view.nav.nearest_open(spot, mask, 1.0, team, SEARCH_SNAP))
-        .find(|p| !mem.is_unreachable(*p) && !mem.is_searched(*p))
+        .filter_map(|(_, spot)| view.nav.nearest_open(spot, mobility.0, radius.max(1.0), team, SEARCH_SNAP))
+        .find(|p| !mem.is_unreachable(*p) && !mem.is_searched(*p) && reach.reaches(*p, SEARCH_SNAP))
 }
