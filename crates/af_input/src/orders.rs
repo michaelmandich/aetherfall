@@ -40,7 +40,7 @@ impl Issuer<'_, '_> {
 pub(crate) struct OwnSelection<'w, 's> {
     local: Res<'w, LocalPlayer>,
     data: Res<'w, Data>,
-    units: Query<'w, 's, (Entity, &'static Owner, &'static Unit), (With<Selected>, Without<Dead>)>,
+    units: Query<'w, 's, (Entity, &'static Owner, &'static Unit, Option<&'static Gatherer>), (With<Selected>, Without<Dead>)>,
     buildings: Query<'w, 's, (Entity, &'static Owner), (With<Selected>, With<Building>, Without<Dead>)>,
 }
 
@@ -52,7 +52,7 @@ impl OwnSelection<'_, '_> {
 
     fn units_where(&self, keep: impl Fn(&Unit) -> bool) -> Vec<Entity> {
         let Some(me) = self.local.0 else { return Vec::new() };
-        let mut out: Vec<Entity> = self.units.iter().filter(|(_, o, u)| o.0 == me && keep(u)).map(|(e, ..)| e).collect();
+        let mut out: Vec<Entity> = self.units.iter().filter(|(_, o, u, _)| o.0 == me && keep(u)).map(|(e, ..)| e).collect();
         out.sort();
         out
     }
@@ -87,7 +87,7 @@ impl OwnSelection<'_, '_> {
     fn crew(&self) -> Crew {
         let mut crew = Crew::default();
         let Some(me) = self.local.0 else { return crew };
-        for (_, owner, unit) in &self.units {
+        for (_, owner, unit, gatherer) in &self.units {
             if owner.0 != me {
                 continue;
             }
@@ -96,6 +96,9 @@ impl OwnSelection<'_, '_> {
                 crew.gathers |= g.capacity > 0.0;
                 crew.builds |= g.builds;
                 crew.repairs |= g.repair > 0.0;
+            }
+            if let Some(r) = gatherer.filter(|g| g.amount > 0.0).and_then(|g| g.carrying) {
+                crew.cargo |= 1 << r.0;
             }
         }
         crew
@@ -110,6 +113,8 @@ struct Crew {
     gathers: bool,
     builds: bool,
     repairs: bool,
+    /// The resources selected workers carry, as a `DropSite` mask.
+    cargo: u16,
 }
 
 /// Whatever a right-click points at.
@@ -121,9 +126,10 @@ pub(crate) struct Pointee {
     stats: Option<&'static Stats>,
     unit: Has<Unit>,
     building: Has<Building>,
-    node: Has<ResourceNode>,
+    node: Option<&'static ResourceNode>,
     field: Has<ResourceField>,
     foundation: Has<UnderConstruction>,
+    drop_site: Option<&'static DropSite>,
 }
 
 /// What a right-clicked entity is, from the local player's side.
@@ -142,12 +148,16 @@ struct Pointed {
     unit: bool,
     building: bool,
     node: bool,
+    /// A node only a building placed on it can gather.
+    claim: bool,
     field: bool,
     foundation: bool,
+    /// The resources it takes in as a drop site (a `DropSite` mask).
+    drop_mask: u16,
 }
 
 impl Pointed {
-    fn of(t: &PointeeItem, me: PlayerId, players: &Players) -> Pointed {
+    fn of(t: &PointeeItem, me: PlayerId, players: &Players, data: &GameData) -> Pointed {
         let owner = t.owner.map(|o| o.0);
         Pointed {
             hostile: owner.is_some_and(|o| players.hostile(me, o)),
@@ -158,9 +168,11 @@ impl Pointed {
             mechanical: t.stats.is_some_and(|s| s.tags.contains(Tag::Mechanical)),
             unit: t.unit,
             building: t.building,
-            node: t.node,
+            node: t.node.is_some(),
+            claim: t.node.is_some_and(|n| data.node(n.kind).requires_building_id.is_some()),
             field: t.field,
             foundation: t.foundation,
+            drop_mask: t.drop_site.map_or(0, |d| d.mask),
         }
     }
 }
@@ -168,10 +180,11 @@ impl Pointed {
 /// The marker for a right-click: what the order will most likely do, and
 /// whether it hugs the entity pointed at. The sim resolves `Smart` per
 /// unit (af_behavior's intake); this mirrors it for the selection as a
-/// whole: attack a foe, gather a node or an own field, build an allied
-/// foundation, repair an own damaged building or machine, follow an allied
-/// unit, else move to the point. A selection of buildings only sets its
-/// rally there.
+/// whole: attack a foe, gather a node (not one only a building can claim)
+/// or an own field, build an allied foundation, repair an own damaged
+/// building or machine, bring cargo home to an own drop site that takes
+/// it (marked as gathering), follow an allied unit, else move to the
+/// point. A selection of buildings only sets its rally there.
 fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
     if !crew.units {
         return (OrderMark::Rally, pointed.is_some());
@@ -182,7 +195,7 @@ fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
         return hug(OrderMark::Attack);
     }
     if t.node {
-        return if crew.gathers { hug(OrderMark::Gather) } else { (OrderMark::Move, false) };
+        return if crew.gathers && !t.claim { hug(OrderMark::Gather) } else { (OrderMark::Move, false) };
     }
     if t.building && t.allied {
         return if t.foundation {
@@ -191,6 +204,8 @@ fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
             hug(OrderMark::Gather)
         } else if t.own && t.damaged && crew.repairs {
             hug(OrderMark::Repair)
+        } else if t.own && crew.cargo & t.drop_mask != 0 {
+            hug(OrderMark::Gather)
         } else {
             (OrderMark::Move, false)
         };
@@ -232,7 +247,7 @@ pub(crate) fn smart_command(
     let Some(point) = cursor.ground.or(target_info.as_ref().map(|t| t.pos.0)) else { return };
     let queued = shift_held(&keys);
     issuer.send(PlayerCommand::new(me, entities, CommandKind::Smart { point, target }).queued(queued));
-    let (kind, hug) = smart_mark(own.crew(), target_info.map(|t| Pointed::of(&t, me, &players)));
+    let (kind, hug) = smart_mark(own.crew(), target_info.map(|t| Pointed::of(&t, me, &players, &own.data)));
     issuer.mark(point, ClickMark::new(kind, target.filter(|_| hug), queued));
 }
 
@@ -425,17 +440,24 @@ mod tests {
 
     #[test]
     fn smart_marks_mirror_how_the_sim_resolves_a_right_click() {
-        let workers = Crew { units: true, gathers: true, builds: true, repairs: true };
+        let workers = Crew { units: true, gathers: true, builds: true, repairs: true, cargo: 0 };
         let soldiers = Crew { units: true, ..Crew::default() };
         let halls = Crew::default();
         let own = Pointed { own: true, allied: true, mortal: true, ..Pointed::default() };
         let foe = Pointed { hostile: true, mortal: true, unit: true, ..Pointed::default() };
         let node = Pointed { node: true, ..Pointed::default() };
+        let claimed_node = Pointed { claim: true, ..node };
         let foundation = Pointed { building: true, foundation: true, ..own };
         let allied_foundation = Pointed { own: false, ..foundation };
         let field = Pointed { building: true, field: true, ..own };
         let damaged_hall = Pointed { building: true, damaged: true, ..own };
         let hall = Pointed { building: true, ..own };
+        // A town centre taking food and wood; a damaged one.
+        let drop_site = Pointed { drop_mask: 0b11, ..hall };
+        let damaged_drop_site = Pointed { damaged: true, ..drop_site };
+        let allied_drop_site = Pointed { own: false, ..drop_site };
+        let carrying = Crew { cargo: 0b10, ..workers };
+        let carrying_stone = Crew { cargo: 0b100, ..workers };
         let machine = Pointed { unit: true, mechanical: true, damaged: true, ..own };
         let friend = Pointed { unit: true, ..own };
         let cases = [
@@ -444,6 +466,7 @@ mod tests {
             (soldiers, Some(foe), (OrderMark::Attack, true)),
             (workers, Some(node), (OrderMark::Gather, true)),
             (soldiers, Some(node), (OrderMark::Move, false)),
+            (workers, Some(claimed_node), (OrderMark::Move, false)),
             (workers, Some(foundation), (OrderMark::Build, true)),
             (workers, Some(allied_foundation), (OrderMark::Build, true)),
             (soldiers, Some(foundation), (OrderMark::Move, false)),
@@ -451,6 +474,11 @@ mod tests {
             (workers, Some(damaged_hall), (OrderMark::Repair, true)),
             (soldiers, Some(damaged_hall), (OrderMark::Move, false)),
             (workers, Some(hall), (OrderMark::Move, false)),
+            (carrying, Some(drop_site), (OrderMark::Gather, true)),
+            (workers, Some(drop_site), (OrderMark::Move, false)),
+            (carrying_stone, Some(drop_site), (OrderMark::Move, false)),
+            (carrying, Some(damaged_drop_site), (OrderMark::Repair, true)),
+            (carrying, Some(allied_drop_site), (OrderMark::Move, false)),
             (workers, Some(machine), (OrderMark::Repair, true)),
             (soldiers, Some(machine), (OrderMark::Move, true)),
             (soldiers, Some(friend), (OrderMark::Move, true)),

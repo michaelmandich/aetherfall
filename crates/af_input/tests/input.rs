@@ -659,6 +659,12 @@ fn right_click_markers_show_the_order_it_becomes() {
         let mark = right_click(&mut m, at, on);
         assert_eq!((mark.kind, mark.target), (kind, on.filter(|_| hugs)), "a worker on {on:?}");
     }
+    // With cargo the town centre takes, the worker brings it home there.
+    let takes = m.app.world().get::<DropSite>(hall).expect("the town centre is a drop site").mask;
+    let mut cargo = m.app.world_mut().get_mut::<Gatherer>(worker).expect("a worker gathers");
+    (cargo.carrying, cargo.amount) = (Some(ResourceId(takes.trailing_zeros() as u8)), 5.0);
+    let mark = right_click(&mut m, Vec2::new(100.0, 100.0), Some(hall));
+    assert_eq!((mark.kind, mark.target), (OrderMark::Gather, Some(hall)), "returning cargo");
     // A soldier cannot gather or build: it walks there.
     m.tap(KeyCode::Escape);
     m.select(&[soldier]);
