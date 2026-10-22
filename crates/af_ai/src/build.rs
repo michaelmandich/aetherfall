@@ -60,10 +60,7 @@ pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Ve
             if avoid.iter().any(|(p, rad)| p.distance_squared(pos) < rad * rad) {
                 continue;
             }
-            if !reach.reaches(pos, GOAL_SEARCH_RADIUS) {
-                continue;
-            }
-            if let Some(p) = try_spot(view, q, pos, extra, &movers) {
+            if let Some(p) = try_spot(view, q, pos, extra, &movers, &reach) {
                 return Some(p);
             }
         }
@@ -72,8 +69,12 @@ pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Ve
     None
 }
 
-fn try_spot(view: &AiView, q: &SpotQuery, pos: Vec2, extra: &[Obb], movers: &[Mover]) -> Option<Placement> {
+fn try_spot(view: &AiView, q: &SpotQuery, pos: Vec2, extra: &[Obb], movers: &[Mover], reach: &ReachFrom) -> Option<Placement> {
     let p = check_placement(view.data, view.nav, view.spatial, view.me, q.kind, pos, 0.0, false, extra).ok()?;
+    // Placeable ground is open ground: the reach test is a lookup there.
+    if !reach.reaches(p.pos, GOAL_SEARCH_RADIUS) {
+        return None;
+    }
     let obb = Obb::from_size(p.pos, view.data.building(q.kind).size, p.facing);
     (clear_around(view, &obb, q.gap, p.node, extra) && !seals_pocket(view, movers, &[obb], extra)).then_some(p)
 }

@@ -1,6 +1,8 @@
 //! The military half of a think: defence, training, military research,
 //! rally points, and the gather / attack / reinforce / retarget cycle.
 
+use std::sync::Arc;
+
 use af_core::ext::fog::team_sees_box;
 use af_core::prelude::*;
 use bevy::prelude::*;
@@ -576,10 +578,15 @@ impl Think<'_, '_> {
 
     /// The route distance left to `goal` for the attack group: the least
     /// over its units, by the way of the unit most of the army is (one
-    /// search from the goal). Infinite when none of them can get there;
-    /// `None` without regions (then the straight line counts).
-    fn way_left(&self, group: &[ArmyInfo], goal: Vec2) -> Option<f32> {
-        let field = self.view.route_field(self.view.lead_unit(), goal)?;
+    /// search from the goal, kept in `AiMemory::goal_field` while the goal
+    /// stays). Infinite when none of them can get there; `None` without
+    /// regions (then the straight line counts).
+    fn way_left(&mut self, group: &[ArmyInfo], goal: Vec2) -> Option<f32> {
+        let stamp = self.view.regions.map_or(0, |r| r.stamp());
+        if !self.mem.goal_field.as_ref().is_some_and(|(g, s, _)| *g == goal && *s == stamp) {
+            self.mem.goal_field = self.view.route_field(self.view.lead_unit(), goal).map(|f| (goal, stamp, Arc::new(f)));
+        }
+        let field = &self.mem.goal_field.as_ref()?.2;
         Some(group.iter().filter_map(|a| field.get(a.pos, ARRIVE_RADIUS)).fold(f32::INFINITY, f32::min))
     }
 

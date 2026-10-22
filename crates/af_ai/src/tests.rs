@@ -3366,10 +3366,10 @@ fn remote_resources_across_the_river_are_passed_over() {
     let wood = m.data.resource_id("wood").expect("wood");
     let home = m.start(0);
     let snap = m.snapshot(0);
-    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[]), Some(across), "the nearest without regions");
+    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[], None), Some(across), "the nearest without regions");
     m.river(125..131, None);
     let snap = m.snapshot(0);
-    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[]), Some(this_side));
+    assert_eq!(find_remote(&m.view(0, &snap), home, wood, &[], None), Some(this_side));
 }
 
 /// A building spot sought from the bank never lands across the water.

@@ -203,7 +203,8 @@ impl<'m, 'v> Think<'m, 'v> {
             if cached.is_some() && !mined_out {
                 continue;
             }
-            let found = search_remote(&view, plan.home, r);
+            let field = mem.home_field(&view, plan.home);
+            let found = search_remote(&view, plan.home, r, field.as_deref());
             mem.remote[r.index()] = Some(RemoteSearch { clusters: found, at: now });
             for pos in found.iter().flatten() {
                 sources.add_remote(&view, r, *pos, |e| mem.is_bad_target(e));
@@ -1097,8 +1098,9 @@ impl<'m, 'v> Think<'m, 'v> {
             }
             let mut avoid: Vec<Vec2> = self.mem.bad_spots.iter().filter(|s| s.0 == kind).map(|s| s.1).collect();
             let movers = ground_movers(&self.view);
+            let field = self.mem.home_field(&self.view, self.plan.home);
             for _ in 0..MAX_VENT_TRIES {
-                let Some(vent) = nearest_free_node(&self.view, node, self.plan.home, &avoid) else {
+                let Some(vent) = nearest_free_node(&self.view, node, self.plan.home, &avoid, field.as_deref()) else {
                     self.mem.no_spot.push((kind, now + NO_SPOT_RETRY));
                     break;
                 };

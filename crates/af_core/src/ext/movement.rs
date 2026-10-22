@@ -33,14 +33,21 @@ use bevy::prelude::*;
 #[derive(Resource)]
 pub struct NavRegions {
     terrain: Arc<TerrainSnapshot>,
-    /// Region maps built so far, one per mover class.
-    maps: Mutex<Vec<Arc<RegionMap>>>,
+    maps: Mutex<Maps>,
+}
+
+/// The region maps built so far, one per mover class, and which map each
+/// (mobility, clearance) asked for so far uses.
+#[derive(Default)]
+struct Maps {
+    built: Vec<Arc<RegionMap>>,
+    by_mover: Vec<(u16, i32, usize)>,
 }
 
 impl NavRegions {
     /// For the terrain of `nav` as it stands.
     pub fn new(nav: &NavGrid) -> NavRegions {
-        NavRegions { terrain: Arc::new(nav.terrain_snapshot()), maps: Mutex::new(Vec::new()) }
+        NavRegions { terrain: Arc::new(nav.terrain_snapshot()), maps: Mutex::new(Maps::default()) }
     }
 
     /// The terrain stamp (`NavGrid::terrain_stamp`) it was made for.
@@ -55,14 +62,21 @@ impl NavRegions {
         if mobility.is_flying() {
             return None;
         }
-        let class = self.terrain.class(mobility.0, radius);
+        let k = self.terrain.clearance_cells(radius);
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(m) = maps.iter().find(|m| m.class() == class) {
-            return Some(m.clone());
+        if let Some(&(.., i)) = maps.by_mover.iter().find(|m| m.0 == mobility.0 && m.1 == k) {
+            return Some(maps.built[i].clone());
         }
-        let built = Arc::new(RegionMap::build(&self.terrain, mobility.0, radius));
-        maps.push(built.clone());
-        Some(built)
+        let class = self.terrain.class(mobility.0, radius);
+        let i = match maps.built.iter().position(|m| m.class() == class) {
+            Some(i) => i,
+            None => {
+                maps.built.push(Arc::new(RegionMap::build(&self.terrain, mobility.0, radius)));
+                maps.built.len() - 1
+            }
+        };
+        maps.by_mover.push((mobility.0, k, i));
+        Some(maps.built[i].clone())
     }
 
     /// The region a mover of this class standing at `p` belongs to (that

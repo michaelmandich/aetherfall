@@ -402,23 +402,56 @@ impl<'a> AiView<'a> {
     /// Of the spatial entries passing `wanted`, the one a unit of `kind` at
     /// `from` gets to soonest: without regions the nearest in a straight
     /// line; with them, of the [`ROUTE_CHOICES`] nearest that it can reach,
-    /// the nearest by the way round.
-    pub fn nearest_by_route(&self, kind: UnitTypeId, from: Vec2, wanted: impl Fn(&SpatialEntry) -> bool) -> Option<SpatialEntry> {
+    /// the nearest by the way round, as `field` measures it (route
+    /// distances from `from` for `kind`, see [`AiView::route_field`]: one
+    /// search for every look a decision makes).
+    pub fn nearest_by_route(
+        &self,
+        kind: UnitTypeId,
+        from: Vec2,
+        field: Option<&RouteField>,
+        wanted: impl Fn(&SpatialEntry) -> bool,
+    ) -> Option<SpatialEntry> {
         if self.regions.is_none() {
             return self.spatial.nearest_anywhere(from, wanted);
         }
+        // The few nearest that pass and can be reached, in growing rings as
+        // `SpatialIndex::nearest_anywhere` looks (the tests only run on
+        // entries that would make the list).
         let reach = self.reach_from(kind, from);
-        let mut found: Vec<SpatialEntry> = Vec::new();
-        while found.len() < ROUTE_CHOICES {
-            let next = self
-                .spatial
-                .nearest_anywhere(from, |e| !found.iter().any(|f| f.entity == e.entity) && wanted(e) && reach.reaches(e.pos, GOAL_SEARCH_RADIUS));
-            match next {
-                Some(e) => found.push(e),
-                None => break,
+        let way = |e: &SpatialEntry| field.and_then(|f| f.get(e.pos, GOAL_SEARCH_RADIUS)).unwrap_or_else(|| e.pos.distance(from));
+        let max = self.map_size.max_element() * 3.0;
+        let mut found: Vec<(f32, SpatialEntry)> = Vec::with_capacity(ROUTE_CHOICES);
+        let mut r = 16.0;
+        loop {
+            // Nothing farther in a straight line than the way to the best
+            // found so far can be nearer by the way round.
+            let bound = found.iter().map(|f| way(&f.1)).fold(f32::INFINITY, f32::min);
+            found.clear();
+            self.spatial.for_each_near(from, r, |e| {
+                let d = e.obb.distance_to_point(from);
+                let before = |b: &(f32, SpatialEntry)| b.0 < d || (b.0 == d && b.1.entity < e.entity);
+                // Out of the ring, or no nearer than the last of a full list.
+                if d > r || (found.len() == ROUTE_CHOICES && found.last().is_some_and(&before)) {
+                    return;
+                }
+                if !wanted(e) || !reach.reaches(e.pos, GOAL_SEARCH_RADIUS) {
+                    return;
+                }
+                let at = found.partition_point(before);
+                found.insert(at, (d, *e));
+                found.truncate(ROUTE_CHOICES);
+            });
+            if found.len() >= ROUTE_CHOICES || r > max || r >= bound {
+                break;
             }
+            r *= 2.0;
         }
-        let mut ranked: Vec<(f32, SpatialEntry)> = found.into_iter().map(|e| (reach.route_distance(e.pos).unwrap_or(f32::MAX), e)).collect();
+        let found: Vec<SpatialEntry> = found.into_iter().map(|f| f.1).collect();
+        if found.len() < 2 {
+            return found.first().copied();
+        }
+        let mut ranked: Vec<(f32, SpatialEntry)> = found.into_iter().map(|e| (way(&e), e)).collect();
         ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.entity.cmp(&b.1.entity)));
         ranked.first().map(|r| r.1)
     }

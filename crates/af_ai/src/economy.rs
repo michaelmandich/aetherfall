@@ -1,6 +1,7 @@
 //! Economy decisions: worker count, where workers gather, drop sites,
 //! fields and houses.
 
+use af_core::ext::movement::RouteField;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -261,11 +262,12 @@ impl Sources {
 }
 
 /// The nearest gatherable node of `r` beyond [`HOME_RADIUS`] of `from` and
-/// outside the clusters around `known`: nearest by the workers' way round,
-/// among those they can get to (see `AiView::nearest_by_route`).
-pub fn find_remote(view: &AiView, from: Vec2, r: ResourceId, known: &[Vec2]) -> Option<Vec2> {
+/// outside the clusters around `known`, among those the workers can get to:
+/// nearest by their way round as `field` measures it (route distances from
+/// `from`, see `AiView::nearest_by_route`), else in a straight line.
+pub fn find_remote(view: &AiView, from: Vec2, r: ResourceId, known: &[Vec2], field: Option<&RouteField>) -> Option<Vec2> {
     let clear = |p: Vec2| known.iter().all(|k| k.distance(p) > REMOTE_CLUSTER_RADIUS + CLUSTER_RADIUS);
-    view.nearest_by_route(view.worker_kind(), from, |e| {
+    view.nearest_by_route(view.worker_kind(), from, field, |e| {
         e.kind == SpatialKind::Node && e.pos.distance(from) > HOME_RADIUS && clear(e.pos) && {
             let def = view.data.node(NodeTypeId(e.type_index));
             def.resource_id == r && def.requires_building_id.is_none()
@@ -277,7 +279,7 @@ pub fn find_remote(view: &AiView, from: Vec2, r: ResourceId, known: &[Vec2]) -> 
 /// The remote clusters of `r` nearest `from` (see [`find_remote`]): more
 /// of them, up to [`MAX_REMOTE_CLUSTERS`], until they hold
 /// [`REMOTE_NODES_WANTED`] nodes between them.
-pub fn search_remote(view: &AiView, from: Vec2, r: ResourceId) -> [Option<Vec2>; MAX_REMOTE_CLUSTERS] {
+pub fn search_remote(view: &AiView, from: Vec2, r: ResourceId, field: Option<&RouteField>) -> [Option<Vec2>; MAX_REMOTE_CLUSTERS] {
     let mut found = [None; MAX_REMOTE_CLUSTERS];
     let mut known = Vec::with_capacity(MAX_REMOTE_CLUSTERS);
     let mut nodes = 0;
@@ -285,7 +287,7 @@ pub fn search_remote(view: &AiView, from: Vec2, r: ResourceId) -> [Option<Vec2>;
         if nodes >= REMOTE_NODES_WANTED {
             break;
         }
-        let Some(pos) = find_remote(view, from, r, &known) else { break };
+        let Some(pos) = find_remote(view, from, r, &known, field) else { break };
         view.spatial.for_each_near(pos, REMOTE_CLUSTER_RADIUS, |e| {
             let of_r = e.kind == SpatialKind::Node && view.data.node(NodeTypeId(e.type_index)).resource_id == r;
             if of_r && e.pos.distance(pos) <= REMOTE_CLUSTER_RADIUS {
