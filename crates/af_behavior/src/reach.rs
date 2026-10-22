@@ -17,7 +17,7 @@ use af_core::prelude::af_geom::{RegionId, RegionMap, GOAL_SEARCH_RADIUS, START_S
 use af_core::prelude::*;
 use bevy::prelude::*;
 
-use crate::tuning::{CHASE_DETOUR, CHASE_DETOUR_SLACK};
+use crate::tuning::{CHASE_DETOUR, CHASE_DETOUR_SLACK, CHASE_FRACTION};
 
 /// A unit's place in the regions of its mover class.
 #[derive(Clone)]
@@ -25,6 +25,8 @@ pub(crate) struct Reach {
     map: Option<Arc<RegionMap>>,
     region: RegionId,
     pos: Vec2,
+    /// `Mobile::radius`.
+    radius: f32,
 }
 
 impl Reach {
@@ -32,7 +34,7 @@ impl Reach {
     pub(crate) fn of(regions: Option<&NavRegions>, pos: Vec2, mobile: &Mobile) -> Reach {
         let map = if mobile.flying { None } else { regions.and_then(|r| r.map(mobile.mobility, mobile.radius)) };
         let region = map.as_ref().map_or(0, |m| m.region_near(pos, START_SEARCH_RADIUS));
-        Reach { map, region, pos }
+        Reach { map, region, pos, radius: mobile.radius }
     }
 
     /// Terrain stamp of the regions it reads (0 without any): what
@@ -71,14 +73,21 @@ impl Reach {
         map.distance(a, b).map(|d| d + self.pos.distance(a) + p.distance(b))
     }
 
-    /// Is the way to `p`, in the unit's region, a detour a chase should not
-    /// take: more than [`CHASE_DETOUR`] times the straight distance (plus
-    /// [`CHASE_DETOUR_SLACK`])? (Across water `within` says whether a
-    /// weapon reaches it from the near bank.) A clear line over the terrain
-    /// costs a walk along it; only a blocked one costs a coarse search.
-    pub(crate) fn detour(&self, p: Vec2) -> bool {
+    /// Is the way to the box `obb`, in the unit's region, a detour a chase
+    /// should not take: more than [`CHASE_DETOUR`] times the straight
+    /// distance (plus [`CHASE_DETOUR_SLACK`])? Not when the straight line
+    /// leads over ground the unit may use to where the chase ends: the
+    /// first point [`CHASE_FRACTION`] of the weapon's `reach` plus the
+    /// unit's radius from the box (af_movement ends a chaser's walk at the
+    /// first cell that near). However long the way round to the box itself,
+    /// an archer shoots across a forded river from its bank. (Across water
+    /// with no crossing `within` says whether a weapon reaches it from the
+    /// near bank.) A clear line costs a walk along it; only a blocked one
+    /// costs a coarse search.
+    pub(crate) fn detour(&self, obb: &Obb, reach: f32) -> bool {
         let Some(map) = self.knows() else { return false };
-        if map.region_at(p) != self.region || map.line_open(self.pos, p) {
+        let p = obb.center;
+        if map.region_at(p) != self.region || map.line_open(self.pos, arrival(obb, self.pos, reach * CHASE_FRACTION + self.radius)) {
             return false;
         }
         let straight = self.pos.distance(p);
@@ -93,4 +102,24 @@ impl Reach {
             _ => p,
         }
     }
+}
+
+/// The first point on the straight way from `from` to the centre of `obb`
+/// within `close` of the box (`from` itself when it is).
+fn arrival(obb: &Obb, from: Vec2, close: f32) -> Vec2 {
+    if obb.distance_to_point(from) <= close {
+        return from;
+    }
+    // The distance to a box only shrinks on the way to its centre: halve
+    // the stretch where it falls to `close` down to a fraction of a mm.
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..16 {
+        let mid = (lo + hi) * 0.5;
+        if obb.distance_to_point(from.lerp(obb.center, mid)) <= close {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    from.lerp(obb.center, hi)
 }

@@ -138,3 +138,20 @@ fn soldiers_engage_across_the_water_only_what_their_weapons_reach() {
     assert!(sim.has::<Idle>(spear));
     assert_eq!(sim.get::<AttackTarget>(archer).map(|a| a.entity), Some(enemy), "the archer shoots across");
 }
+
+/// With a ford far up the river the way round to the enemy is long either
+/// way, but the archer gets within its bow's reach of it on its own bank:
+/// it shoots across, while the spearman, which would have to go round,
+/// stays.
+#[test]
+fn an_archer_shoots_across_a_forded_river_from_its_bank() {
+    let mut sim = Sim::new(&[("ironhold", 0), ("dune", 1)]);
+    river(&mut sim, Some(112..120));
+    let spear = sim.unit(P0, "spearman", Vec2::new(58.5, 44.0));
+    let archer = sim.unit(P0, "archer", Vec2::new(57.0, 50.0));
+    let enemy = sim.unit(P1, "peasant", Vec2::new(66.5, 47.0));
+    sim.run_secs(1.0);
+    assert!(sim.get::<AttackTarget>(spear).is_none(), "the spearman stays");
+    assert!(sim.has::<Idle>(spear));
+    assert_eq!(sim.get::<AttackTarget>(archer).map(|a| a.entity), Some(enemy), "the archer shoots across");
+}

@@ -7,8 +7,9 @@
 //!
 //! A ground unit only takes on, and keeps chasing, hostiles it can get
 //! within weapon reach of over the terrain (see `reach`): not a camp across
-//! the river that only a long detour by the ford leads to, nor anything on
-//! an island. What its weapons already reach is always fair game.
+//! the river that only a long detour by the ford leads to (unless it can
+//! shoot it from its bank), nor anything on an island. What its weapons
+//! already reach is always fair game.
 
 use af_core::ext::combat::{edge_distance, in_weapon_range, weapon_reach, TargetClass};
 use af_core::ext::movement::NavRegions;
@@ -197,7 +198,7 @@ impl Sight<'_, '_> {
         let team = self.team(me.owner);
         let reach = if in_range { None } else { self.reach(me) };
         let weapon = longest_reach(&self.data, me.stats, me.weapons).unwrap_or(0.0);
-        let mut found: Vec<(f32, Entity, Option<Vec2>)> = Vec::new();
+        let mut found: Vec<(f32, Entity, Option<Obb>)> = Vec::new();
         self.spatial.for_each_near(me.pos, radius, |e| {
             if e.kind == SpatialKind::Node
                 || e.entity == me.entity
@@ -219,10 +220,10 @@ impl Sight<'_, '_> {
             let gap = edge_distance(&me.obb, &e.obb);
             let score = gap + self.penalty(me, e.entity, e.kind == SpatialKind::Building, e.under_construction);
             // Out of weapon reach: the chase's way is checked below.
-            found.push((score, e.entity, (gap > weapon).then_some(e.pos)));
+            found.push((score, e.entity, (gap > weapon).then_some(e.obb)));
         });
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let direct = |chase: Option<Vec2>| chase.zip(reach.as_ref()).is_none_or(|(p, r)| !r.detour(p));
+        let direct = |chase: Option<Obb>| chase.zip(reach.as_ref()).is_none_or(|(obb, r)| !r.detour(&obb, weapon));
         found.into_iter().take(DETOUR_CHECKS).find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
     }
 
