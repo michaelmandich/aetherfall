@@ -1092,32 +1092,68 @@ fn formation(centre: Vec2, facing: f32, count: u32, spacing: f32) -> impl Iterat
     })
 }
 
-/// Spawn one side: `count` units of `kind` for `owner` in a block at
-/// `centre` facing `facing`, on open ground and not overlapping each other.
+/// One side's block of a staged battle: `count` units of `kind` for a
+/// player, and what they need from the ground.
+#[derive(Clone, Copy, Debug)]
+struct Block {
+    kind: UnitTypeId,
+    count: u32,
+    footprint: Footprint,
+    mobility: u16,
+    radius: f32,
+    team: u8,
+    spacing: f32,
+}
+
+impl Block {
+    fn new(data: &GameData, owner: &PlayerState, kind: UnitTypeId, count: u32) -> Block {
+        let footprint = Footprint::from_size(data.unit(kind).size);
+        Block {
+            kind,
+            count,
+            footprint,
+            mobility: data.unit_mobility(kind, owner.faction).0,
+            radius: footprint.half.x.max(0.2),
+            team: owner.team,
+            spacing: footprint.half.max_element() * 2.0 + 0.8,
+        }
+    }
+
+    /// Every slot of the block at `centre` facing `facing` is on open
+    /// ground for it and clear of `blockers`.
+    fn fits(&self, nav: &NavGrid, blockers: &[Obb], centre: Vec2, facing: f32) -> bool {
+        formation(centre, facing, self.count, self.spacing).take(self.count as usize).all(|slot| {
+            let obb = self.footprint.obb(slot, facing);
+            nav.clear_at(slot, self.mobility, self.radius, self.team) && !blockers.iter().any(|b| b.overlaps(&obb))
+        })
+    }
+}
+
+/// Spawn one side's block at `centre` facing `facing`, on open ground, clear
+/// of `blockers` and not overlapping each other. Returns the units and the
+/// middle of the block as spawned.
 #[allow(clippy::too_many_arguments)]
-fn spawn_side(commands: &mut Commands, data: &GameData, nav: &NavGrid, owner: &PlayerState, kind: UnitTypeId, centre: Vec2, facing: f32, count: u32) -> Vec<Entity> {
-    let def = data.unit(kind);
-    let footprint = Footprint::from_size(def.size);
-    let mobility = data.unit_mobility(kind, owner.faction);
-    let radius = footprint.half.x.max(0.2);
-    let spacing = footprint.half.max_element() * 2.0 + 0.8;
+fn spawn_side(commands: &mut Commands, data: &GameData, nav: &NavGrid, blockers: &[Obb], owner: &PlayerState, block: &Block, centre: Vec2, facing: f32) -> (Vec<Entity>, Vec2) {
     let mut placed: Vec<Obb> = Vec::new();
     let mut out = Vec::new();
-    for slot in formation(centre, facing, count, spacing) {
-        if out.len() == count as usize {
+    let mut sum = Vec2::ZERO;
+    for slot in formation(centre, facing, block.count, block.spacing) {
+        if out.len() == block.count as usize {
             break;
         }
-        let Some(open) = nav.nearest_open(slot, mobility.0, radius, owner.team, 12.0) else { continue };
+        let Some(open) = nav.nearest_open(slot, block.mobility, block.radius, block.team, 12.0) else { continue };
         // Keep the exact slot when its own cell is clear (cell centres would stack units).
         let pos = if nav.cell_of(open) == nav.cell_of(slot) { slot } else { open };
-        let obb = footprint.obb(pos, facing);
-        if placed.iter().any(|o| o.overlaps(&obb)) {
+        let obb = block.footprint.obb(pos, facing);
+        if placed.iter().chain(blockers).any(|o| o.overlaps(&obb)) {
             continue;
         }
         placed.push(obb);
-        out.push(spawn_unit(commands, data, owner, kind, pos, facing));
+        sum += pos;
+        out.push(spawn_unit(commands, data, owner, block.kind, pos, facing));
     }
-    out
+    let middle = if out.is_empty() { centre } else { sum / out.len() as f32 };
+    (out, middle)
 }
 
 /// Longest weapon range of a unit type (0 without weapons).
@@ -1125,22 +1161,74 @@ fn max_range(data: &GameData, kind: UnitTypeId) -> f32 {
     data.unit(kind).weapon_ids.iter().map(|w| data.weapon(*w).range).fold(0.0, f32::max)
 }
 
-/// Stage the battle at the crater once the map is built: player 0's block
-/// west of it, player 1's east, a little more than weapon range apart,
-/// attack-moving into each other.
-fn stage_battle(mut commands: Commands, plan: Res<BattlePlan>, data: Res<Data>, players: Res<Players>, nav: Res<Nav>, map: Res<MapInfo>, mut inbox: ResMut<CommandInbox>) {
+/// How far apart the fronts of a battle of `a` against `b` stand: a little
+/// more than the longer weapon range.
+fn battle_gap(data: &GameData, a: UnitTypeId, b: UnitTypeId) -> f32 {
+    (max_range(data, a).max(max_range(data, b)) + 8.0).clamp(14.0, 40.0)
+}
+
+/// How far from the main meteor site the battle demo looks for open ground.
+const BATTLE_SEARCH: f32 = 160.0;
+/// The rings of that search, and the points on each, are this far apart.
+const BATTLE_SEARCH_STEP: f32 = 2.0;
+
+/// Where to stage a battle near `near`: the nearest point (searched in
+/// rings out to [`BATTLE_SEARCH`]) with room for both blocks, `west` facing
+/// east and `east` facing west, `gap` apart, and open ground for both sides
+/// straight between them (no rock, water or node), so they meet head-on.
+/// A meteor site's middle is not always open (the Starspire's rock, the
+/// Lake site's water round a small island). `None` when nothing near fits.
+fn battle_ground(nav: &NavGrid, blockers: &[Obb], west: &Block, east: &Block, gap: f32, near: Vec2) -> Option<Vec2> {
+    let fits = |centre: Vec2| {
+        let (w, e) = (centre - Vec2::X * gap * 0.5, centre + Vec2::X * gap * 0.5);
+        let (from, along) = (Vec3::new(w.x, 0.5, w.y), Vec3::new(gap, 0.0, 0.0));
+        west.fits(nav, blockers, w, af_geom::yaw_of(Vec2::X))
+            && east.fits(nav, blockers, e, af_geom::yaw_of(Vec2::NEG_X))
+            && [west, east].iter().all(|b| nav.line_clear(w, e, b.mobility, b.radius, b.team))
+            && !blockers.iter().any(|o| o.ray_hit(from, along, 0.0, 1.0).is_some_and(|t| t <= 1.0))
+    };
+    let rings = (BATTLE_SEARCH / BATTLE_SEARCH_STEP) as u32;
+    (0..=rings).find_map(|ring| {
+        let r = ring as f32 * BATTLE_SEARCH_STEP;
+        let points = ((std::f32::consts::TAU * r / BATTLE_SEARCH_STEP).ceil() as u32).max(1);
+        (0..points).map(|i| near + Vec2::from_angle(i as f32 / points as f32 * std::f32::consts::TAU) * r).find(|c| fits(*c))
+    })
+}
+
+/// Stage the battle at the main meteor site once the map is built, on the
+/// open ground nearest its middle ([`battle_ground`]): player 0's block on
+/// the west, player 1's on the east, a little more than weapon range
+/// apart, each attack-moving onto the other block.
+#[allow(clippy::too_many_arguments)]
+fn stage_battle(
+    mut commands: Commands,
+    plan: Res<BattlePlan>,
+    data: Res<Data>,
+    players: Res<Players>,
+    nav: Res<Nav>,
+    map: Res<MapInfo>,
+    obstacles: Query<&Obstacle>,
+    mut inbox: ResMut<CommandInbox>,
+) {
     let (Some(p0), Some(p1)) = (players.try_get(PlayerId(0)), players.try_get(PlayerId(1))) else { return };
     if !players.hostile(p0.id, p1.id) {
         warn!("battle demo: players 0 and 1 are allies; their units will not fight");
     }
-    let centre = if map.crater_radius > 0.0 { map.crater_center } else { map.size * 0.5 };
-    let gap = (max_range(&data, plan.a).max(max_range(&data, plan.b)) + 8.0).clamp(14.0, 40.0);
+    let near = if map.crater_radius > 0.0 { map.crater_center } else { map.size * 0.5 };
+    let gap = battle_gap(&data, plan.a, plan.b);
+    // The start buildings and resource nodes are not in the nav grid yet.
+    let blockers: Vec<Obb> = obstacles.iter().map(|o| o.obb).collect();
+    let (a, b) = (Block::new(&data, p0, plan.a, plan.count), Block::new(&data, p1, plan.b, plan.count));
+    let centre = battle_ground(&nav, &blockers, &a, &b, gap, near).unwrap_or_else(|| {
+        warn!("battle demo: no open ground for both blocks within {BATTLE_SEARCH} m of {near}; staging there anyway");
+        near
+    });
     let (west, east) = (centre - Vec2::X * gap * 0.5, centre + Vec2::X * gap * 0.5);
-    let a = spawn_side(&mut commands, &data, &nav, p0, plan.a, west, af_geom::yaw_of(Vec2::X), plan.count);
-    let b = spawn_side(&mut commands, &data, &nav, p1, plan.b, east, af_geom::yaw_of(Vec2::NEG_X), plan.count);
-    info!("battle demo: {} {} vs {} {} at {centre}", a.len(), data.unit(plan.a).name, b.len(), data.unit(plan.b).name);
-    inbox.push(PlayerCommand::new(p0.id, a, CommandKind::AttackMove(east)));
-    inbox.push(PlayerCommand::new(p1.id, b, CommandKind::AttackMove(west)));
+    let (a_units, a_middle) = spawn_side(&mut commands, &data, &nav, &blockers, p0, &a, west, af_geom::yaw_of(Vec2::X));
+    let (b_units, b_middle) = spawn_side(&mut commands, &data, &nav, &blockers, p1, &b, east, af_geom::yaw_of(Vec2::NEG_X));
+    info!("battle demo: {} {} vs {} {} at {centre}", a_units.len(), data.unit(plan.a).name, b_units.len(), data.unit(plan.b).name);
+    inbox.push(PlayerCommand::new(p0.id, a_units, CommandKind::AttackMove(b_middle)));
+    inbox.push(PlayerCommand::new(p1.id, b_units, CommandKind::AttackMove(a_middle)));
 }
 
 #[cfg(test)]
@@ -1478,7 +1566,10 @@ mod tests {
         let (west, east) = (Vec2::new(50.0, 64.0), Vec2::new(78.0, 64.0));
         let nav = app.world().resource::<Nav>().0.clone();
         let (left, right) = with_commands(&mut app, |c, data, players| {
-            let side = |c: &mut Commands, owner: u8, kind, centre, toward: Vec2| spawn_side(c, data, &nav, players.get(PlayerId(owner)), kind, centre, af_geom::yaw_of(toward), 9);
+            let side = |c: &mut Commands, owner: u8, kind, centre, toward: Vec2| {
+                let owner = players.get(PlayerId(owner));
+                spawn_side(c, data, &nav, &[], owner, &Block::new(data, owner, kind, 9), centre, af_geom::yaw_of(toward)).0
+            };
             (side(c, 0, a, west, Vec2::X), side(c, 1, b, east, Vec2::NEG_X))
         });
         assert_eq!((left.len(), right.len()), (9, 9));
@@ -1494,5 +1585,70 @@ mod tests {
         let side = |owner: u8| boxes.iter().filter(|(_, o, _)| o.0 == owner).map(|(_, _, b)| b.center.x).fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
         assert!(side(0).1 < side(1).0, "player 0 west of player 1");
         assert!(left.iter().chain(&right).all(|e| boxes.iter().any(|(b, ..)| b == e)));
+    }
+
+    /// The main site's middle can be rock (the Starspire: about 9 m round
+    /// on a two-player map, 25 m on the biggest). The battle is staged on
+    /// the open ground beside it: every unit spawns on open ground, the
+    /// blocks face each other across open ground, and each attack-moves
+    /// onto the other block. A node (not in the nav grid yet) where a block
+    /// would stand is stepped round.
+    #[test]
+    fn battles_are_staged_on_open_ground_beside_a_spire() {
+        use bevy::ecs::system::RunSystemOnce;
+        let data = test_data();
+        let mountain = data.terrain_id("mountain").unwrap();
+        for (a, b, rock) in [("spearman", "spearman", 9.0), ("spearman", "archer", 25.0)] {
+            let mut app = sim_app(data.clone());
+            flat_world(&mut app, 160.0, &[("ironhold", 0), ("dune", 1)]);
+            let middle = app.world().resource::<MapInfo>().crater_center;
+            let mut nav = app.world().resource::<Nav>().0.clone();
+            for c in (0..160 * 160).map(|i| IVec2::new(i % 160, i / 160)) {
+                if (c.as_vec2() + 0.5).distance(middle) < rock {
+                    nav.set_terrain(c, mountain.0);
+                }
+            }
+            app.insert_resource(Nav(nav.clone()));
+            let (a, b) = (data.unit_id(a).unwrap(), data.unit_id(b).unwrap());
+            let players = app.world().resource::<Players>();
+            let (block_a, block_b) = (Block::new(&data, players.get(PlayerId(0)), a, 8), Block::new(&data, players.get(PlayerId(1)), b, 8));
+            let gap = battle_gap(&data, a, b);
+            let open = battle_ground(&nav, &[], &block_a, &block_b, gap, middle).expect("open ground beside the rock");
+            assert!(open.distance(middle) > rock, "{rock} m of rock: staged beside it at {open}");
+            let node = Obb::new(open - Vec2::X * gap * 0.5, Vec2::splat(1.5), 0.0);
+            app.world_mut().spawn(Obstacle { obb: node, gate_team: None });
+            app.insert_resource(BattlePlan { a, b, count: 8 });
+            app.world_mut().run_system_once(stage_battle).unwrap();
+
+            let world = app.world_mut();
+            let units: Vec<(PlayerId, Vec2, Obb, Mobility)> =
+                world.query::<(&Owner, &Position, &Facing, &Footprint, &Mobile)>().iter(world).map(|(o, p, f, fp, m)| (o.0, p.0, fp.obb(p.0, f.0), m.mobility)).collect();
+            let side = |p: u8| units.iter().filter(|u| u.0 == PlayerId(p)).collect::<Vec<_>>();
+            let (west, east) = (side(0), side(1));
+            assert_eq!((west.len(), east.len()), (8, 8), "every unit spawns ({rock} m of rock)");
+            for (_, pos, obb, mobility) in &units {
+                assert!(nav.clear_at(*pos, mobility.0, 0.2, 0), "{pos} is on open ground ({rock} m of rock)");
+                assert!(!obb.overlaps(&node), "{pos} is clear of the node");
+            }
+            let east_end = west.iter().map(|u| u.1.x).fold(f32::MIN, f32::max);
+            assert!(east.iter().all(|u| u.1.x > east_end), "player 0 west of player 1");
+            // Each side attack-moves onto the middle of the other block,
+            // with no rock between them.
+            let mean = |s: &[&(PlayerId, Vec2, Obb, Mobility)]| s.iter().map(|u| u.1).sum::<Vec2>() / s.len() as f32;
+            let goals: Vec<(PlayerId, Vec2)> = world
+                .resource::<CommandInbox>()
+                .pending
+                .iter()
+                .map(|c| match c.kind {
+                    CommandKind::AttackMove(p) => (c.player, p),
+                    ref other => panic!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(goals.iter().map(|g| g.0).collect::<Vec<_>>(), [PlayerId(0), PlayerId(1)]);
+            assert!(goals[0].1.distance(mean(&east)) < 1e-3 && goals[1].1.distance(mean(&west)) < 1e-3, "{goals:?}");
+            let (from, to) = (goals[1].1, goals[0].1);
+            let nearest = from + (to - from) * ((middle - from).dot(to - from) / (to - from).length_squared()).clamp(0.0, 1.0);
+            assert!(nearest.distance(middle) > rock - 1.5, "{rock} m of rock: the blocks meet beside it, not across it ({from} to {to})");
+        }
     }
 }

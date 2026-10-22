@@ -154,7 +154,10 @@ pub(crate) fn zoomed(distance: f32, notches: f32, max: f32) -> f32 {
 /// easy to look over without the camera feeling different on the others.
 pub fn max_distance(map: Option<&MapInfo>, features: Option<&MapFeatures>) -> f32 {
     let land = match (features, map) {
-        (Some(f), _) => (f.land_max - f.land_min).max_element(),
+        // The land rectangle is the land square's side across every ocean
+        // edge and longer along one (af_map keeps the whole map square), so
+        // its short side is the land side.
+        (Some(f), _) => (f.land_max - f.land_min).min_element(),
         (None, Some(m)) => m.size.max_element(),
         (None, None) => 0.0,
     };
@@ -331,12 +334,25 @@ mod tests {
 
     /// Map features for a map of `size` with land of side `land`.
     fn features(size: af_core::ext::map::MapSize, land: f32) -> MapFeatures {
-        use af_core::ext::map::{ResolvedMapOptions, SiteKind, WaterLevel};
+        sea_features(size, land, &[])
+    }
+
+    /// Map features for land of side `land` with ocean beyond `edges`, the
+    /// land rectangle laid out as af_map does: the map stays square, so the
+    /// rectangle is `land` wide across each ocean edge and longer along it.
+    fn sea_features(size: af_core::ext::map::MapSize, land: f32, edges: &[af_core::ext::map::MapEdge]) -> MapFeatures {
+        use af_core::ext::map::{MapEdge, ResolvedMapOptions, SiteKind, WaterLevel};
+        let band = if edges.is_empty() { 0.0 } else { (land * 0.17).round() };
+        let has = |e: MapEdge| edges.contains(&e);
+        let pair = |a: MapEdge, b: MapEdge| has(a) as u8 + has(b) as u8;
+        let side = land + band * pair(MapEdge::West, MapEdge::East).max(pair(MapEdge::South, MapEdge::North)) as f32;
+        let edge = |e: MapEdge, at: f32, or: f32| if has(e) { at } else { or };
+        let water = [WaterLevel::Lakes, WaterLevel::Coast, WaterLevel::Seas][edges.len().min(2)];
         MapFeatures {
-            options: ResolvedMapOptions { size, water: WaterLevel::Lakes, rivers: 1, site: SiteKind::Crater },
-            land_min: Vec2::ZERO,
-            land_max: Vec2::splat(land),
-            ocean_edges: Vec::new(),
+            options: ResolvedMapOptions { size, water, rivers: 1, site: SiteKind::Crater },
+            land_min: Vec2::new(edge(MapEdge::West, band, 0.0), edge(MapEdge::South, band, 0.0)),
+            land_max: Vec2::new(edge(MapEdge::East, side - band, side), edge(MapEdge::North, side - band, side)),
+            ocean_edges: edges.to_vec(),
             sites: Vec::new(),
             rivers: Vec::new(),
             mountains: Vec::new(),
@@ -365,6 +381,31 @@ mod tests {
         assert!(max_distance(Some(&map(480.0)), None) > MAX_DISTANCE);
         let coast = MapInfo { size: Vec2::splat(224.0 * 1.17), ..default() };
         assert_eq!(max_distance(Some(&coast), Some(&features(MapSize::Medium, 224.0))), MAX_DISTANCE);
+    }
+
+    /// A sea edge makes the land rectangle longer along it, not the land:
+    /// every sea layout zooms as far as the same land without sea.
+    #[test]
+    fn sea_edges_do_not_count_as_land() {
+        use af_core::ext::map::{MapEdge, MapSize};
+        let (west, east, north) = (MapEdge::West, MapEdge::East, MapEdge::North);
+        // Eight-player Medium, six-player Large, eight-player Huge, two-player Small.
+        for (size, land) in [(MapSize::Medium, 384.0), (MapSize::Large, 456.0), (MapSize::Huge, 616.0), (MapSize::Small, 176.0)] {
+            let dry = max_distance(None, Some(&features(size, land)));
+            for edges in [&[west][..], &[east], &[north], &[west, east], &[west, north], &[north, east]] {
+                let f = sea_features(size, land, edges);
+                assert_eq!((f.land_max - f.land_min).min_element(), land);
+                assert_eq!(max_distance(None, Some(&f)), dry, "{} {land} m, sea at {edges:?}", size.name());
+            }
+        }
+        // The usual limit holds on an eight-player Medium coast (land 384 m
+        // by 449 m), and a six-player Large map with seas on both sides
+        // (456 m by 612 m) stays short of Huge.
+        let coast = sea_features(MapSize::Medium, 384.0, &[west]);
+        assert_eq!((coast.land_max - coast.land_min).max_element(), 449.0);
+        assert_eq!(max_distance(None, Some(&coast)), MAX_DISTANCE);
+        let seas = max_distance(None, Some(&sea_features(MapSize::Large, 456.0, &[west, east])));
+        assert!(seas > MAX_DISTANCE && seas < MAX_DISTANCE_HUGE - 20.0, "{seas}");
     }
 
     #[test]

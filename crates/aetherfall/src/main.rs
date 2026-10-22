@@ -27,9 +27,9 @@
 //!   --rivers N              rivers: 1 | 2 | random (default: one or two)
 //!   --site KIND             meteor site: crater | shattered | lake | scar | spire
 //!                           | random (default)
-//!   --map-size M            land side in metres instead of --map (sea bands
-//!                           are added beyond it; default: by player count
-//!                           and --map)
+//!   --map-size M            land side in metres, 160-1024, instead of --map
+//!                           (sea bands are added beyond it; default: by
+//!                           player count and --map)
 //!   --no-fog / --reveal     fog of war off / map revealed
 //!   --start-age N           start every player in age N (debug)
 //!   --res-mult X            multiply starting resources (debug)
@@ -75,8 +75,8 @@
 //!                           the window centre). Screenshot and --place runs
 //!                           always ignore the real mouse.
 //!   --battle-demo A,B[,N]   once the map is built, N (default 8) units of type A
-//!                           for player 0 and of B for player 1 fight at the
-//!                           crater (reveals the map)
+//!                           for player 0 and of B for player 1 fight on the open
+//!                           ground nearest the main meteor site (reveals the map)
 //!   --autoplay              the AI plays the local player's slot (its HUD shows)
 //!   --pause-at S            pause the game at S seconds (shots still due are
 //!                           then taken, paused, one a frame)
@@ -416,6 +416,23 @@ mod tests {
         let app = headless_cli_app(data, setup, &a);
         assert_eq!(app.world().get_resource::<MapOptions>(), Some(&a.opts.map));
         assert_eq!(app.world().resource::<MatchSetup>().players.len(), 3);
+    }
+
+    /// A run that starts on the menu shows the land side af_map will build
+    /// for --map-size, also when that is not the side asked for.
+    #[test]
+    fn the_menu_shows_the_map_size_the_generator_builds() {
+        let data = af_core::testing::test_data();
+        for metres in ["100", "203.6", "260"] {
+            let a = parse(&["--map-size", metres, "--water", "dry"]).unwrap();
+            let setup = skirmish_setup(&data, &a.opts).unwrap();
+            let built = af_map::generate_with(&data, &setup, &a.opts.map).size;
+            let menu = af_ui::menu::MenuSettings::from_setup(&setup, a.opts.map);
+            assert_eq!(menu.map_metres, built, "--map-size {metres}");
+        }
+        let (min, max) = af_ui::menu::MAP_METRES_RANGE;
+        let help = include_str!("main.rs");
+        assert!(help.contains(&format!("--map-size M            map side in metres, {min}-{max}")), "the --help range is af_map's");
     }
 
     /// Every flag the parser takes is in the --help text.
