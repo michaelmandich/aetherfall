@@ -103,9 +103,13 @@ never receives mail). The access token that comes back is what the game
 sends the server; the server asks Supabase who it belongs to and keeps a
 row per player in `af_players`.
 
-In the Supabase dashboard, under **Authentication > Providers > Email**,
-turn **Confirm email** off (nobody can read mail at that domain). If it is
-on, sign-up answers "the account service wants emails confirmed".
+**Do not change the project's auth settings for the game.** The project
+is shared with another app, and its `on_auth_user_created` trigger creates
+that app's profile rows for every Supabase Auth sign-up, so game accounts
+must not go through Supabase Auth at all. They are moving into their own
+tables with one-time login tickets and a game-only server key (no
+service-role key on the server): see `supabase/next/`. Until then, run the
+server without the Supabase settings (casual rooms only).
 
 The schema is `supabase/migrations/20261022000000_aetherfall_ranked.sql`:
 `af_players` (rating, wins, losses), `af_matches`, `af_match_players`, and
@@ -142,11 +146,11 @@ ranked matches and any number of casual rooms are well within either.
 
 1. Install the build dependencies and Rust on the Pi (64-bit OS):
    ```
-   sudo apt install -y build-essential pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   sudo apt install -y build-essential pkg-config git curl ca-certificates
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
    ```
-   (The server links the same Bevy as the game, hence the desktop
-   libraries; it opens no window.)
+   (The server builds Bevy without its desktop features: no windowing,
+   graphics, audio or input-device libraries.)
 2. Clone the repository on the Pi and run `deploy/install-pi.sh`. It
    builds with the `server` profile (optimised, no LTO, fits 8 GB; expect
    20-40 minutes on a Pi 5, longer on a Pi 4), installs the binary and the
