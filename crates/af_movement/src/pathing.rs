@@ -322,14 +322,15 @@ impl PathQueue {
 
     /// A coarse route planned lately on `map` from within
     /// [`COARSE_SHARE_START`] of `from` to within [`COARSE_SHARE_GOAL`] of
-    /// `to` (the newest such).
+    /// `to` (the newest such), whose start `from` sees and whose end sees
+    /// `to`, in straight lines over open ground: a groupmate across a river
+    /// or a ridge, however near, went another way, and so does one heading
+    /// for a spot across it.
     fn shared_route(&self, map: &RegionMap, from: Vec2, to: Vec2) -> Option<Arc<CoarseRoute>> {
         let (class, stamp) = (map.class(), map.stamp());
-        self.coarse
-            .iter()
-            .rev()
-            .find(|c| c.class == class && c.stamp == stamp && c.from.distance(from) <= COARSE_SHARE_START && c.to.distance(to) <= COARSE_SHARE_GOAL)
-            .map(|c| c.route.clone())
+        let near = |c: &&SharedCoarse| c.class == class && c.stamp == stamp && c.from.distance(from) <= COARSE_SHARE_START && c.to.distance(to) <= COARSE_SHARE_GOAL;
+        let in_sight = |c: &&SharedCoarse| c.route.points.first().is_some_and(|&s| map.line_open(from, s)) && map.line_open(c.route.end(), to);
+        self.coarse.iter().rev().filter(near).find(in_sight).map(|c| c.route.clone())
     }
 
     fn remember_route(&mut self, map: &RegionMap, from: Vec2, to: Vec2, route: Arc<CoarseRoute>) {
@@ -1677,6 +1678,83 @@ mod tests {
         let after = mover.way_left(unit, &path);
         assert!((after - before - 8.28).abs() < 0.01, "{before} -> {after}");
         assert!((mover.progress_best - 103.28).abs() < 0.01, "the mark moved by what the leg added: {}", mover.progress_best);
+    }
+
+    /// Paint mountain along y = 120..128 over a 256 m map, but for a pass
+    /// at x = 220..226.
+    fn ridge(app: &mut App) {
+        paint(app, "mountain", |x, y| (120..128).contains(&y) && !(220..226).contains(&x));
+    }
+
+    /// A groupmate's coarse route serves a mover only in a straight line
+    /// over open ground from where the route starts, and to where it leads:
+    /// a mover a few metres off but across a ridge, or heading for a spot
+    /// just across the ridge from the route's end, plans its own.
+    #[test]
+    fn coarse_routes_are_shared_only_in_sight_of_their_ends() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        ridge(&mut app);
+        let mob = walker();
+        let map = RegionMap::build(&app.world().resource::<Nav>().terrain_snapshot(), mob.mobility.0, mob.radius);
+        let mut queue = PathQueue::default();
+        let mut plan = |from: Vec2, to: Vec2| {
+            let route = Arc::new(map.route(from, to).expect("by the pass"));
+            assert!(route.points.iter().any(|q| q.x > 200.0), "by the pass: {route:?}");
+            queue.remember_route(&map, from, to, route.clone());
+            route
+        };
+        // North across the ridge, and to just across it.
+        let (a, goal, across) = (Vec2::new(60.5, 114.5), Vec2::new(60.5, 240.5), Vec2::new(60.5, 135.5));
+        let north = plan(a, goal);
+        let short = plan(a, across);
+        let shared = |from: Vec2, to: Vec2, route: &Arc<CoarseRoute>| queue.shared_route(&map, from, to).is_some_and(|r| Arc::ptr_eq(&r, route));
+        assert!(shared(Vec2::new(75.5, 108.5), Vec2::new(70.5, 236.5), &north), "a groupmate beside it");
+        assert!(shared(Vec2::new(75.5, 108.5), Vec2::new(66.5, 140.5), &short), "a groupmate beside it");
+        assert!(queue.shared_route(&map, Vec2::new(60.5, 133.5), goal).is_none(), "across the ridge, 19 m off");
+        assert!(queue.shared_route(&map, Vec2::new(70.5, 110.5), Vec2::new(60.5, 119.5)).is_none(), "heading for a spot across the ridge, 16 m off");
+    }
+
+    /// Played through: a rider 19 m from a groupmate's start, but across a
+    /// ridge from it, is not handed the groupmate's route by the pass 160 m
+    /// off: it goes its own way (round a few trees in its way) and never
+    /// near the pass.
+    #[test]
+    fn a_mover_across_a_ridge_goes_its_own_way() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        ridge(&mut app);
+        let tree = data.node_ids().filter(|n| data.node(*n).blocking).min_by(|a, b| data.node(*a).size[0].total_cmp(&data.node(*b).size[0])).expect("a tree");
+        for x in 48..74 {
+            let at = Vec2::new(x as f32 + 0.5, 160.5);
+            with_commands(&mut app, |c, data, _| spawn_node(c, data, tree, at, 0.0, None));
+        }
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let goal = Vec2::new(60.5, 240.5);
+        let send = |app: &mut App, at: Vec2| {
+            let e = with_commands(app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, at, 0.0));
+            app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+            e
+        };
+        let planner = send(&mut app, Vec2::new(60.5, 114.5));
+        for _ in 0..30 {
+            run_ticks(&mut app, 1);
+            if status(&app, planner) == PathStatus::Following {
+                break;
+            }
+        }
+        assert_eq!(status(&app, planner), PathStatus::Following);
+        assert!(!app.world().resource::<PathQueue>().coarse.is_empty(), "the planner's route is kept for groupmates");
+        let mate = send(&mut app, Vec2::new(60.5, 133.5));
+        let (s, ticks, trail) = walk(&mut app, mate, 3_000);
+        let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+        println!("a mover across a ridge from its groupmate: {s:?} after {ticks} ticks, {walked:.0} m walked");
+        assert_eq!(s, PathStatus::Arrived);
+        assert!(trail.iter().all(|q| q.x < 100.0), "never off toward the pass");
+        assert!(walked < 150.0, "{walked:.0} m for 107 m");
     }
 
     /// The forest map for `players`; each of `orders` (owner, start, goal)
