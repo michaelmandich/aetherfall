@@ -41,7 +41,7 @@ mod water;
 
 use std::cell::RefCell;
 
-use af_core::ext::map::{MapFeatures, MapOptions, MapSize, MountainRange, RiverLine};
+use af_core::ext::map::{MapFeatures, MapOptions, MapSize, MountainRange, ResolvedMapOptions, RiverLine};
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -181,6 +181,17 @@ fn land_side_of(setup: &MatchSetup, size: MapSize) -> f32 {
     } else {
         size.land_side(setup.players.len())
     }
+}
+
+/// The size whose land side for `players` is nearest `side` (by ratio):
+/// what a `MatchSetup::map_size` override plays and is published as, so
+/// feature counts and the HUD follow the land actually generated.
+pub fn size_for_side(side: f32, players: usize) -> MapSize {
+    let off = |s: MapSize| {
+        let r = side / s.land_side(players);
+        r.max(1.0 / r)
+    };
+    MapSize::ALL.into_iter().min_by(|a, b| off(*a).total_cmp(&off(*b))).expect("four sizes")
 }
 
 /// A nav grid of `width` x `height` 1 m cells with every terrain type's
@@ -404,10 +415,16 @@ pub(crate) struct Gen<'a> {
 impl<'a> Gen<'a> {
     /// Every generation phase in order (see the module docs).
     fn run(data: &'a GameData, setup: &MatchSetup, options: &MapOptions) -> Gen<'a> {
-        let options = resolve_map_options(options, setup.seed);
+        let mut options = resolve_map_options(options, setup.seed);
+        let side = land_side_of(setup, options.size);
+        if setup.map_size > 0.0 {
+            // The override sizes the land; the size nearest it decides the
+            // feature counts and is what the map is published as.
+            options.size = size_for_side(side, setup.players.len());
+        }
         let mut rng = SimRng::new(setup.seed ^ MAP_SEED_SALT);
         let ids = Ids::new(data);
-        let land = Land::plan(land_side_of(setup, options.size), options.water, &mut rng.fork());
+        let land = Land::plan(side, options.water, &mut rng.fork());
         let layout = Layout::new(data, &ids, setup.players.len(), land, options, &mut rng.fork());
         let mut g = Gen::new(data, ids, layout);
         g.paint_terrain(&mut rng.fork());
@@ -688,11 +705,13 @@ impl<'a> Gen<'a> {
         Gen::new(data, ids, layout)
     }
 
-    /// What af_map publishes about the map besides its grid.
+    /// What af_map publishes about the map besides its grid: the options as
+    /// played (the size a `map_size` override plays as, and the rivers
+    /// actually laid, should one find no course).
     fn features(&self) -> MapFeatures {
         let land = &self.layout.land;
         MapFeatures {
-            options: self.layout.options,
+            options: ResolvedMapOptions { rivers: self.rivers.len() as u8, ..self.layout.options },
             land_min: land.min,
             land_max: land.max,
             ocean_edges: land.ocean.clone(),

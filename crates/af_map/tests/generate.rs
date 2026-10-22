@@ -36,7 +36,6 @@ fn options(size: MapSize, water: WaterLevel, rivers: u8, site: SiteKind) -> MapO
 struct Case {
     players: usize,
     seed: u64,
-    #[allow(dead_code)]
     options: MapOptions,
     map: GeneratedMap,
 }
@@ -289,6 +288,31 @@ fn sizes_follow_the_table_and_ocean_bands_grow_the_map() {
     let mut s = setup(&data, 2, 5);
     s.map_size = 300.4;
     assert_eq!(generate_with(&data, &s, &options(MapSize::Huge, WaterLevel::Dry, 1, SiteKind::Crater)).size, 300.0);
+}
+
+#[test]
+fn a_map_size_override_plays_and_is_published_as_the_nearest_size() {
+    let data = test_data();
+    // (players, metres, size option, the size it plays as)
+    for (players, metres, size, want) in [(2, 700.0, MapSize::Small, MapSize::Huge), (2, 300.0, MapSize::Huge, MapSize::Large), (4, 288.0, MapSize::Huge, MapSize::Medium), (8, 160.0, MapSize::Large, MapSize::Small)] {
+        assert_eq!(size_for_side(metres, players), want, "{metres} m for {players}");
+        let mut s = setup(&data, players, 5);
+        s.map_size = metres;
+        let map = generate_with(&data, &s, &options(size, WaterLevel::Lakes, 1, SiteKind::Crater));
+        assert_eq!(map.size, metres);
+        assert_eq!(map.features.options.size, want, "{metres} m for {players} with {} asked", size.name());
+    }
+    // Without an override the size option stands.
+    let map = generate_with(&data, &setup(&data, 2, 5), &options(MapSize::Large, WaterLevel::Lakes, 1, SiteKind::Crater));
+    assert_eq!(map.features.options.size, MapSize::Large);
+    // A big custom land gets the relief of a big map: Huge has at least
+    // three ranges' worth of mountain, more than a Small one could hold.
+    let mut s = setup(&data, 2, 6);
+    s.map_size = 700.0;
+    let big = generate_with(&data, &s, &options(MapSize::Small, WaterLevel::Lakes, 1, SiteKind::Crater));
+    let mountain = data.terrain_id("mountain").unwrap();
+    let rock = big.terrain.iter().filter(|t| **t == mountain).count() as f32 / big.terrain.len() as f32;
+    assert!(rock > 0.03, "{:.1}% mountain on a 700 m land", rock * 100.0);
 }
 
 #[test]
@@ -545,7 +569,9 @@ fn rivers_cross_the_land_away_from_the_edges_with_fords_at_most_36_m_apart() {
     for case in sample() {
         let map = &case.map;
         let f = &map.features;
-        assert_eq!(f.rivers.len(), f.options.rivers as usize, "requested rivers ({})", case.at());
+        let requested = if case.options.rivers == RiverCount::One { 1 } else { 2 };
+        assert_eq!(f.rivers.len(), requested, "requested rivers ({})", case.at());
+        assert_eq!(f.options.rivers as usize, f.rivers.len(), "the rivers laid are published ({})", case.at());
         let side = (f.land_max - f.land_min).min_element();
         for r in &f.rivers {
             assert_eq!(r.points.len(), r.half_widths.len());

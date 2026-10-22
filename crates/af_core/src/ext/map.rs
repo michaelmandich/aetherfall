@@ -20,8 +20,9 @@ pub struct MapSetupSet;
 /// A resource next to `MatchSetup`: the menu and the CLI insert it, af_map
 /// reads it in `OnEnter(GameState::Playing)`; a missing resource means
 /// `MapOptions::default()`. `MatchSetup::map_size`, when not 0, overrides
-/// [`MapOptions::size`]. The "random" choices are resolved from the match
-/// seed and published, resolved, in [`MapFeatures::options`].
+/// [`MapOptions::size`] (the map then plays as, and is published as, the
+/// size whose land side is nearest). The "random" choices are resolved from
+/// the match seed and published, resolved, in [`MapFeatures::options`].
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MapOptions {
     pub size: MapSize,

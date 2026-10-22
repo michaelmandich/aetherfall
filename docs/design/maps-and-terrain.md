@@ -33,7 +33,9 @@ match seed, and the resolved options are published in `MapFeatures` (section
 | site | `Random`, `Crater`, `Shattered`, `Lake`, `Scar`, `Spire` | Meteor site | `--site <name>` |
 
 `MatchSetup::map_size` (metres) still overrides the size when it is not 0: it
-is then the land side, rounded to whole metres and clamped to 160-1024 m.
+is then the land side, rounded to whole metres and clamped to 160-1024 m,
+and the map plays as (feature counts) and is published as the size whose
+land side for the player count is nearest (`af_map::size_for_side`).
 
 The random choices (river count, site kind) come from a stream of their own
 (`af_map::resolve_map_options(options, seed)`), so they never depend on
@@ -310,7 +312,9 @@ centre is the spire itself at the Starspire); every site is in
 Besides today's resources, af_map inserts `af_core::ext::map::MapFeatures`
 in `OnEnter(Playing)` (and removes it on exit):
 
-* `options`: the resolved `MapOptions` (no `Random` left);
+* `options`: the resolved `MapOptions` as played (no `Random` left; the
+  size a `map_size` override plays as, and the number of rivers actually
+  laid, should one find no course);
 * `land_min`, `land_max`: the land rectangle (the map minus ocean bands;
   every coast lies outside it);
 * `ocean_edges`: which map edges are ocean (west, east, south, north);
