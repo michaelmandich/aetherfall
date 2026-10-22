@@ -30,36 +30,78 @@ fn paint(color: vec3<f32>, rough: f32, bump: f32) -> Paint {
     return Paint(color, rough, vec3<f32>(0.0), bump);
 }
 
-// Lush meadow: broad lighter and darker swathes, a hint of hue shift,
-// small dry spots, grass clumps and darker tufts, speckles of wildflowers;
+// Lush meadow, painted from large to small: broad swathes of deeper green
+// (a hundred metres and more), lighter yellow-green and olive meadows
+// between them, now and then a field-like patch of pasture, hay or clover
+// with faint mowing stripes, then gentle patches, grass clumps and tufts
+// (kept soft: the game is seen from 40-66 m), speckles of wildflowers;
 // richer and darker toward water. A step below the team colours in
 // saturation, so Sylvan green still reads on it.
 fn meadow(p: vec2<f32>, wet: f32) -> Paint {
-    let shade = lin(vec3<f32>(0.247, 0.478, 0.180));
-    let base = lin(vec3<f32>(0.369, 0.604, 0.227));
-    let sunlit = lin(vec3<f32>(0.490, 0.702, 0.282));
-    let dry = lin(vec3<f32>(0.647, 0.663, 0.341));
-    let big = fbm(p * 0.021);
-    let mid = fbm(p * 0.085 + 7.0);
-    let small = fbm(p * 0.42 + 3.0);
-    var c = mix(shade, base, smoothstep(0.22, 0.62, big));
-    c = mix(c, sunlit, smoothstep(0.58, 0.8, mid) * 0.45);
-    c = mix(c, shade * 0.8, smoothstep(0.6, 0.82, 1.0 - mid) * 0.45);
-    c = mix(c, dry, smoothstep(0.64, 0.8, small) * smoothstep(0.45, 0.7, mid) * 0.5 * (1.0 - wet));
-    c = mix(c, c * vec3<f32>(1.08, 1.0, 0.82), smoothstep(0.5, 0.8, fbm(p * 0.045 + 31.0)) * 0.5);
-    // Grass clumps a few decimetres across, and darker tufts.
-    let clump = vnoise(p * 3.1) * 0.55 + vnoise(p * 7.3) * 0.45;
-    c *= 0.8 + 0.34 * clump;
-    c *= 1.0 - smoothstep(0.6, 0.78, fbm(mat2x2<f32>(0.8, 0.6, -0.6, 0.8) * p * 0.8 + 17.0)) * 0.24;
+    let deep = lin(vec3<f32>(0.17, 0.32, 0.14));
+    let base = lin(vec3<f32>(0.245, 0.44, 0.175));
+    let fresh = lin(vec3<f32>(0.33, 0.51, 0.19));
+    let olive = lin(vec3<f32>(0.38, 0.45, 0.22));
+    let dry = lin(vec3<f32>(0.56, 0.55, 0.33));
+    // Swathes and meadows, their outlines warped so they never look like
+    // noise blobs.
+    let q = p + (vec2<f32>(vnoise(p * 0.017), vnoise(p * 0.017 + vec2<f32>(5.3, 1.9))) - 0.5) * 46.0;
+    let vast = fbm(q * 0.006 + 1.3);
+    let big = fbm(q * 0.018 + 3.7);
+    let meadows = fbm(q * 0.012 + 41.0);
+    let tint = fbm(q * 0.03 + 9.0);
+    let mid = fbm(p * 0.05 + 7.0);
+    var c = mix(deep, base, smoothstep(0.32, 0.56, big + (vast - 0.5) * 0.6));
+    c = mix(c, fresh, smoothstep(0.56, 0.72, vast + (big - 0.5) * 0.5) * 0.65);
+    c = mix(c, olive, smoothstep(0.6, 0.76, meadows) * 0.45);
+    c = mix(c, deep * 0.9, smoothstep(0.64, 0.8, 1.0 - big) * 0.45);
+    // Patches a few tens of metres across, a little warmer or cooler.
+    c *= mix(vec3<f32>(0.95, 1.0, 1.04), vec3<f32>(1.04, 1.01, 0.94), smoothstep(0.35, 0.65, tint));
+    // Within one view (10-20 m): lusher, darker hollows and sunny, lighter
+    // yellow-green rises, softly edged.
+    let hollows = fbm(q * 0.06 + 23.0);
+    // (fbm is about 0.4-0.6 over half the ground, 0.3-0.7 over most.)
+    c = mix(c, c * vec3<f32>(0.74, 0.86, 0.76), smoothstep(0.5, 0.66, hollows) * 0.8);
+    c = mix(c, mix(c, fresh, 0.5) * 1.15, smoothstep(0.5, 0.34, hollows) * 0.65);
+    // Field-like patches: now and then a plot of a coarse grid (rows
+    // staggered, the grid turned off the map's axes), one crop each with
+    // soft, wandering edges and faint stripes down its length.
+    let along = vec2<f32>(0.857, 0.515);
+    let g = vec2<f32>(dot(p, along), dot(p, vec2<f32>(-along.y, along.x))) / vec2<f32>(36.0, 23.0);
+    let row = floor(g.y);
+    let gx = g.x + hash12(vec2<f32>(row, 7.7)) * 0.8;
+    let plot = vec2<f32>(floor(gx), row);
+    let pick = hash12(plot + 0.31);
+    let inner = min(min(fract(gx), 1.0 - fract(gx)) * 36.0, min(fract(g.y), 1.0 - fract(g.y)) * 23.0);
+    let is_field = step(pick, 0.06) * smoothstep(1.5, 6.0, inner + (fbm(p * 0.15) - 0.5) * 6.0);
+    let crop = hash12(plot + 5.17);
+    var field_col = lin(vec3<f32>(0.34, 0.5, 0.2));
+    if (crop < 0.35) {
+        field_col = lin(vec3<f32>(0.5, 0.49, 0.27));
+    } else if (crop < 0.6) {
+        field_col = lin(vec3<f32>(0.22, 0.38, 0.165));
+    }
+    let stripe = sin(g.y * 23.0 * TAU / 2.6) * 0.5 + 0.5;
+    field_col *= 0.92 + 0.13 * stripe;
+    c = mix(c, field_col, is_field * 0.5 * (1.0 - wet));
+    // Patches tens of metres across, a little lighter or darker.
+    c *= 0.86 + 0.28 * smoothstep(0.35, 0.65, mid);
+    // Dry spots.
+    let small = fbm(p * 0.3 + 3.0);
+    c = mix(c, dry, smoothstep(0.6, 0.78, small) * smoothstep(0.45, 0.66, mid) * 0.38 * (1.0 - wet));
+    // Grass clumps a few decimetres across, and darker tufts: gentle.
+    let clump = vnoise(p * 2.7) * 0.6 + vnoise(p * 6.3) * 0.4;
+    c *= 0.9 + 0.19 * clump;
+    c *= 1.0 - smoothstep(0.62, 0.8, fbm(mat2x2<f32>(0.8, 0.6, -0.6, 0.8) * p * 0.7 + 17.0)) * 0.12;
     // Richer, darker grass along the water.
     c = mix(c, c * vec3<f32>(0.7, 0.84, 0.68), wet * 0.6);
-    c = mix(c, vec3<f32>(luma(c)), 0.16);
+    c = mix(c, vec3<f32>(luma(c)), 0.08);
     // Wildflowers: white, yellow and blue dots in flowery patches.
     let cell = floor(p * 2.4);
     let h = hash12(cell);
     let spot = fract(p * 2.4) - 0.5 - (hash22(cell) - 0.5) * 0.6;
-    let flowery = smoothstep(0.5, 0.75, fbm(p * 0.06 + 3.1)) * (1.0 - wet);
-    let bloom = (1.0 - smoothstep(0.08, 0.14, length(spot))) * step(h, 0.14 * flowery);
+    let flowery = smoothstep(0.55, 0.78, fbm(p * 0.06 + 3.1)) * (1.0 - wet) * (1.0 - is_field);
+    let bloom = (1.0 - smoothstep(0.08, 0.14, length(spot))) * step(h, 0.1 * flowery);
     let hue = hash12(cell + 7.3);
     var flower = lin(vec3<f32>(0.93, 0.92, 0.86));
     if (hue < 0.45) {
@@ -68,7 +110,8 @@ fn meadow(p: vec2<f32>, wet: f32) -> Paint {
         flower = lin(vec3<f32>(0.56, 0.6, 0.9));
     }
     c = mix(c, flower, bloom);
-    return paint(c, 0.92, clump * 0.05);
+    // No bumped relief: at play distances it read only as dark specks.
+    return paint(c, 0.92, 0.0);
 }
 
 // Warm pale sand: broad swells, wind ripples, a few pebbles, and tufts of
@@ -153,7 +196,7 @@ fn rock(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
 fn mountain(p: vec2<f32>, y: f32, n: vec3<f32>, bulge: f32) -> Paint {
     var r = rock(p, y, n);
     r.color *= 0.58 + 0.7 * smoothstep(0.2, 0.8, bulge);
-    let grass = lin(vec3<f32>(0.247, 0.478, 0.180)) * (0.75 + 0.35 * vnoise(p * 1.7));
+    let grass = lin(vec3<f32>(0.255, 0.44, 0.18)) * (0.75 + 0.35 * vnoise(p * 1.7));
     let foot = (1.0 - smoothstep(0.3, 1.6, y + (vnoise(p * 0.7) - 0.5) * 1.4)) * smoothstep(0.4, 0.8, n.y);
     r.color = mix(r.color, grass, foot * 0.9);
     let snow_line = 7.4 + (fbm(p * 0.15) - 0.5) * 1.4;
@@ -169,7 +212,7 @@ fn mountain(p: vec2<f32>, y: f32, n: vec3<f32>, bulge: f32) -> Paint {
 // bare scarps at its edge.
 fn highland(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
     var r = rock(p, y * 2.5, n);
-    let tufts = lin(vec3<f32>(0.32, 0.5, 0.21)) * (0.72 + 0.35 * vnoise(p * 2.1));
+    let tufts = lin(vec3<f32>(0.3, 0.47, 0.2)) * (0.72 + 0.35 * vnoise(p * 2.1));
     let top = smoothstep(0.93, 0.99, n.y);
     let green = smoothstep(0.42, 0.6, fbm(p * 0.19 + 4.0)) * 0.7 + smoothstep(0.55, 0.7, fbm(p * 0.9 + 1.0)) * 0.3;
     r.color = mix(r.color, tufts, top * green * 0.8);
