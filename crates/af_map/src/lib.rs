@@ -1,34 +1,38 @@
 //! Aetherfall map generation and match setup (terrain, resources, start
 //! positions, initial spawns, teardown).
 //!
-//! * [`generate`] is a pure, deterministic generator: content + `MatchSetup`
-//!   in, a [`GeneratedMap`] (terrain, starts, crater, nodes, start
-//!   buildings and units) out. No ECS involved.
+//! * [`generate_with`] is a pure, deterministic generator: content, a
+//!   `MatchSetup` and the `MapOptions` in, a [`GeneratedMap`] (terrain,
+//!   starts, meteor sites, nodes, start buildings and units, and the
+//!   `MapFeatures`) out. No ECS involved. [`generate`] uses the default
+//!   options.
 //! * [`MapPlugin`] builds the match world in `OnEnter(GameState::Playing)`
 //!   and tears it down in `OnExit(GameState::Playing)`, both in
 //!   [`MapSetupSet`].
 //!
-//! On enter, every match resource is (re)inserted here and nowhere else:
-//! `Players`, `MapInfo`, `Nav` (terrain only: af_movement adds the
-//! obstacles from `Added<Obstacle>` on the first tick), `LocalPlayer`,
-//! `SimRng`, `SimClock`, `CommandInbox`, `TickCommands`, `GameOutcome`,
-//! `Notices`, `FogOfWar` and the resolved `MatchSetup`; `SpatialIndex` is
-//! resized and `CameraRig::focus` moved to the local player's start.
+//! On enter, the map is generated for the inserted `MatchSetup` and
+//! `MapOptions` (each defaulting when absent), and every match resource is
+//! (re)inserted here and nowhere else: `Players`, `MapInfo`, `MapFeatures`,
+//! `Nav` (terrain only: af_movement adds the obstacles from
+//! `Added<Obstacle>` on the first tick), `LocalPlayer`, `SimRng`,
+//! `SimClock`, `CommandInbox`, `TickCommands`, `GameOutcome`, `Notices`,
+//! `FogOfWar` and the resolved `MatchSetup`; `SpatialIndex` is resized and
+//! `CameraRig::focus` moved to the local player's start.
 //!
 //! On exit, every `Unit`, `Building`, `ResourceNode`, `FxBox` and
-//! `ClickPing` is despawned, `Players`, `Nav` and `MapInfo` are removed,
-//! `SpatialIndex` is emptied and `LocalPlayer` set to `None`.
+//! `ClickPing` is despawned, `Players`, `Nav`, `MapInfo` and `MapFeatures`
+//! are removed, `SpatialIndex` is emptied and `LocalPlayer` set to `None`.
 
 mod mapgen;
 mod setup;
 
-use af_core::ext::map::MapSetupSet;
+use af_core::ext::map::{MapFeatures, MapOptions, MapSetupSet};
 use af_core::prelude::*;
 use bevy::prelude::*;
 
 pub use mapgen::{
-    generate, map_size_for, BuildingPlacement, GeneratedMap, NodePlacement, UnitPlacement, CORRIDOR_HALF_WIDTH,
-    START_AREA_RADIUS, START_CLEAR_RADIUS,
+    generate, generate_with, map_size_for, resolve_map_options, BuildingPlacement, GeneratedMap, NodePlacement, UnitPlacement,
+    CORRIDOR_HALF_WIDTH, START_AREA_RADIUS, START_CLEAR_RADIUS,
 };
 pub use setup::{build_players, default_setup, new_fog, resolve_setup, FOG_CELL, MAX_PLAYERS, MIN_COLOR_DISTANCE};
 
@@ -43,23 +47,30 @@ impl Plugin for MapPlugin {
 }
 
 /// Generate the map for the inserted `MatchSetup` (or the default
-/// skirmish), spawn the start entities and reset every match resource.
+/// skirmish) and `MapOptions` (or the defaults), spawn the start entities
+/// and reset every match resource.
 fn start_match(
     mut commands: Commands,
     data: Res<Data>,
     setup: Option<Res<MatchSetup>>,
+    options: Option<Res<MapOptions>>,
     mut spatial: ResMut<SpatialIndex>,
     mut camera: ResMut<CameraRig>,
 ) {
     let setup = resolve_setup(&data, setup.as_deref());
-    let map = generate(&data, &setup);
+    let map = generate_with(&data, &setup, &options.as_deref().copied().unwrap_or_default());
     let players = build_players(&data, &setup, &map.starts);
     spawn_start_entities(&mut commands, &data, &players, &map);
+    let o = map.features.options;
     info!(
-        "match: {} players on a {} m map (seed {}), {} resource nodes",
+        "match: {} players on a {} m map (seed {}; {}, water {}, {} river(s), {}), {} resource nodes",
         players.list.len(),
         map.size,
         setup.seed,
+        o.size.name(),
+        o.water.name(),
+        map.features.rivers.len(),
+        o.site.name(),
         map.nodes.len()
     );
 
@@ -74,6 +85,7 @@ fn start_match(
         crater_center: map.crater_center,
         crater_radius: map.crater_radius,
     });
+    commands.insert_resource(map.features.clone());
     commands.insert_resource(new_fog(&setup, map.size, &players));
     commands.insert_resource(players);
     commands.insert_resource(LocalPlayer(local));
@@ -131,6 +143,7 @@ fn end_match(
     commands.remove_resource::<Players>();
     commands.remove_resource::<Nav>();
     commands.remove_resource::<MapInfo>();
+    commands.remove_resource::<MapFeatures>();
     // The sim, which rebuilds the index each tick, stops without `Players`;
     // client systems keep running in the menu and must not get the despawned
     // entities (or a stale local slot) back.

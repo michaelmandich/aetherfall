@@ -166,7 +166,11 @@ what the Thanes' iron bonus and ore trickles are for.
 
 ### 4.2 Map layout and resource nodes
 
-The map generator (engine side) places these node ids. Maps are 224-384 m across (2 to 8 players).
+The map generator (engine side) places these node ids. The land is 224-384 m across on
+the default Medium size (2 to 8 players), 176-304 m on Small, 288-496 m on Large and
+360-616 m on Huge; coastal maps add a band of open sea beyond it on one or two sides.
+[maps-and-terrain.md](maps-and-terrain.md) has the options, rivers, mountains and the five
+meteor sites in full.
 
 | id | name | resource | amount | box m | how |
 |---|---|---|---|---|---|
@@ -187,10 +191,10 @@ Node amounts are sized to these counts:
 
 | Zone | What sits there | Per player |
 |---|---|---|
-| **Start area** (mirrored for every player) | 6-8 berry bushes 12 m from the town centre; 2-3 stone outcrops, 2-3 copper veins and 2-3 iron veins 18-22 m out on the flanks; a band of 40-80 oaks and pines 20-28 m behind; a dune patch with 2-3 quartz sand deposits and palms about 38 m out; 3 aether crystals 48-55 m out toward the crater | about 2100 food in berries, 2000-3000 stone (the only stone on the map), 1600-2400 copper, 1800-2700 iron, 1600-2400 silicon, 1200 aether, 5000-10000 wood |
-| **Wilds** | 1-2 dune regions with 2-3 quartz sand deposits and palms each; 1-3 cliff features, each highland topped by 1 iron and 1 copper vein (ramps, or Climbers); scattered forests, half of them with bramble thickets; lakes, rivers with fords, marsh | shared: a few more silicon, iron and copper deposits |
-| **Contested spots** (one between each pair of neighbouring starts; two in a 1v1) | 1 `aether_vent`, 1 `adamant_meteor`, 2 iron veins and 1-2 copper veins: small, open, hard to wall | shared with one neighbour |
-| **The Starfall Crater** (centre, rim radius 11% of the map side) | 8-12 `aether_crystal`, 1-3 `aether_vent`, 2-4 `adamant_meteor`, ringed by a cliff rim with gaps | shared by everyone; with the contested spots about 2000-4800 adamant per player (8 to 2 players) |
+| **Start area** (mirrored for every player) | 6-8 berry bushes 12 m from the town centre; 2-3 stone outcrops, 2-3 copper veins and 2-3 iron veins 18-22 m out on the flanks; a band of 40-80 oaks and pines 20-28 m behind; a dune patch with 2-3 quartz sand deposits and palms about 38 m out; 3 aether crystals 45-55 m out toward the meteor site, a few metres short of it (closer on Small lands) | about 2100 food in berries, 2000-3000 stone (the only stone on the map), 1600-2400 copper, 1800-2700 iron, 1600-2400 silicon, 1200 aether, 5000-10000 wood |
+| **Wilds** | 1-2 dune regions with 2-3 quartz sand deposits and palms each (one more on Large and Huge); 1-2 cliff features (one more on Large, two on Huge), each highland topped by 1 iron and 1 copper vein (ramps, or Climbers); impassable mountain ranges with a pass, single massifs and massifs on the edges (more on bigger maps); scattered forests, half of them with bramble thickets; one or two rivers across the land with fords at most 36 m apart; ponds or lakes by the water setting; marsh by rivers and lakes; open sea beyond one or two edges on coastal maps | shared: a few more silicon, iron and copper deposits |
+| **Contested spots** (one between each pair of neighbouring starts; two in a 1v1) | 1 `aether_vent`, 1 `adamant_meteor`, 2 iron veins and 1-2 copper veins: small, open, hard to wall (at the Shattered Fall each is a small rimmed crater with 2 aether crystals as well) | shared with one neighbour |
+| **The meteor site** (centre) | 8-12 `aether_crystal`, 1-3 `aether_vent`, 2-4 `adamant_meteor` on a scar floor. The Starfall Crater: a cliff rim (11% of the land side) with gaps; the Shattered Fall: a smaller crater with half of that, the rest at the spots; the Crater Lake: a flooded crater with the vents and meteors on an island reached by ford causeways; the Skyfall Scar: three basins in a line; the Starspire: an impassable spire on an open ring | shared by everyone; with the contested spots about 2000-4800 adamant per player (8 to 2 players) |
 
 ### 4.3 How aether and adamant flow
 
@@ -585,8 +589,8 @@ aerial bombs about two.
 
 The simulation is 2D; terrain height is visual only. A unit's mobility is its
 single locomotion flag plus any terrain traits its faction grants that locomotion.
-Flying ignores terrain and ground collision. Water, marsh, thicket and cliff are
-not buildable.
+Flying ignores terrain and ground collision. Water, fords, the sea, marsh,
+thicket, cliff and mountains are not buildable.
 
 | terrain | name | height m | build | Foot | Mounted | Wheeled | Tracked | Hover | Flying | Amphibious (Foot+) | Climber (Foot+) | Forestwalker (Foot+) | Dunerunner (Foot+) | Marshwalker (Foot+) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -597,9 +601,16 @@ not buildable.
 | `marsh` | Marsh | -0.08 | no | x0.6 | x0.6 | - | x0.6 | x0.8 | x1 |  |  |  |  | x1 |
 | `thicket` | Bramble Thicket | 1.2 | no | x0.5 | - | - | - | - | x1 |  |  | x1.1 |  |  |
 | `cliff` | Rocky Highland | 5 | no | - | - | - | - | - | x1 |  | x0.6 |  |  |  |
+| `mountain` | Mountains | 9 | no | - | - | - | - | - | x1 |  | - |  |  |  |
+| `ford` | Ford | -0.2 | no | x0.7 | x0.7 | x0.6 | x0.7 | x0.9 | x1 | x0.9 |  |  |  |  |
+| `scorched` | Starfall Scar | 0 | yes | x1 | x1 | x1 | x1 | x1 | x1 |  |  |  |  |  |
+| `ocean` | Open Sea | -0.6 | no | - | - | - | - | x0.8 | x1 | x0.7 |  |  |  |  |
 
 Cells show the speed multiplier ("-" impassable). Trait columns show a Foot unit
-holding that trait. Faction traits:
+holding that trait. Mountains are the true obstacle: only flyers cross them, with a
+pass through every long range. Fords cross every river at most 36 m apart and are the
+one way wheeled machines get over a river. The scar is the burnt floor of the meteor
+sites; the open sea lies beyond the coasts of coastal maps. Faction traits:
 
 | Faction | Trait | Applies to | Effect |
 |---|---|---|---|
@@ -610,9 +621,9 @@ holding that trait. Faction traits:
 | steppe | Marshwalker; Dunerunner | Mounted; Mounted | horse lords ignore marsh and sand |
 | starborn | none | - | instead: the earliest and best flyers and hover units |
 
-Hover units cross shallows, deep water and marsh at x0.8 (full speed on grass
-and sand) but cannot enter thickets or cliffs. Tracked machines wade shallows and
-marsh slowly; wheeled machines need dry land.
+Hover units cross shallows, deep water, the sea and marsh at x0.8 (full speed on
+grass and sand) but cannot enter thickets, cliffs or mountains. Tracked machines wade
+shallows and marsh slowly; wheeled machines need dry land or a ford.
 
 ---
 

@@ -1,24 +1,25 @@
-//! Terrain painting: the crater rim, water, marsh, cliffs, sand and the
-//! start areas. Random features only paint cells outside reserved zones.
+//! Terrain painting: the order of the painters, highland ridges and
+//! plateaus, dune regions and the start areas (coasts, lakes and marsh are
+//! in `water.rs`, rivers in `rivers.rs`, mountains in `mountains.rs`, the
+//! meteor sites in `sites.rs`). Random features only paint cells outside
+//! reserved zones.
 
-use std::collections::VecDeque;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 
+use af_core::ext::map::MapSize;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
 use super::noise::Noise;
-use super::{angle_of, cell_center, perp, polar, Blob, Gen, GAP_HALF_WIDTH, SPOT_RADIUS, START_CLEAR_RADIUS};
+use super::{angle_of, cell_center, perp, polar, Blob, Gen, Hold, START_CLEAR_RADIUS};
 
-/// Marsh may appear up to this many cells from water.
-const MARSH_REACH: u8 = 6;
 /// Half-width of the ramp into a cliff highland.
 const RAMP_HALF_WIDTH: f32 = 3.5;
+/// Radius of the open apron kept just below a highland ramp's foot.
+const RAMP_APRON: f32 = 5.0;
 /// How far beyond a cliff the way through it (a highland ramp, a ridge
 /// opening) is kept free of trees and thicket.
-const APPROACH: f32 = 4.0;
-/// Fords are at most this far apart along a river (the brief asks for ~40 m).
-const FORD_SPACING: (f32, f32) = (28.0, 36.0);
+pub(crate) const APPROACH: f32 = 4.0;
 /// Smallest dune region, ridge half-length and highland ring radius a
 /// crowded map shrinks those features to before leaving them out.
 const MIN_SAND_RADIUS: f32 = 8.0;
@@ -85,9 +86,9 @@ impl Ridge {
     }
 
     /// Half the unpainted stretch around `gap_at`. Stamps reach `thick` into
-    /// it from each side, so this leaves a ~7 m opening.
+    /// it from each side, so this leaves a ~10 m opening.
     fn gap_half(&self) -> f32 {
-        self.thick + 3.5
+        self.thick + 5.0
     }
 }
 
@@ -101,13 +102,33 @@ pub(crate) struct Cell {
 
 impl Gen<'_> {
     pub(super) fn paint_terrain(&mut self, rng: &mut SimRng) {
-        self.paint_crater(&mut rng.fork());
-        self.paint_water(&mut rng.fork());
-        self.paint_marsh_near_water(&mut rng.fork());
+        self.paint_coasts(&mut rng.fork());
+        self.paint_sites(&mut rng.fork());
+        self.paint_rivers(&mut rng.fork());
         self.paint_cliffs(&mut rng.fork());
         self.paint_sand_regions(&mut rng.fork());
-        self.paint_crater_surroundings(&mut rng.fork());
+        self.paint_mountains(&mut rng.fork());
+        self.paint_lakes(&mut rng.fork());
+        self.paint_marsh_near_water(&mut rng.fork());
+        self.paint_site_surroundings(&mut rng.fork());
         self.paint_start_areas(&mut rng.fork());
+    }
+
+    /// Wild features go between `min` (beyond the main site) and this far
+    /// from the layout centre: most of the way to the land's far corners.
+    pub(crate) fn wild_reach(&self) -> f32 {
+        let (land, c) = (&self.layout.land, self.layout.center);
+        [land.min, land.max, Vec2::new(land.min.x, land.max.y), Vec2::new(land.max.x, land.min.y)].iter().map(|p| p.distance(c)).fold(0.0, f32::max) * 0.92
+    }
+
+    /// Extra features on bigger maps: 0 on Small and Medium, 1 on Large, 2
+    /// on Huge.
+    pub(crate) fn size_bonus(&self) -> u32 {
+        match self.layout.options.size {
+            MapSize::Small | MapSize::Medium => 0,
+            MapSize::Large => 1,
+            MapSize::Huge => 2,
+        }
     }
 
     /// Repaint every cell whose centre is within `r` of `c` with whatever
@@ -121,225 +142,73 @@ impl Gen<'_> {
                     continue;
                 }
                 let index = self.idx(x, y);
-                let cell = Cell { index, center, terrain: self.terrain[index], reserved: self.reserved[index] };
+                let cell = Cell { index, center, terrain: self.terrain[index], reserved: self.reserved(index) };
                 if let Some(t) = f(&cell) {
                     self.terrain[index] = t;
                 }
             }
         }
+        self.touch();
     }
 
-    fn is_water(&self, t: TerrainId) -> bool {
-        t == self.ids.deep || t == self.ids.shallow
-    }
-
-    /// The cliff rim (with one ramp gap per start plus extras) and a
-    /// grass/sand crater floor.
-    fn paint_crater(&mut self, rng: &mut SimRng) {
-        let (center, radius, rim_half) = (self.layout.center, self.layout.crater_radius, self.layout.rim_half);
-        let gaps = self.layout.gaps.clone();
-        let floor = Noise::new(rng, self.size, 10.0);
-        let rim = Noise::new(rng, self.size, 6.0);
-        let (grass, sand, cliff) = (self.ids.grass, self.ids.sand, self.ids.cliff);
-        self.paint_disc(center, radius + rim_half + 1.0, |cell| {
-            let v = cell.center - center;
-            let d = v.length();
-            let thick = rim_half * (0.85 + 0.3 * rim.at(cell.center));
-            if (d - radius).abs() <= thick {
-                let a = angle_of(v);
-                let in_gap = gaps.iter().any(|g| af_geom::wrap_angle(a - g).abs() * d < GAP_HALF_WIDTH);
-                Some(if in_gap { grass } else { cliff })
-            } else if d < radius {
-                Some(if floor.at(cell.center) > 0.6 { sand } else { grass })
-            } else {
-                None
-            }
-        });
-    }
-
-    /// One or two rivers or lakes, each along a bisector between neighbours.
-    fn paint_water(&mut self, rng: &mut SimRng) {
-        let mut angles = self.layout.bisectors.clone();
-        let count = 1 + rng.below(2);
-        for _ in 0..count {
-            let angle = if angles.is_empty() {
-                rng.range(0.0, TAU)
-            } else {
-                angles.swap_remove(rng.below(angles.len() as u32) as usize)
-            };
-            if rng.chance(0.6) {
-                self.paint_river(angle, rng);
-            } else {
-                self.paint_lake(angle, rng);
-            }
-        }
-    }
-
-    /// A meandering river from just outside the contested spot to past the
-    /// map edge: deep water with shallow banks, and shallow fords across it
-    /// at most [`FORD_SPACING`] apart.
-    fn paint_river(&mut self, angle: f32, rng: &mut SimRng) {
-        let center = self.layout.center;
-        let dir = polar(angle);
-        let side = perp(dir);
-        let start = self.layout.spot_ring + SPOT_RADIUS + 6.0;
-        let end = self.size;
-        let deep = rng.range(2.0, 3.0);
-        let reach = deep + rng.range(1.5, 2.5);
-        let amplitude = rng.range(2.0, 5.0);
-        let wavelength = rng.range(35.0, 60.0);
-        let phase = rng.range(0.0, TAU);
-        let mut fords = Vec::new();
-        let mut f = start + rng.range(8.0, 16.0);
-        while f < end {
-            fords.push(f);
-            f += rng.range(FORD_SPACING.0, FORD_SPACING.1);
-        }
-        // Deep water needs a non-ford stretch within `deep`, so a ford of
-        // half-length `deep + 3` leaves a ~6 m shallow crossing.
-        let ford_half = deep + 3.0;
-
-        let cells = (self.w * self.w) as usize;
-        let mut near = vec![f32::INFINITY; cells];
-        let mut near_deep = vec![f32::INFINITY; cells];
-        let mut touched = Vec::new();
-        let mut r = start;
-        let mut next_feature = start;
-        while r <= end {
-            let q = center + dir * r + side * amplitude * ops::sin(r / wavelength * TAU + phase);
-            let ford = fords.iter().any(|f| (r - f).abs() < ford_half);
-            let (x0, y0, x1, y1) = self.cell_rect(q, reach);
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let d = cell_center(x, y).distance(q);
-                    if d >= reach {
-                        continue;
-                    }
-                    let i = self.idx(x, y);
-                    if near[i].is_infinite() {
-                        touched.push(i);
-                    }
-                    near[i] = near[i].min(d);
-                    if !ford {
-                        near_deep[i] = near_deep[i].min(d);
-                    }
-                }
-            }
-            if r >= next_feature {
-                self.features.push(Blob { center: q, radius: reach + 3.0 });
-                next_feature += 8.0;
-            }
-            r += 0.75;
-        }
-        for i in touched {
-            if !self.reserved[i] {
-                self.terrain[i] = if near_deep[i] < deep { self.ids.deep } else { self.ids.shallow };
-            }
-        }
-    }
-
-    /// A lake on the bisector where it has the most room.
-    fn paint_lake(&mut self, angle: f32, rng: &mut SimRng) {
-        let dir = polar(angle);
-        let mut best: Option<(Vec2, f32)> = None;
-        let mut r = self.layout.spot_ring + SPOT_RADIUS + 8.0;
-        while r < self.size * 0.5 {
-            let p = self.layout.center + dir * r;
-            let room = self.room(p);
-            if best.is_none_or(|(_, b)| room > b) {
-                best = Some((p, room));
-            }
-            r += 4.0;
-        }
-        let Some((c, room)) = best else { return };
-        let radius = rng.range(8.0, 13.0).min(room - 2.0);
-        if radius < 5.0 {
-            return;
-        }
-        let bank = rng.range(2.0, 3.0);
-        let shape = Noise::new(rng, self.size, 9.0);
-        let (deep, shallow) = (self.ids.deep, self.ids.shallow);
-        self.paint_disc(c, radius * 1.25, |cell| {
-            if cell.reserved {
-                return None;
-            }
-            let edge = radius * (0.8 + 0.4 * shape.at(cell.center));
-            let d = cell.center.distance(c);
-            if d >= edge {
-                None
-            } else if d < edge - bank {
-                Some(deep)
-            } else {
-                Some(shallow)
-            }
-        });
-        self.features.push(Blob { center: c, radius: radius * 1.25 });
-    }
-
-    /// Marsh patches on grass within [`MARSH_REACH`] cells of water.
-    fn paint_marsh_near_water(&mut self, rng: &mut SimRng) {
-        let noise = Noise::new(rng, self.size, 8.0);
-        let cells = self.terrain.len();
-        let mut dist = vec![u8::MAX; cells];
-        let mut queue = VecDeque::new();
-        for (i, t) in self.terrain.iter().enumerate() {
-            if self.is_water(*t) {
-                dist[i] = 0;
-                queue.push_back(i);
-            }
-        }
-        let w = self.w as usize;
-        while let Some(i) = queue.pop_front() {
-            if dist[i] >= MARSH_REACH {
-                continue;
-            }
-            let (x, y) = (i % w, i / w);
-            let neighbours = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < w).then(|| i + w)];
-            for j in neighbours.into_iter().flatten() {
-                if dist[j] == u8::MAX {
-                    dist[j] = dist[i] + 1;
-                    queue.push_back(j);
-                }
-            }
-        }
-        for (i, d) in dist.into_iter().enumerate() {
-            let center = cell_center((i % w) as i32, (i / w) as i32);
-            if (1..=MARSH_REACH).contains(&d) && !self.reserved[i] && self.terrain[i] == self.ids.grass && noise.at(center) > 0.55 {
-                self.terrain[i] = self.ids.marsh;
-            }
-        }
-    }
-
-    /// One to three cliff features: ridges with a gap, or highlands (a cliff
-    /// ring with one ramp and ore on top). Climbers walk straight over both.
-    /// Crowded maps get them shrunk rather than left out.
+    /// One or two cliff features (one more on Large maps, two on Huge):
+    /// ridges with a gap, or highlands (a cliff ring with one ramp and ore
+    /// on top). Climbers walk straight over both. Crowded maps get them
+    /// shrunk rather than left out, and a map with no room for any gets one
+    /// small highland closer to the main site.
     fn paint_cliffs(&mut self, rng: &mut SimRng) {
-        let count = 1 + rng.below(3);
-        let (r_min, r_max) = (self.layout.crater_outer() + 20.0, self.size * 0.65);
+        let count = 1 + rng.below(2) + self.size_bonus();
+        let (r_min, r_max) = (self.layout.main().outer() + 20.0, self.wild_reach());
+        let mut placed = 0;
         for _ in 0..count {
-            if rng.chance(0.5) {
-                let thick = rng.range(2.0, 3.0);
-                let bow = rng.range(-4.0, 4.0);
-                let ends = thick + bow.abs();
-                let wanted = rng.range(MIN_RIDGE_HALF_LEN, 18.0) + ends;
-                let Some((center, radius)) = self.feature_spot(rng, wanted, MIN_RIDGE_HALF_LEN + ends, r_min, r_max) else { continue };
-                let half_len = radius - ends;
-                let gap_at = rng.range(-0.4, 0.4) * half_len;
-                self.paint_ridge(&Ridge { center, dir: polar(rng.range(0.0, PI)), half_len, thick, bow, gap_at });
-                self.features.push(Blob { center, radius });
-            } else {
-                let thick = rng.range(1.5, 2.0);
-                let wanted = rng.range(MIN_HIGHLAND_RING, 11.0) + thick;
-                let Some((center, radius)) = self.feature_spot(rng, wanted, MIN_HIGHLAND_RING + thick, r_min, r_max) else { continue };
-                // The ramp opens roughly toward the middle of the map, never
-                // toward the map edge.
-                let ramp = polar(angle_of(self.layout.center - center) + rng.range(-1.0, 1.0));
-                let highland = Highland { center, ring: radius - thick, thick, ramp };
-                self.paint_highland(&highland);
-                self.features.push(Blob { center, radius });
-                self.highlands.push(highland);
-            }
+            let ridge = rng.chance(0.5);
+            placed += self.place_cliff(rng, ridge, r_min, r_max, 1.0) as u32;
         }
+        if placed == 0 {
+            self.place_cliff(rng, false, self.layout.main().outer() + 8.0, r_max, 0.85);
+        }
+    }
+
+    /// A ridge or a highland between `r_min` and `r_max` from the centre,
+    /// its smallest size scaled by `small`; false when none fits.
+    fn place_cliff(&mut self, rng: &mut SimRng, ridge: bool, r_min: f32, r_max: f32, small: f32) -> bool {
+        if ridge {
+            let thick = rng.range(2.0, 3.0);
+            let bow = rng.range(-4.0, 4.0);
+            let ends = thick + bow.abs();
+            let wanted = rng.range(MIN_RIDGE_HALF_LEN, 18.0) + ends;
+            let Some((center, radius)) = self.feature_spot(rng, wanted, MIN_RIDGE_HALF_LEN * small + ends, r_min, r_max) else { return false };
+            let half_len = radius - ends;
+            let gap_at = rng.range(-0.4, 0.4) * half_len;
+            self.paint_ridge(&Ridge { center, dir: polar(rng.range(0.0, PI)), half_len, thick, bow, gap_at });
+            self.features.push(Blob { center, radius });
+        } else {
+            let thick = rng.range(1.5, 2.0);
+            let wanted = rng.range(MIN_HIGHLAND_RING, 11.0) + thick;
+            let Some((center, radius)) = self.feature_spot(rng, wanted, MIN_HIGHLAND_RING * small + thick, r_min, r_max) else { return false };
+            // The ramp opens roughly toward the middle of the map, never
+            // toward the map edge: of a few such directions, the one with
+            // the most open ground below its foot (away from water and rock).
+            let inward = angle_of(self.layout.center - center);
+            let first = rng.range(-1.0, 1.0);
+            let open = |a: f32| {
+                let below = center + polar(a) * (radius + APPROACH + 6.0);
+                let (edge, _, _, blocking) = self.room_parts(below);
+                blocking.min(edge)
+            };
+            let angle = [first, first + 0.7, first - 0.7, first + 1.4, first - 1.4]
+                .into_iter()
+                .filter(|o| o.abs() <= 1.2)
+                .map(|o| inward + o)
+                .fold((f32::NEG_INFINITY, inward + first), |best, a| if open(a) > best.0 + 2.0 { (open(a), a) } else { best })
+                .1;
+            let ramp = polar(angle);
+            let highland = Highland { center, ring: radius - thick, thick, ramp };
+            self.paint_highland(&highland);
+            self.features.push(Blob { center, radius });
+            self.highlands.push(highland);
+        }
+        true
     }
 
     /// Paint `ridge` and reserve its opening (plus [`APPROACH`] on either
@@ -357,11 +226,12 @@ impl Gen<'_> {
         }
         let (gap, dir, side) = (ridge.point(ridge.gap_at), ridge.dir, perp(ridge.dir));
         let (along, across) = (ridge.gap_half(), ridge.thick + APPROACH);
-        self.reserve_where(gap, along + across, |p| (p - gap).dot(dir).abs() < along && (p - gap).dot(side).abs() <= across);
+        self.reserve(gap, along + across, Hold::Hard, |p| (p - gap).dot(dir).abs() < along && (p - gap).dot(side).abs() <= across);
     }
 
-    /// Paint `highland`'s cliff ring and reserve its top and its ramp (out
-    /// to [`Highland::ramp_foot`]), so trees and thicket never seal the ore.
+    /// Paint `highland`'s cliff ring and reserve its top, its ramp (out to
+    /// [`Highland::ramp_foot`]) and an apron below the ramp's foot, so trees
+    /// and thicket never seal the ore.
     fn paint_highland(&mut self, h: &Highland) {
         let (grass, sand, cliff) = (self.ids.grass, self.ids.sand, self.ids.cliff);
         self.paint_disc(h.center, h.ring + h.thick, |cell| {
@@ -372,14 +242,17 @@ impl Gen<'_> {
             (on_ring && !h.on_ramp(cell.center, RAMP_HALF_WIDTH)).then_some(cliff)
         });
         let reach = h.ring + h.thick + APPROACH;
-        self.reserve_where(h.center, reach, |p| p.distance(h.center) <= h.top() || h.on_ramp(p, RAMP_HALF_WIDTH + 1.0));
+        self.reserve(h.center, reach, Hold::Hard, |p| p.distance(h.center) <= h.top() || h.on_ramp(p, RAMP_HALF_WIDTH + 1.0));
+        let apron = h.ramp_foot() + h.ramp * RAMP_APRON;
+        self.reserve(apron, RAMP_APRON + 0.5, Hold::Hard, |p| p.distance(apron) <= RAMP_APRON);
     }
 
-    /// One or two dune regions (palms and quartz sand are placed later).
-    /// Crowded maps get them shrunk rather than left out.
+    /// One or two dune regions (one more on Large and Huge maps; palms and
+    /// quartz sand are placed later). Crowded maps get them shrunk rather
+    /// than left out.
     fn paint_sand_regions(&mut self, rng: &mut SimRng) {
-        let count = 1 + rng.below(2);
-        let (r_min, r_max) = (self.layout.crater_outer() + 15.0, self.size * 0.65);
+        let count = 1 + rng.below(2) + self.size_bonus().min(1);
+        let (r_min, r_max) = (self.layout.main().outer() + 15.0, self.wild_reach());
         for _ in 0..count {
             let wanted = rng.range(11.0, 17.0) * SAND_EDGE;
             let Some((c, outer)) = self.feature_spot(rng, wanted, MIN_SAND_RADIUS * SAND_EDGE, r_min, r_max) else { continue };
@@ -393,26 +266,6 @@ impl Gen<'_> {
             self.sand_regions.push(Blob { center: c, radius });
             self.features.push(Blob { center: c, radius: outer });
         }
-    }
-
-    /// Marsh and bramble patches in a band just outside the rim, so terrain
-    /// traits decide who reaches the crater first. Corridors stay clear.
-    fn paint_crater_surroundings(&mut self, rng: &mut SimRng) {
-        let marsh_noise = Noise::new(rng, self.size, 7.0);
-        let thicket_noise = Noise::new(rng, self.size, 6.0);
-        let (grass, marsh, thicket) = (self.ids.grass, self.ids.marsh, self.ids.thicket);
-        let band = self.layout.crater_outer() + super::CRATER_MARGIN + 12.0;
-        self.paint_disc(self.layout.center, band, |cell| {
-            if cell.reserved || cell.terrain != grass {
-                None
-            } else if thicket_noise.at(cell.center) > 0.66 {
-                Some(thicket)
-            } else if marsh_noise.at(cell.center) > 0.62 {
-                Some(marsh)
-            } else {
-                None
-            }
-        });
     }
 
     /// A small dune under each start's quartz sand, then the clear grass
@@ -436,6 +289,7 @@ impl Gen<'_> {
 
 #[cfg(test)]
 mod tests {
+    use af_core::ext::map::MapOptions;
     use af_core::testing::test_data;
 
     use super::*;
@@ -458,7 +312,7 @@ mod tests {
     /// (terrain, reserved) of the cell under `p`.
     fn cell(g: &Gen, p: Vec2) -> (TerrainId, bool) {
         let i = g.idx_at(p).expect("on the map");
-        (g.terrain[i], g.reserved[i])
+        (g.terrain[i], g.reserved(i))
     }
 
     #[test]
@@ -466,7 +320,7 @@ mod tests {
         let data = test_data();
         // Eight start areas squeezed onto the smallest map.
         let g = Gen::bare(&data, 8, 224.0, 1);
-        let (r_min, r_max) = (g.layout.crater_outer() + 15.0, g.size * 0.65);
+        let (r_min, r_max) = (g.layout.main().outer() + 15.0, g.wild_reach());
         let (best, room) = g.roomiest(r_min, r_max).expect("candidates in range");
         let mut rng = SimRng::new(9);
         // More than any spot has: the roomiest one, shrunk to fit.
@@ -480,7 +334,7 @@ mod tests {
     fn ridge_openings_stay_open_and_reserved() {
         let data = test_data();
         let mut g = Gen::bare(&data, 2, 224.0, 3);
-        let (center, room) = g.roomiest(g.layout.crater_outer() + 20.0, g.size * 0.65).expect("a spot");
+        let (center, room) = g.roomiest(g.layout.main().outer() + 20.0, g.wild_reach()).expect("a spot");
         assert!(room > 15.0, "room for the test ridge: {room}");
         g.paint_ridge(&Ridge { center, dir: Vec2::X, half_len: 12.0, thick: 2.0, bow: 0.0, gap_at: 0.0 });
         let cliff = g.ids.cliff;
@@ -497,7 +351,7 @@ mod tests {
     fn highland_tops_and_ramps_stay_open_and_reserved() {
         let data = test_data();
         let mut g = Gen::bare(&data, 2, 224.0, 4);
-        let (center, _) = g.roomiest(g.layout.crater_outer() + 20.0, g.size * 0.65).expect("a spot");
+        let (center, _) = g.roomiest(g.layout.main().outer() + 20.0, g.wild_reach()).expect("a spot");
         let h = Highland { center, ring: 9.0, thick: 2.0, ramp: Vec2::X };
         g.paint_highland(&h);
         let (grass, cliff) = (g.ids.grass, g.ids.cliff);
@@ -507,7 +361,9 @@ mod tests {
         for p in [center, h.ramp_top(), center + Vec2::X * 9.0, h.ramp_foot() - Vec2::X * 0.5, center + Vec2::new(12.0, 3.5)] {
             assert_eq!(cell(&g, p), (grass, true), "the top, the ramp and its foot at {p}");
         }
-        assert!(!cell(&g, center + Vec2::Y * 13.0).1 && !cell(&g, h.ramp_foot() + Vec2::X * 2.0).1, "nothing else is reserved");
+        // An apron below the foot stays open too, and nothing beyond.
+        assert!(cell(&g, h.ramp_foot() + Vec2::X * 2.0).1, "the apron below the ramp");
+        assert!(!cell(&g, center + Vec2::Y * 13.0).1 && !cell(&g, h.ramp_foot() + Vec2::X * (2.0 * RAMP_APRON + 1.0)).1, "nothing else is reserved");
         assert!(!g.place_node(g.ids.oak, center + Vec2::Y * 3.0, 0.0, Zone::Free), "no tree on the top");
         assert!(g.place_node(g.ids.iron, center + Vec2::Y * 3.0, 0.0, Zone::Any), "ore goes up there");
     }
@@ -520,8 +376,8 @@ mod tests {
         let mut highlands = 0;
         for n in [2, 4, 6, 8] {
             for seed in 0..25 {
-                let g = Gen::run(&data, &setup(&data, n, seed));
-                assert!(g.cut_off_routes().is_empty(), "every start and highland top is reachable (seed {seed}, {n} players)");
+                let g = Gen::run(&data, &setup(&data, n, seed), &MapOptions::default());
+                assert!(g.cut_off.is_empty(), "everything is reachable for every class: {:?} (seed {seed}, {n} players)", g.cut_off);
                 for h in &g.highlands {
                     highlands += 1;
                     let on_top = |kind: Option<NodeTypeId>| g.nodes.iter().any(|nd| Some(nd.kind) == kind && nd.pos.distance(h.center) < h.top());

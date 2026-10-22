@@ -1,7 +1,10 @@
-//! Resource node placement: the overlap bookkeeping, contested spots, the
-//! crater, highland ore, dune nodes, forests and their thickets.
+//! Resource node placement: the overlap bookkeeping, contested spots,
+//! highland ore, dune nodes, forests and their thickets (the meteor sites'
+//! nodes are in `sites.rs`).
 
 use std::f32::consts::{FRAC_PI_2, TAU};
+
+use af_core::ext::map::SiteKind;
 
 use af_core::prelude::*;
 use bevy::prelude::*;
@@ -12,10 +15,10 @@ use super::{grown, perp, polar, Blob, Gen, NodePlacement, MAP_MARGIN};
 
 /// Gap kept around every node (each side), so nodes never touch.
 pub(crate) const NODE_PAD: f32 = 0.15;
-/// Free cells for a crater's centre: nodes keep this far from it.
-const CRATER_CLEAR_CENTER: f32 = 6.0;
 /// One forest cluster per this many square metres of map.
 const AREA_PER_FOREST: f32 = 4000.0;
+/// Chance that a scattered forest cluster grows beside another.
+const WOOD_CHANCE: f32 = 0.5;
 /// Tree spacing inside a forest cluster.
 const TREE_SPACING: f32 = 1.9;
 
@@ -94,7 +97,7 @@ pub(crate) fn cluster_spacing(data: &GameData, kind: NodeTypeId) -> f32 {
 }
 
 /// Nudge offsets tried around a wanted position, nearest first.
-fn nudges() -> impl Iterator<Item = Vec2> {
+pub(crate) fn nudges() -> impl Iterator<Item = Vec2> {
     std::iter::once(Vec2::ZERO).chain((1..=4).flat_map(|ring| {
         (0..8).map(move |k| polar(k as f32 * TAU / 8.0 + ring as f32 * 0.39) * (ring as f32 * 0.6))
     }))
@@ -105,7 +108,7 @@ impl Gen<'_> {
     /// map, on buildable terrain (respecting `zone`), out of every corridor,
     /// and clear of everything placed. Nodes that a building must claim (an
     /// aether vent) reserve that building's footprint too.
-    fn node_fits(&self, kind: NodeTypeId, pos: Vec2, yaw: f32, zone: Zone) -> Option<Obb> {
+    pub(crate) fn node_fits(&self, kind: NodeTypeId, pos: Vec2, yaw: f32, zone: Zone) -> Option<Obb> {
         let def = self.data.node(kind);
         let node = Obb::from_size(pos, def.size, yaw);
         let footprint = match def.requires_building_id {
@@ -119,7 +122,7 @@ impl Gen<'_> {
             return None;
         }
         let terrain_ok = self.all_covered(&footprint, |i| {
-            self.buildable[self.terrain[i].index()] && (zone == Zone::Any || !self.reserved[i])
+            self.buildable[self.terrain[i].index()] && (zone == Zone::Any || !self.reserved(i))
         });
         let reserve = grown(footprint, NODE_PAD);
         (terrain_ok && !self.occ.overlaps(&reserve)).then_some(reserve)
@@ -139,6 +142,11 @@ impl Gen<'_> {
         nudges().any(|off| self.place_node(kind, pos + off, yaw, zone))
     }
 
+    /// [`Gen::place_node_near`], trying only spots that pass `ok`.
+    pub(crate) fn place_node_where(&mut self, kind: Option<NodeTypeId>, pos: Vec2, yaw: f32, zone: Zone, ok: impl Fn(Vec2) -> bool) -> bool {
+        nudges().any(|off| ok(pos + off) && self.place_node(kind, pos + off, yaw, zone))
+    }
+
     /// A lattice cluster of up to `count` nodes around `center`; returns how
     /// many were placed.
     fn place_cluster(&mut self, kind: Option<NodeTypeId>, center: Vec2, count: u32, zone: Zone, rng: &mut SimRng) -> u32 {
@@ -150,7 +158,12 @@ impl Gen<'_> {
 
     /// Between each pair of neighbouring starts: an aether vent, an adamant
     /// meteor and a little iron and copper. Small, open and hard to wall.
+    /// (At the Shattered Fall each spot is a small crater, filled with the
+    /// site nodes.)
     pub(super) fn place_contested_spots(&mut self, rng: &mut SimRng) {
+        if self.layout.options.site == SiteKind::Shattered {
+            return;
+        }
         let spots: Vec<(Vec2, f32)> = self.layout.spots.iter().copied().zip(self.layout.bisectors.iter().copied()).collect();
         for (spot, angle) in spots {
             let frame = Frame::new(spot, spot + polar(angle));
@@ -160,38 +173,6 @@ impl Gen<'_> {
             self.place_cluster(self.ids.iron, frame.point(Vec2::new(-1.5, 6.5)), 2, Zone::Any, rng);
             let copper = 1 + rng.below(2);
             self.place_cluster(self.ids.copper, frame.point(Vec2::new(-1.5, -6.5)), copper, Zone::Any, rng);
-        }
-    }
-
-    /// The crater floor: 1-3 aether vents, 2-4 adamant meteors and 8-12
-    /// aether crystals in clusters of two to four, clear of the centre and
-    /// of the spokes from the ramps.
-    pub(super) fn place_crater_nodes(&mut self, rng: &mut SimRng) {
-        let vents = 1 + rng.below(3);
-        let meteors = 2 + rng.below(3);
-        let crystals = 8 + rng.below(5);
-        self.scatter_in_crater(self.ids.vent, vents, 1, rng);
-        self.scatter_in_crater(self.ids.meteor, meteors, 1, rng);
-        self.scatter_in_crater(self.ids.crystal, crystals, 4, rng);
-    }
-
-    /// Place `total` nodes on the crater floor in clusters of up to
-    /// `max_cluster`, each cluster at a random free spot.
-    fn scatter_in_crater(&mut self, kind: Option<NodeTypeId>, total: u32, max_cluster: u32, rng: &mut SimRng) {
-        let Some(k) = kind else { return };
-        let floor = self.layout.crater_radius - self.layout.rim_half - 1.0;
-        let mut placed = 0;
-        for _ in 0..total * 24 {
-            if placed >= total {
-                return;
-            }
-            let size = if max_cluster > 1 { 2 + rng.below(max_cluster - 1) } else { 1 };
-            let count = size.min(total - placed);
-            let extent = cluster_spacing(self.data, k) * (count as f32).sqrt();
-            let lo = CRATER_CLEAR_CENTER + extent;
-            let hi = (floor - extent).max(lo);
-            let p = self.layout.center + polar(rng.range(0.0, TAU)) * rng.range(lo, hi);
-            placed += self.place_cluster(kind, p, count, Zone::Any, rng);
         }
     }
 
@@ -229,8 +210,9 @@ impl Gen<'_> {
     }
 
     /// Oak/pine clusters: two framing each start area, the rest scattered as
-    /// soft walls. Every tree is its own node. Half the scattered clusters
-    /// grow bramble thicket between their trees.
+    /// soft walls, about half of them beside another so they gather into
+    /// woods. Every tree is its own node. Half the scattered clusters grow
+    /// bramble thicket between their trees.
     pub(super) fn place_forests(&mut self, rng: &mut SimRng) {
         let mut clusters: Vec<Blob> = Vec::new();
         for i in 0..self.layout.starts.len() {
@@ -248,9 +230,16 @@ impl Gen<'_> {
             if clusters.len() >= target {
                 break;
             }
-            let p = Vec2::new(rng.range(4.0, self.size - 4.0), rng.range(4.0, self.size - 4.0));
             let radius = rng.range(6.0, 12.0);
-            let open = self.idx_at(p).is_some_and(|i| !self.reserved[i] && self.terrain[i] == self.ids.grass);
+            // Some clusters grow beside one already there, so the scatter
+            // gathers into woods with glades between.
+            let p = if clusters.len() > framing && rng.chance(WOOD_CHANCE) {
+                let c = clusters[framing + rng.below((clusters.len() - framing) as u32) as usize];
+                c.center + polar(rng.range(0.0, TAU)) * (c.radius + radius + rng.range(1.0, 5.0))
+            } else {
+                Vec2::new(rng.range(4.0, self.size - 4.0), rng.range(4.0, self.size - 4.0))
+            };
+            let open = self.idx_at(p).is_some_and(|i| !self.reserved(i) && self.terrain[i] == self.ids.grass);
             if open && clusters.iter().all(|c| c.center.distance(p) > c.radius + radius) {
                 clusters.push(Blob { center: p, radius });
             }

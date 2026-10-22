@@ -66,6 +66,23 @@ impl MapSize {
     pub fn parse(s: &str) -> Option<MapSize> {
         MapSize::ALL.into_iter().find(|v| v.name().eq_ignore_ascii_case(s.trim()))
     }
+
+    /// Side of the land square in metres for `players` player slots: the
+    /// base side (224 m for up to two players, 32 m more per player, 384 m
+    /// from seven) times [`MapSize::factor`], rounded to a multiple of 8 m
+    /// and clamped to 160-1024 m. Ocean bands add to this (see
+    /// [`MapFeatures::land_min`]).
+    pub fn land_side(self, players: usize) -> f32 {
+        let base = match players {
+            0..=2 => 224.0,
+            3 => 256.0,
+            4 => 288.0,
+            5 => 320.0,
+            6 => 352.0,
+            _ => 384.0,
+        };
+        ((base * self.factor() / 8.0).round() * 8.0).clamp(160.0, 1024.0)
+    }
 }
 
 /// How much standing water the map has besides its rivers, a 0-4 scale.
@@ -328,5 +345,18 @@ mod tests {
         assert_eq!(SiteChoice::parse("Random"), Some(SiteChoice::Random));
         assert_eq!(SiteChoice::parse("volcano"), None);
         assert_eq!(MapOptions::default().water, WaterLevel::Lakes);
+    }
+
+    #[test]
+    fn land_sides_follow_the_size_table() {
+        // docs/design/maps-and-terrain.md, section 1.1.
+        let table = [(2, [176.0, 224.0, 288.0, 360.0]), (4, [232.0, 288.0, 376.0, 464.0]), (8, [304.0, 384.0, 496.0, 616.0])];
+        for (players, sides) in table {
+            for (size, side) in MapSize::ALL.into_iter().zip(sides) {
+                assert_eq!(size.land_side(players), side, "{} for {players} players", size.name());
+            }
+        }
+        assert_eq!(MapSize::Medium.land_side(0), 224.0);
+        assert_eq!(MapSize::Huge.land_side(40), 616.0);
     }
 }

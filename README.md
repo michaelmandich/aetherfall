@@ -82,9 +82,14 @@ cannot go.
   hover craft, plasma, titans).
 * **Eight resources:** food, wood, stone, copper, iron, silicon, plus the
   made-up **aether** (mid tech) and **adamant** (late tech). Starting areas hold
-  the basics; the central **Starfall Crater** holds aether crystals, aether
+  the basics; the **meteor site** at the centre holds aether crystals, aether
   vents (claim them with an extractor for passive income) and adamant
   meteors. Every age-up past Banner needs a contested resource.
+* **Maps with options:** four sizes (Small to Huge), a 0-4 water scale (dry
+  to two coasts of open sea, with ponds or lakes between), one or two rivers
+  that cross the land in any direction with fords, impassable mountain
+  ranges with passes, and five meteor sites: the Starfall Crater, the
+  Shattered Fall, the Crater Lake, the Skyfall Scar and the Starspire.
 * **Weapons of every kind**, all boxes: sword swings, spear thrusts, hammer
   smashes, arrows and bullets, arcing catapult and mortar shells, piercing
   cannon and railgun shots, laser beams, dropped bombs, homing rockets,
@@ -93,8 +98,9 @@ cannot go.
   watchtower → … → plasma turret; town centre → citadel), production queues
   with costs and build times, squadrons and single units, small troops and
   giants.
-* **Terrain that matters:** rivers with fords, marsh, bramble thickets, dunes
-  and cliffs. Some factions cross terrain others must walk around.
+* **Terrain that matters:** rivers with fords, marsh, bramble thickets, dunes,
+  rocky highlands and mountains. Some factions cross terrain others must walk
+  around; only flyers cross mountains.
 * **Winning:** a player is out when they have no units left and no complete
   building that matters (walls, gates, plain farms and unfinished
   foundations do not count). A player who loses every building that trains
