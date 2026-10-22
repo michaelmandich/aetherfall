@@ -3,6 +3,8 @@
 //!
 //! ```text
 //! cargo run -p af_ui --example ui_preview                          # skirmish menu
+//! cargo run -p af_ui --example ui_preview -- --opponents 5 --map huge --water seas --site shattered
+//!                                                                  # the menu, preset
 //! cargo run -p af_ui --example ui_preview -- hud                   # HUD, town centre selected
 //! cargo run -p af_ui --example ui_preview -- hud --select workers  # or: army, mixed, none
 //! cargo run -p af_ui --example ui_preview -- hud --hover Peasant   # hover a button by its label
@@ -15,8 +17,10 @@
 //! is loaded) and there are no 3D visuals.
 
 use af_core::ext::input::{ControlGroups, RtsCamera};
+use af_core::ext::map::{MapSize, RiverCount, SiteChoice, WaterLevel};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, test_data, with_commands};
+use af_ui::menu::MenuSettings;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use bevy::window::WindowResolution;
@@ -45,6 +49,17 @@ fn main() -> AppExit {
     app.insert_state(if hud { GameState::Playing } else { GameState::Menu });
     app.insert_resource(Data(test_data()));
     app.add_plugins((af_core::CorePlugin, af_ui::HudPlugin));
+    if !hud {
+        match menu_settings(&args) {
+            Ok(settings) => {
+                app.insert_resource(settings);
+            }
+            Err(e) => {
+                eprintln!("ui_preview: {e}");
+                return AppExit::error();
+            }
+        }
+    }
     if hud {
         flat_world(&mut app, 240.0, &[("ironhold", 0), ("dune", 1), ("sylvan", 2)]);
         app.insert_resource(LocalPlayer(Some(PlayerId(0))));
@@ -65,6 +80,34 @@ fn main() -> AppExit {
         app.add_systems(Update, screenshot_then_exit);
     }
     app.run()
+}
+
+/// The menu's settings from `--opponents N` (1-5) and the map flags
+/// (`--map`, `--water`, `--rivers`, `--site`, `--map-size`), as the game's
+/// command line takes them.
+fn menu_settings(args: &[String]) -> Result<MenuSettings, String> {
+    let mut s = MenuSettings::default();
+    let bad = |flag: &str, v: &str| format!("{flag}: unknown value `{v}`");
+    if let Some(v) = arg_value(args, "--opponents") {
+        let n: usize = v.parse().map_err(|_| bad("--opponents", &v))?;
+        s.opponents = vec![None; n.clamp(1, af_ui::menu::MAX_OPPONENTS)];
+    }
+    if let Some(v) = arg_value(args, "--map") {
+        s.map.size = MapSize::parse(&v).ok_or_else(|| bad("--map", &v))?;
+    }
+    if let Some(v) = arg_value(args, "--water") {
+        s.map.water = WaterLevel::parse(&v).ok_or_else(|| bad("--water", &v))?;
+    }
+    if let Some(v) = arg_value(args, "--rivers") {
+        s.map.rivers = RiverCount::parse(&v).ok_or_else(|| bad("--rivers", &v))?;
+    }
+    if let Some(v) = arg_value(args, "--site") {
+        s.map.site = SiteChoice::parse(&v).ok_or_else(|| bad("--site", &v))?;
+    }
+    if let Some(v) = arg_value(args, "--map-size") {
+        s.map_metres = v.parse().map_err(|_| bad("--map-size", &v))?;
+    }
+    Ok(s)
 }
 
 fn populate(app: &mut App, select: &str) {
