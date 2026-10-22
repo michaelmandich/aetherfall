@@ -70,6 +70,13 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   checks every tick that no boxes overlap (> 0.1 m is a hard failure), that
   nothing is stuck, NaN, leaking or mis-counted. Long sweeps:
   `cargo test --release -p aetherfall --test invariants -- --include-ignored`.
+* Chokepoints: `crates/aetherfall/tests/chokepoints.rs` orders crowds
+  through narrow gaps (cliff gaps, slots between houses, crossing head-on,
+  past idle units, behind a ram) the way a player's right-click does, and
+  measures how many get through and how fast, failed orders, units left
+  stuck and the deepest overlap. The fast tests check overlap and
+  determinism; the table:
+  `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`.
 
 ## Client model
 
