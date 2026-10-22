@@ -94,6 +94,6 @@
         "props": "A single hand-held weapon or shield for a game unit, slightly oversized and chunky so it reads from far away, nothing attached to it.",
         "buildings": "A single building for a strategy game: chunky readable massing with a clear roof shape and a few large features, standing alone with no base plate, no ground around it, no people or animals.",
         "nodes": "A single natural resource object for a strategy game, standing alone with no base plate and no ground around it.",
-        "decor": "A single piece of landscape scenery for a strategy-game map, not a building and not something to gather, in the lush, vibrant colours of temperate Europe in summer: fresh deep greens, clean cool grey stone, clear white snow. Its foot ends in an irregular natural edge that can sink into the terrain: no base plate, plinth or square ground tile. No people or animals."
+        "decor": "A single piece of landscape scenery for a strategy-game map, not a building and not something to gather, in the lush, vibrant colours of temperate Europe in summer: fresh deep greens, clean cool grey stone. No snow or ice unless the subject names it, and nothing else in the picture: no background scenery or distant mountains. Its foot ends in an irregular natural edge that can sink into the terrain: no base plate, plinth or square ground tile. No people or animals."
     }
 }
