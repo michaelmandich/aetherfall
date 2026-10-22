@@ -1,7 +1,7 @@
 //! The renderer driven headless: real plugin, real content, no GPU.
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy, team_bit};
-use af_core::ext::input::{PlacementGhost, PlacementPreview};
+use af_core::ext::input::{ClickMark, OrderMark, PlacementGhost, PlacementPreview};
 use af_core::ext::render::{MAX_GROUND_OFFSET, terrain_ground};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
@@ -9,6 +9,7 @@ use af_render::BoxRenderPlugin;
 use af_render::assets::BoxAssets;
 use af_render::entities::{BoxVisual, VisualSig};
 use af_render::fog::{FogMemory, MemoryPool};
+use af_render::markers::{MAX_MARKERS, Marker, SLAM_SECS, Slam};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
 use af_render::scene::RenderScene;
@@ -229,7 +230,7 @@ fn bars_outlines_pings_and_effects() {
     assert!(app.world().get::<BarParts>(w.enemy_unit).is_none(), "healthy, unselected: none");
     assert!(app.world().get::<OutlineParts>(w.own_unit).is_some());
     assert!(app.world().get::<Mesh3d>(fx).is_some(), "effects get a mesh");
-    assert!(app.world().get::<Mesh3d>(ping).is_some());
+    assert!(app.world().get::<Marker>(ping).is_some(), "a bare ping is drawn as a point marker");
     // 0.2 s at 1/30 s per update.
     run_ticks(app, 8);
     assert!(app.world().get_entity(ping).is_err(), "ping expired");
@@ -248,12 +249,141 @@ fn materials_are_cached_not_created_per_frame() {
     let app = &mut w.app;
     app.world_mut().entity_mut(w.own_unit).insert(Selected);
     app.world_mut().get_mut::<Health>(w.own_unit).unwrap().hp *= 0.5;
-    run_ticks(app, 3);
+    // Past the slam of the foundation placed at the start: a fading effect
+    // makes each opacity's material the first time it is seen.
+    run_ticks(app, (SLAM_SECS * 30.0) as u32 + 3);
     let before = app.world().resource::<BoxAssets>().material_count();
     let materials_before = app.world().resource::<Assets<StandardMaterial>>().len();
     run_ticks(app, 20);
     assert_eq!(app.world().resource::<BoxAssets>().material_count(), before);
     assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), materials_before);
+}
+
+#[test]
+fn markers_and_slams_reuse_their_materials() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let (tree, enemy) = (w.tree, w.enemy_unit);
+    let barracks = test_data().building_id("barracks").unwrap();
+    // Markers of every shape and a slam, played to the end.
+    let play = |app: &mut App, at: Vec2| {
+        app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Patrol, None, true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(tree), true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Attack, Some(enemy), false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: barracks, facing: 0.0 }, None, false).ping(at));
+        with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, at, 0.0, false));
+        run_ticks(app, (SLAM_SECS.max(ClickMark::QUEUED_SECS) * 30.0) as u32 + 3);
+    };
+    let count = |app: &App| (app.world().resource::<BoxAssets>().material_count(), app.world().resource::<Assets<StandardMaterial>>().len());
+    play(app, Vec2::new(40.0, 20.0));
+    let first = count(app);
+    // The same again elsewhere: every fade step's material already exists.
+    play(app, Vec2::new(40.0, 45.0));
+    assert_eq!(count(app), first);
+    let playing = app.world_mut().query_filtered::<(), Or<(With<Marker>, With<Slam>)>>().iter(app.world()).count();
+    assert_eq!(playing, 0, "all played out");
+}
+
+/// The parts of a click marker (its ping's children).
+fn marker_parts(app: &App, ping: Entity) -> Vec<Entity> {
+    app.world().get::<Children>(ping).map(|c| c.iter().collect()).unwrap_or_default()
+}
+
+/// Where a ping's marker is drawn.
+fn marker_at(app: &App, ping: Entity) -> Vec3 {
+    app.world().get::<Transform>(ping).expect("the marker is placed").translation
+}
+
+#[test]
+fn click_markers_dive_onto_points_and_expire() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let spot = Vec2::new(5.0, 5.0);
+    let ping = app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(spot)).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, ping).len(), 4 + 2, "four arrows, the ring and the flash");
+    let at = marker_at(app, ping);
+    assert_eq!(at.xz(), spot);
+    let highest = |app: &App| marker_parts(app, ping).iter().map(|e| app.world().get::<Transform>(*e).unwrap().translation.y).fold(f32::MIN, f32::max);
+    let start = highest(app);
+    assert!(start > 1.0, "the arrows start high above the spot: {start}");
+    run_ticks(app, 6);
+    assert!(highest(app) < start - 0.3, "and come down");
+    // 0.75 s at 1/30 s per update: gone with its parts.
+    let parts = marker_parts(app, ping);
+    run_ticks(app, 20);
+    assert!(app.world().get_entity(ping).is_err(), "expired");
+    assert!(parts.iter().all(|p| app.world().get_entity(*p).is_err()), "its parts went with it");
+
+    // Queued: a lingering dot too. Placements only flash their footprint.
+    let queued = app.world_mut().spawn(ClickMark::new(OrderMark::AttackMove, None, true).ping(spot)).id();
+    let house = test_data().building_id("house").unwrap();
+    let placed = app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: house, facing: 0.0 }, None, false).ping(Vec2::new(40.0, 40.0))).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, queued).len(), 4 + 3);
+    assert_eq!(marker_parts(app, placed).len(), 4, "the footprint's frame");
+
+    // A burst of clicks keeps only the newest markers.
+    for i in 0..MAX_MARKERS + 6 {
+        app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(Vec2::new(10.0 + i as f32, 20.0)));
+        run_ticks(app, 1);
+    }
+    let alive = app.world_mut().query_filtered::<(), With<Marker>>().iter(app.world()).count();
+    assert!(alive <= MAX_MARKERS, "{alive} markers");
+}
+
+#[test]
+fn click_markers_hug_and_follow_their_target() {
+    let mut w = setup();
+    let app = &mut w.app;
+    // An attack on the enemy unit: arrows onto a ring that follows it.
+    let enemy_at = Vec2::new(50.0, 50.0);
+    let ping = app.world_mut().spawn(ClickMark::new(OrderMark::Attack, Some(w.enemy_unit), false).ping(enemy_at)).id();
+    // Gathering the tree: a frame around it.
+    let tree_at = app.world().get::<Position>(w.tree).unwrap().0;
+    let gather = app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(w.tree), false).ping(tree_at + Vec2::splat(0.2))).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, ping).len(), 4 + 1, "arrows and the hugging ring");
+    assert_eq!(marker_parts(app, gather).len(), 4 + 4, "arrows and the frame");
+    assert_eq!(marker_at(app, gather).xz(), tree_at, "centred on the tree, not the click");
+    place(app, w.enemy_unit, Vec2::new(53.0, 50.0), 0.0);
+    assert_eq!(marker_at(app, ping).xz(), Vec2::new(53.0, 50.0), "follows the unit");
+    // Out of sight in the fog: it stays where the unit was last seen.
+    app.world_mut().insert_resource(fog_seeing([]));
+    run_ticks(app, 1);
+    place(app, w.enemy_unit, Vec2::new(56.0, 50.0), 0.0);
+    assert_eq!(marker_at(app, ping).xz(), Vec2::new(53.0, 50.0), "does not track it through the fog");
+}
+
+#[test]
+fn own_foundations_slam_down() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let slams = |app: &mut App| app.world_mut().query::<(&Slam, &Children)>().iter(app.world()).map(|(_, c)| c.len()).collect::<Vec<_>>();
+    let start = slams(app);
+    assert_eq!(start.len(), 1, "the own foundation placed at the start");
+    assert!(start[0] >= 4 + 8 + 4, "a shockwave, dust and chips: {start:?}");
+    let barracks = test_data().building_id("barracks").unwrap();
+    // Other players' foundations and finished buildings do not slam.
+    with_commands(app, |c, d, p| {
+        spawn_building(c, d, p.get(PlayerId(1)), barracks, Vec2::new(45.0, 45.0), 0.0, false);
+        spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(45.0, 20.0), 0.0, true);
+    });
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1);
+    run_ticks(app, (SLAM_SECS * 30.0) as u32);
+    assert!(slams(app).is_empty(), "played out");
+    with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(30.0, 48.0), 0.0, false));
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1, "a new own foundation");
+    let mut roots = app.world_mut().query_filtered::<&Transform, With<Slam>>();
+    assert_eq!(roots.single(app.world()).unwrap().translation.xz(), Vec2::new(30.0, 48.0));
+    // Spectators see no slams.
+    app.world_mut().insert_resource(LocalPlayer(None));
+    with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(14.0, 48.0), 0.0, false));
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1);
 }
 
 #[test]

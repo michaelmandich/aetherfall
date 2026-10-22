@@ -64,11 +64,20 @@ fn spawn_bars(commands: &mut Commands, painter: &mut Painter, parent: Entity, sp
     BarParts { root, rows }
 }
 
-/// The world rotation bars face: af_input's RTS camera (else any 3D
-/// camera), or one derived from the rig when there is none (headless).
-fn camera_rotation(cameras: &Query<(&GlobalTransform, Has<RtsCamera>), With<Camera3d>>, rig: &CameraRig) -> Quat {
+/// The 3D cameras, marking af_input's RTS camera ([`rts_camera`]).
+pub(crate) type Cameras<'w, 's> = Query<'w, 's, (&'static GlobalTransform, Has<RtsCamera>), With<Camera3d>>;
+
+/// Where the view is from: af_input's RTS camera, else any 3D camera;
+/// `None` when there is none (headless).
+pub(crate) fn rts_camera<'a>(cameras: &'a Cameras) -> Option<&'a GlobalTransform> {
     let camera = cameras.iter().find(|(_, rts)| *rts).or_else(|| cameras.iter().next());
-    camera.map_or_else(|| Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch), |(g, _)| g.rotation())
+    camera.map(|(g, _)| g)
+}
+
+/// The world rotation bars face: the camera's ([`rts_camera`]), or one
+/// derived from the rig when there is none (headless).
+fn camera_rotation(cameras: &Cameras, rig: &CameraRig) -> Quat {
+    rts_camera(cameras).map_or_else(|| Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch), |g| g.rotation())
 }
 
 /// Bars for entities that are damaged, selected, hovered or under
@@ -80,7 +89,7 @@ pub(crate) fn update_bars(
     mut painter: Painter,
     cursor: Res<CursorWorld>,
     rig: Res<CameraRig>,
-    camera: Query<(&GlobalTransform, Has<RtsCamera>), With<Camera3d>>,
+    camera: Cameras,
     actors: Query<(Entity, &Health, Option<&Shield>, Option<&BuildingView>, &Footprint, &Transform, Has<Selected>, Option<&BarParts>, Option<&ModelUnit>), With<BoxVisual>>,
     mut parts: PartQuery,
 ) {

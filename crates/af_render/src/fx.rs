@@ -1,15 +1,13 @@
-//! Effect boxes (`FxBox`, written by af_combat) and click pings.
+//! Effect boxes (`FxBox`, written by af_combat). Click markers are drawn by
+//! [`crate::markers`].
 
 use af_core::prelude::*;
 use bevy::prelude::*;
 
 use crate::assets::{Painter, no_shadows};
-use crate::entities::Ground;
 use crate::look::{Look, MatKey, Shade};
 use crate::motion::rotation_for_dir;
 
-/// Side of a fresh click ping (metres).
-const PING_SIZE: f32 = 0.9;
 /// Effects are drawn at least this many metres thick per metre of camera
 /// distance (about 3 px at any zoom), so arrows, bullets and sparks stay
 /// visible when the view is zoomed out. Only the drawing grows; the sim
@@ -73,49 +71,6 @@ pub(crate) fn sync_fx(
     }
 }
 
-/// Present once a ping has its mesh; `total` is its starting lifetime.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct PingDrawn {
-    total: f32,
-}
-
-/// Scale of a ping with `time_left` of `total` seconds: a flat square that
-/// shrinks to nothing.
-pub fn ping_scale(time_left: f32, total: f32) -> Vec3 {
-    let f = if total > 0.0 { (time_left / total).clamp(0.0, 1.0) } else { 0.0 };
-    Vec3::new(PING_SIZE * f, 0.03, PING_SIZE * f)
-}
-
-pub(crate) fn attach_pings(mut commands: Commands, mut painter: Painter, ground: Ground, pings: Query<(Entity, &ClickPing), Without<PingDrawn>>) {
-    for (e, ping) in &pings {
-        let total = ping.time_left.max(0.01);
-        commands.entity(e).try_insert((
-            Mesh3d(painter.cube()),
-            MeshMaterial3d(painter.material(Look::unlit(ping.color, 0.9))),
-            Transform::from_xyz(ping.pos.x, ground.surface(ping.pos) + 0.08, ping.pos.y)
-                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))
-                .with_scale(ping_scale(ping.time_left, total)),
-            Visibility::Inherited,
-            no_shadows(),
-            PingDrawn { total },
-        ));
-    }
-}
-
-/// Count pings down in real time (they keep shrinking while paused) and
-/// despawn them when they run out.
-pub(crate) fn tick_pings(mut commands: Commands, time: Res<Time<Real>>, mut pings: Query<(Entity, &mut ClickPing, &PingDrawn, &mut Transform)>) {
-    let dt = time.delta_secs();
-    for (e, mut ping, drawn, mut tf) in &mut pings {
-        ping.time_left -= dt;
-        if ping.time_left <= 0.0 {
-            commands.entity(e).try_despawn();
-        } else {
-            tf.scale = ping_scale(ping.time_left, drawn.total);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,13 +102,5 @@ mod tests {
         let far = fx_transform(&bolt, 0.0, fx_min_size(120.0));
         assert!((far.scale.x - fx_min_size(120.0)).abs() < 1e-6 && far.scale.x == far.scale.y);
         assert_eq!(far.scale.z, 0.5, "length kept");
-    }
-
-    #[test]
-    fn pings_shrink_to_nothing() {
-        assert_eq!(ping_scale(1.0, 1.0).x, PING_SIZE);
-        assert!((ping_scale(0.5, 1.0).x - PING_SIZE * 0.5).abs() < 1e-6);
-        assert_eq!(ping_scale(0.0, 1.0).x, 0.0);
-        assert_eq!(ping_scale(-1.0, 1.0).x, 0.0);
     }
 }

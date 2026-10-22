@@ -692,6 +692,7 @@ fn issued(app: &App) -> Vec<PlayerCommand> {
 
 #[test]
 fn minimap_clicks_move_the_camera_and_command() {
+    use af_core::ext::input::{ClickMark, OrderMark};
     let mut app = hud_app();
     let unit = spawn_unit_at(&mut app, 0, "spearman", Vec2::new(40.0, 40.0));
     select(&mut app, &[unit]);
@@ -703,11 +704,18 @@ fn minimap_clicks_move_the_camera_and_command() {
     click_minimap(&mut app, Vec2::ZERO, MouseButton::Right);
     let smart = CommandKind::Smart { point: Vec2::splat(64.0), target: None };
     assert!(issued(&app).iter().any(|c| c.kind == smart && c.entities == vec![unit]), "{:?}", issued(&app));
+    // Both orders leave a click marker at their point in the world.
+    let marks = |app: &mut App| {
+        let world = app.world_mut();
+        world.query::<(&ClickPing, &ClickMark)>().iter(world).map(|(p, m)| (p.pos, m.kind)).collect::<Vec<_>>()
+    };
+    assert_eq!(marks(&mut app), vec![(Vec2::splat(64.0), OrderMark::Move)]);
     // A pending attack-move completes on the minimap.
     app.insert_resource(InputMode::Target(TargetAction::AttackMove));
     click_minimap(&mut app, Vec2::new(-0.5, -0.5), MouseButton::Left);
     assert_eq!(*app.world().resource::<InputMode>(), InputMode::Normal);
     assert!(issued(&app).iter().any(|c| c.kind == CommandKind::AttackMove(Vec2::ZERO)));
+    assert!(marks(&mut app).contains(&(Vec2::ZERO, OrderMark::AttackMove)));
     // A right click with a mode pending only cancels the mode.
     app.insert_resource(InputMode::Target(TargetAction::Patrol));
     click_minimap(&mut app, Vec2::ZERO, MouseButton::Right);

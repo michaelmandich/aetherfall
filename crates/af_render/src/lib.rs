@@ -1,5 +1,6 @@
 //! Aetherfall renderer: terrain, units, buildings, nodes, weapons,
-//! projectiles/FX, health bars, selection, fog, ghosts; animated glTF
+//! projectiles/FX, health bars, selection, fog, ghosts, click markers and
+//! placement slams ([`markers`]); animated glTF
 //! models for the unit types that have one ([`model`]) and static glTF
 //! models for the building and node types that have one ([`statics`]),
 //! both listed in the visual registry ([`registry`]).
@@ -17,16 +18,18 @@
 //!
 //! | step | what |
 //! |---|---|
-//! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/pings; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
-//! | `Animate` | tick interpolation (`Prev* -> *` by `Time<Fixed>::overstep_fraction`), weapon animation, shields, cargo, flyer shadows, foundations (boxes or models rising), node shrink, FX, pings; model clips and props, corpses; felled trees and stumps |
-//! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, placement ghosts |
+//! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/click markers; a slam for each new own foundation; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
+//! | `Animate` | tick interpolation (`Prev* -> *` by `Time<Fixed>::overstep_fraction`), weapon animation, shields, cargo, flyer shadows, foundations (boxes or models rising), node shrink, FX, placement slams; model clips and props, corpses; felled trees and stumps |
+//! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, placement ghosts, click markers (after the units moved, so a marker on a unit follows it) |
 //! | `Fog` | hide what the local team cannot see; the fog overlay texture; remembered dead buildings and nodes |
 //!
 //! Sim entities get `Transform` + `Visibility` and a child "visual root"
 //! with their boxes (or model), so despawning a sim entity removes its
-//! visuals. Scene entities (light, terrain, overlay, ghosts, markers,
-//! corpses, felled trees, stumps) carry [`scene::RenderScene`] and are
-//! despawned on leaving `Playing`.
+//! visuals. Scene entities (light, terrain, overlay, ghosts, rally markers,
+//! placement slams, corpses, felled trees, stumps) carry
+//! [`scene::RenderScene`] and are despawned on leaving `Playing`; a click
+//! marker's parts are children of its `ClickPing`, which af_input and
+//! af_map despawn at the end of a match.
 
 pub mod assets;
 pub mod entities;
@@ -34,6 +37,7 @@ pub mod fog;
 pub mod fx;
 pub mod ghost;
 pub mod look;
+pub mod markers;
 pub mod model;
 pub mod motion;
 pub mod overlay;
@@ -109,7 +113,8 @@ impl Plugin for BoxRenderPlugin {
                         .run_if(resource_exists::<Players>),
                     entities::attach_nodes,
                     fx::attach_fx,
-                    fx::attach_pings,
+                    markers::attach_markers,
+                    markers::spawn_slams,
                 )
                     .in_set(RenderStep::Build),
             )
@@ -121,7 +126,7 @@ impl Plugin for BoxRenderPlugin {
                     entities::animate_parts,
                     entities::shrink_nodes,
                     fx::sync_fx,
-                    fx::tick_pings,
+                    markers::animate_slams,
                     (model::drive::drive_models, model::drive::drive_corpses).run_if(resource_exists::<model::ModelLibrary>),
                     (statics::fall::drive_falls.run_if(has_statics), statics::fall::sink_stumps),
                 )
@@ -132,6 +137,7 @@ impl Plugin for BoxRenderPlugin {
                 (
                     (overlay::update_bars, overlay::update_outlines, overlay::update_rally).run_if(resource_exists::<Players>),
                     ghost::update_ghosts.run_if(resource_exists::<PlacementPreview>),
+                    markers::animate_markers,
                 )
                     .in_set(RenderStep::Overlay),
             )
