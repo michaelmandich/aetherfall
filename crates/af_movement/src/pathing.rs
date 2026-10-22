@@ -275,6 +275,21 @@ impl PathQueue {
         shared
     }
 
+    /// Forget the match: its waiting units (despawned with it), whose turn
+    /// it was, how many lines it had, and its routes. The next match is
+    /// served as in a fresh game (as a replay of it, or a lockstep peer that
+    /// just started, serves it): the lines take turns from the first again.
+    /// The expansion counts run on.
+    fn start_over(&mut self) {
+        self.lines.clear();
+        self.turn = 0;
+        self.resume = None;
+        self.routes.clear();
+        self.coarse.clear();
+        self.spent = 0;
+        self.grid = 0;
+    }
+
     /// Drop the routes of another grid (the previous match's map), so a new
     /// map starts with none, as in a fresh game.
     fn follow_grid(&mut self, nav: &NavGrid) {
@@ -882,6 +897,12 @@ pub(crate) fn prepare_regions(mut commands: Commands, nav: Option<Res<Nav>>, uni
 /// `OnExit(GameState::Playing)`: the map's regions go with it.
 pub(crate) fn drop_regions(mut commands: Commands) {
     commands.remove_resource::<NavRegions>();
+}
+
+/// `OnEnter` and `OnExit(GameState::Playing)`: the path queue starts over
+/// with every match (see [`PathQueue::start_over`]).
+pub(crate) fn reset_queue(mut queue: ResMut<PathQueue>) {
+    queue.start_over();
 }
 
 #[cfg(test)]
@@ -1557,5 +1578,99 @@ mod tests {
         let deep = data.terrain_id("deep_water").expect("deep water");
         assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != deep), "never in deep water");
         assert!(cells < 5_000, "{cells} cell expansions");
+    }
+
+    /// The forest map for `players`; each of `orders` (owner, start, goal)
+    /// sends a foot unit. Returns them in order.
+    fn forest_match(app: &mut App, players: &[(&str, u8)], orders: &[(usize, Vec2, Vec2)]) -> Vec<Entity> {
+        let data = app.world().resource::<Data>().0.clone();
+        let p = flat_world(app, 160.0, players);
+        forest(app, &data);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        orders
+            .iter()
+            .map(|&(owner, at, goal)| {
+                let e = with_commands(app, |c, data, players| spawn_unit(c, data, players.get(p[owner]), foot, at, 0.0));
+                app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+                e
+            })
+            .collect()
+    }
+
+    /// Leave the match as the game does: everything of it despawned, then
+    /// out of `Playing`. A test world keeps Bevy's ids, which hand the
+    /// freed slots out again last freed first; the slots are taken up here,
+    /// so the next match's entities are numbered in the order they are
+    /// spawned, as in a fresh app (in a real match af_core's sim ids see to
+    /// that).
+    fn leave_match(app: &mut App) {
+        let world = app.world_mut();
+        let doomed: Vec<Entity> = world.query_filtered::<Entity, Or<(With<Unit>, With<Building>, With<ResourceNode>)>>().iter(world).collect();
+        for e in doomed {
+            world.despawn(e);
+        }
+        world.flush();
+        while world.spawn_empty().id().generation() != bevy::ecs::entity::EntityGeneration::FIRST {}
+        world.resource_mut::<NextState<GameState>>().set(GameState::Menu);
+        app.update();
+    }
+
+    /// Every unit's path status, position and facing, bit for bit, after
+    /// each of `ticks` ticks.
+    fn trace(app: &mut App, units: &[Entity], ticks: u32) -> Vec<Vec<(PathStatus, [u32; 3])>> {
+        (0..ticks)
+            .map(|_| {
+                run_ticks(app, 1);
+                units
+                    .iter()
+                    .map(|&e| {
+                        let (pos, facing) = (app.world().get::<Position>(e).expect("position").0, app.world().get::<Facing>(e).expect("facing").0);
+                        (status(app, e), [pos.x.to_bits(), pos.y.to_bits(), facing.to_bits()])
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A match played in an app that played one before goes as it does in
+    /// a fresh app (as a headless replay of it, or a lockstep peer that
+    /// just started, plays it): the path queue starts over, so the players'
+    /// lines take turns from the first again, whatever the last match's
+    /// player count, whose turn it was and who was still waiting when it
+    /// ended.
+    #[test]
+    fn a_second_match_in_one_app_replays_as_in_a_fresh_one() {
+        let data = test_data();
+        // Two players each send six units across the forest, scattered so
+        // that no two share a search: more searching than a tick's budget.
+        let orders: Vec<(usize, Vec2, Vec2)> = (0..12)
+            .map(|i| {
+                let (owner, j) = (i % 2, (i / 2) as f32);
+                (owner, Vec2::new(10.0 + owner as f32 * 20.0, 10.0 + j * 28.0), Vec2::new(110.0 + owner as f32 * 30.0, 150.0 - j * 28.0))
+            })
+            .collect();
+        let two = [("ironhold", 0), ("ironhold", 1)];
+
+        let mut fresh = sim_app(data.clone());
+        fresh.add_plugins(crate::MovementPlugin);
+        let units = forest_match(&mut fresh, &two, &orders);
+        let first = trace(&mut fresh, &units, 90);
+
+        // The last match: three players, the third sending a crowd across
+        // the forest, some of it still in line when the match ends.
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let crowd: Vec<(usize, Vec2, Vec2)> =
+            (0..30).map(|i| (2, Vec2::new(10.0 + (i % 6) as f32 * 4.0, 10.0 + (i / 6) as f32 * 30.0), Vec2::new(100.0 + (i % 6) as f32 * 9.0, 8.0 + (i / 6) as f32 * 30.0))).collect();
+        forest_match(&mut app, &[("ironhold", 0), ("ironhold", 1), ("ironhold", 2)], &crowd);
+        run_ticks(&mut app, 2);
+        assert!(queued(&app) > 0, "the last match ends with units waiting");
+        leave_match(&mut app);
+        assert_eq!(queued(&app), 0, "nobody of the last match waits in line");
+        let units = forest_match(&mut app, &two, &orders);
+        app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Playing);
+        let second = trace(&mut app, &units, 90);
+        let agree = first.iter().zip(&second).take_while(|(a, b)| a == b).count();
+        assert!(first == second, "the second match diverges from a fresh one at tick {}", agree + 1);
     }
 }
