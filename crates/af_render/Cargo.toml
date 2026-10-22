@@ -10,3 +10,7 @@ af_core = { workspace = true }
 # The visual registry (assets/visuals/*.ron) and the model manifests it names.
 serde = { workspace = true }
 ron = { workspace = true }
+
+[dev-dependencies]
+# Real generated maps for the decor placement tests (tests/decor.rs).
+af_map = { workspace = true }

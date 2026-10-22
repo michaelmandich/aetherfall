@@ -33,14 +33,14 @@ pub const RIVER_SPEED: f32 = 1.1;
 pub const RANGE_REACH: i32 = 9;
 /// Width of a river's shallow banks beyond its deep core (metres), where
 /// the field paints a river's course across the skirt.
-const RIVER_BANK: f32 = 2.0;
+pub(crate) const RIVER_BANK: f32 = 2.0;
 
 /// A river's centreline (a point every ~0.75 m, source first) and the
 /// half-width of its deep core at each point.
 #[derive(Clone, Debug, Default)]
-struct Course {
-    points: Vec<Vec2>,
-    half: Vec<f32>,
+pub struct Course {
+    pub points: Vec<Vec2>,
+    pub half: Vec<f32>,
 }
 
 /// What a cell looks like.
@@ -132,6 +132,9 @@ pub struct Field {
     pub cover: Vec<Cover>,
     /// Ground of each cell (`terrain_ground`; 0 off the map).
     pub ground: Vec<f32>,
+    /// Map cells something can be built on (false off the map): where no
+    /// decoration may stand.
+    pub buildable: Vec<bool>,
     /// Cells from each cell to the nearest cell across the shore (water to
     /// land, land to water).
     pub shore: Vec<f32>,
@@ -164,6 +167,9 @@ pub struct Field {
     pub spire: Option<(Vec2, f32)>,
     /// Meteor sites (centre, radius), main first.
     pub sites: Vec<(Vec2, f32)>,
+    /// The rivers' lines (af_map's, carried on across the skirt; none
+    /// without `MapFeatures`), source first.
+    pub courses: Vec<Course>,
 }
 
 /// What a [`Field`] is built from.
@@ -196,6 +202,7 @@ impl Field {
             seed,
             cover: vec![Cover::Meadow; n],
             ground: vec![0.0; n],
+            buildable: vec![false; n],
             shore: Vec::new(),
             rock: Vec::new(),
             depth: Vec::new(),
@@ -208,8 +215,10 @@ impl Field {
             heights: Vec::new(),
             spire: None,
             sites: Vec::new(),
+            courses: Vec::new(),
         };
         let looks: Vec<(Cover, f32)> = src.data.terrain.iter().map(|d| (Cover::of(d), terrain_ground(d))).collect();
+        let buildable: Vec<bool> = src.data.terrain.iter().map(|d| d.buildable).collect();
         let ocean_edges: Vec<MapEdge> = src.features.map(|m| m.ocean_edges.clone()).unwrap_or_default();
         // River lines, carried on across the skirt where they leave the map.
         let courses: Vec<Course> = src.features.map(|m| m.rivers.iter().map(|r| f.carry_on(r)).collect()).unwrap_or_default();
@@ -219,9 +228,11 @@ impl Field {
                 let i = f.index(x, z);
                 let m = IVec2::new(x - skirt, z - skirt);
                 if f.on_map(x, z) {
-                    let (cover, ground) = looks.get(nav.terrain_at(m) as usize).copied().unwrap_or((Cover::Meadow, 0.0));
+                    let t = nav.terrain_at(m) as usize;
+                    let (cover, ground) = looks.get(t).copied().unwrap_or((Cover::Meadow, 0.0));
                     f.cover[i] = cover;
                     f.ground[i] = ground;
+                    f.buildable[i] = buildable.get(t).copied().unwrap_or(true);
                 } else {
                     // Off-map land is at 0, like the grass `corner_ground`
                     // assumes off the map (water and rock use their own rules).
@@ -259,6 +270,7 @@ impl Field {
             Some((site.center, land * 0.04 + 1.5))
         });
         f.heights = f.corner_heights();
+        f.courses = courses;
         f
     }
 
@@ -367,7 +379,7 @@ impl Field {
 
     /// Chamfer distance (in cells) from every cell to the nearest cell
     /// marked in `target` (capped at [`SKIRT`] when none is).
-    fn distance_to(&self, target: &[bool]) -> Vec<f32> {
+    pub(crate) fn distance_to(&self, target: &[bool]) -> Vec<f32> {
         const FAR: f32 = 1.0e6;
         const DIAG: f32 = std::f32::consts::SQRT_2;
         let (w, h) = (self.cols, self.rows);

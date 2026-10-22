@@ -24,6 +24,10 @@ Sources (written to a temporary folder, with their own assets.toml):
                          (assets.toml: yaw = 180), default banner
     buildings/farm.glb   banner at a given anchor
     buildings/mill.glb   banner = false
+    decor/reeds_a.glb    decor with a drawn size from assets.toml
+                         (size = [1.0, 2.0, 1.0])
+    decor/mountain_ridge.glb  a long piece lying along Z: turned to lie along X
+    decor/odd_rock.glb   an id the game does not place
 
 Every check that fails is listed; the run fails if any does.
 """
@@ -265,11 +269,14 @@ def run(build_run, parse_args):
                 [((2, 2, 2), (0, 1, 0)), ((0.3, 1.0, 0.3), (0, 2.5, -0.7))])
         _simple(os.path.join(src, "buildings", "farm.glb"), [((6, 0.3, 6), (0, 0.15, 0))])
         _simple(os.path.join(src, "buildings", "mill.glb"), [((3, 3, 3), (0, 1.5, 0))])
+        _simple(os.path.join(src, "decor", "reeds_a.glb"), [((0.5, 1.5, 0.5), (0, 0.75, 0))])
+        _simple(os.path.join(src, "decor", "mountain_ridge.glb"), [((2, 1, 8), (0, 0.5, 0)), ((1, 2, 1), (0, 1, 3))])
+        _simple(os.path.join(src, "decor", "odd_rock.glb"), [((1, 1, 1), (0, 0.5, 0))])
         toml = os.path.join(tmp, "assets.toml")
         with open(toml, "w", encoding="utf-8") as f:
             f.write("[house]\nyaw = 180\n\n[farm]\nbanner = [1.0, 0.3, -2.0]\n\n[mill]\nbanner = false\n"
                     "\n[pine]\ncut_plate = { a = 0.02 }\n\n[palm]\ntriangles = 1500\n"
-                    "\n[oak]\ntint = { a = [0.5, 1.0, 1.0] }\n")
+                    "\n[oak]\ntint = { a = [0.5, 1.0, 1.0] }\n\n[reeds]\nsize = [1.0, 2.0, 1.0]\n")
 
         failed = build_run(parse_args([
             "--source", src, "--out-root", os.path.join(out, "models", "static"), "--asset-root", out,
@@ -278,9 +285,10 @@ def run(build_run, parse_args):
         check(failed == 0, "every asset built")
         reg = content.parse(open(os.path.join(out, "visuals", "static.ron"), encoding="utf-8").read())
         check(reg.get("units") == {} and sorted(reg["buildings"]) == ["farm", "house", "mill"]
-              and sorted(reg["nodes"]) == ["mystery", "oak", "palm", "pine"], f"registry lists every asset ({reg})")
+              and sorted(reg["nodes"]) == ["mystery", "oak", "palm", "pine"]
+              and sorted(reg.get("decor", {})) == ["mountain_ridge", "odd_rock", "reeds"], f"registry lists every asset ({reg})")
         man = {}
-        for kind in ("buildings", "nodes"):
+        for kind in ("buildings", "nodes", "decor"):
             for ident, rel in reg.get(kind, {}).items():
                 m = content.parse(open(os.path.join(out, rel), encoding="utf-8").read())
                 man[ident] = m
@@ -366,6 +374,21 @@ def run(build_run, parse_args):
         s = gltf.summarize(os.path.join(out, mill["variants"][0]["model"]))
         check(mill["banner"] == "false" and "Team_banner" not in s["nodes"] and not any(
             m["name"] == "Team" for m in s["materials"]), "mill: banner = false leaves no banner")
+        reeds, ridge, odd = man.get("reeds", {}), man.get("mountain_ridge", {}), man.get("odd_rock", {})
+        check(reeds.get("kind") == "Decor" and reeds.get("fit") == "Height" and reeds.get("size") == [1.0, 2.0, 1.0]
+              and reeds.get("banner") == "false", f"reeds: decor with the size from assets.toml ({reeds})")
+        r = ridge.get("variants", [{"min": [0, 0, 0], "max": [0, 0, 0]}])[0]
+        w, d = r["max"][0] - r["min"][0], r["max"][2] - r["min"][2]
+        check(abs(w - 8.0) < 0.05 and abs(d - 2.0) < 0.05,
+              f"mountain_ridge: lying along Z, turned to lie along X ({w:.2f} x {d:.2f}, want 8 x 2)")
+        check(ridge.get("size") == list(settings.DECOR["mountain_ridge"][1]) and r.get("triangles", 0)
+              <= settings.DECOR["mountain_ridge"][2], "mountain_ridge: its default size and budget")
+        check(odd.get("kind") == "Decor" and "size" not in odd, "odd_rock: an unknown decor id built, with no size")
+        try:
+            settings.resolve("nodes", "pine", None, {"pine": {"size": (1.0, 1.0, 1.0)}})
+            check(False, "size on a node is refused")
+        except settings.SettingsError:
+            check(True, "size on a node is refused")
         _opacity_map_check(check)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

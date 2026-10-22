@@ -207,6 +207,7 @@ name = "af_render"
 version = "0.1.0"
 dependencies = [
  "af_core",
+ "af_map",
  "bevy",
  "ron",
  "serde",

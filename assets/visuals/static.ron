@@ -76,4 +76,5 @@
         "silicon_deposit": "models/static/nodes/silicon_deposit/silicon_deposit.model.ron",
         "stone_outcrop": "models/static/nodes/stone_outcrop/stone_outcrop.model.ron",
     },
+    decor: {},
 )

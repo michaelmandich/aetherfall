@@ -11,40 +11,71 @@
 //! * [`props`]: brambles, reeds, scree and meteor rock, merged into one
 //!   mesh per chunk, casting no shadows; the Starspire of a `Spire` site
 //!   is its own mesh and casts its tall shadow.
-//! * [`material`]: the ground, water and prop materials, `StandardMaterial`
-//!   extended with the embedded shaders `terrain.wgsl`, `water.wgsl` and
-//!   `props.wgsl` (which import `common.wgsl`), created once per match.
-//!   They draw the fog of war from [`FogTexture`] ([`bind_fog`]).
+//! * [`decor`]: the scenery models (`decor` in the visual registry):
+//!   mountain peaks, crater rims, reeds, sea cliffs, bridges..., placed from
+//!   the field once the models have loaded, each part an entity sharing
+//!   its model's mesh and a fog-aware copy of its material (so Bevy batches
+//!   them), the big pieces casting shadows. A share of the procedural
+//!   brambles and reeds stays beside their models.
+//! * [`material`]: the ground, water, prop and decor materials,
+//!   `StandardMaterial` extended with the embedded shaders `terrain.wgsl`,
+//!   `water.wgsl`, `props.wgsl` and `decor.wgsl` (which import
+//!   `common.wgsl`), created once per match. They draw the fog of war from
+//!   [`FogTexture`] ([`bind_fog`]).
 //!
 //! The drawn surface is published as `af_core::ext::render::TerrainSurface`.
-//! Apps without the render stack (headless tests) get the same chunk
-//! entities with plain `StandardMaterial`s and no shaders.
+//! Apps without the render stack (headless tests) get the same chunk and
+//! decor entities with plain `StandardMaterial`s and no shaders.
 //!
 //! The meshes are built on the compute task pool: a 384 m map takes about
 //! 60 ms, a 1024 m one about 300 ms (dev build, 24 threads).
 
+pub mod decor;
 pub mod field;
 pub mod material;
 pub mod mesh;
 pub mod noise;
 pub mod props;
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use af_core::ext::map::MapFeatures;
 use af_core::ext::render::{FogTexture, TerrainSurface, WATER_LEVEL};
 use af_core::prelude::*;
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::VisibilityRange;
 use bevy::ecs::system::SystemParam;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::tasks::ComputeTaskPool;
 
+use self::decor::{DecorKind, Placed};
 use self::field::{Field, FieldSource};
-use self::material::{GroundParams, PropExt, PropMaterial, TerrainExt, TerrainMaterial, WaterExt, WaterMaterial};
+use self::material::{DecorExt, DecorMaterial, GroundParams, PropExt, PropMaterial, TerrainExt, TerrainMaterial, WaterExt, WaterMaterial};
 use self::mesh::{ChunkMesh, ChunkRect, SHADOW_HEIGHT, chunks, class_images, ground_mesh, water_mesh};
+use self::props::PropKeep;
 use crate::scene::{RenderScene, SKY};
+use crate::statics::{StaticId, StaticLibrary};
+
+/// How long (real seconds) the land waits for decor models still loading
+/// before it is built without them.
+pub const DECOR_WAIT: f32 = 5.0;
+
+/// How far (metres) from the camera small decor is drawn: past every play
+/// zoom's view (the farthest zoom, 210 m, sees ground about 280 m away at
+/// the top of the screen); only the dev overview leaves it out.
+pub const SMALL_DECOR_RANGE: f32 = 340.0;
+
+/// Marker on every part of a decor model: scenery dressing the land, not a
+/// game entity (and not picked, selected or hidden by unit fog; its
+/// material draws the fog of war).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecorPart(pub DecorKind);
+
+/// Every entity the land is drawn with: its chunks and its decor.
+type TheLand = Or<(With<TerrainChunk>, With<DecorPart>)>;
 
 /// The world beyond the skirt while the fog of war is drawn: the dark of
 /// unexplored ground (`UNEXPLORED` in `common.wgsl`, in sRGB).
@@ -73,7 +104,13 @@ pub(crate) fn add_terrain_materials(app: &mut App) {
     bevy::asset::embedded_asset!(app, "terrain.wgsl");
     bevy::asset::embedded_asset!(app, "water.wgsl");
     bevy::asset::embedded_asset!(app, "props.wgsl");
-    app.add_plugins((MaterialPlugin::<TerrainMaterial>::default(), MaterialPlugin::<WaterMaterial>::default(), MaterialPlugin::<PropMaterial>::default()));
+    bevy::asset::embedded_asset!(app, "decor.wgsl");
+    app.add_plugins((
+        MaterialPlugin::<TerrainMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+        MaterialPlugin::<PropMaterial>::default(),
+        MaterialPlugin::<DecorMaterial>::default(),
+    ));
     let common = app.world().resource::<AssetServer>().load::<Shader>(material::COMMON_SHADER);
     app.insert_resource(TerrainShaders(common));
 }
@@ -111,6 +148,10 @@ pub struct TerrainState {
     /// The fog texture the materials were last given (`Some(None)`: none,
     /// everything shown); `None` until they get one.
     fog_bound: Option<Option<AssetId<Image>>>,
+    /// The decor's materials for this map (one per material of its models).
+    decor: Vec<Handle<DecorMaterial>>,
+    /// When (real seconds) the land began waiting for decor models.
+    waiting: Option<f32>,
 }
 
 impl TerrainState {
@@ -132,6 +173,7 @@ pub(crate) struct TerrainAssets<'w> {
     ground: Option<ResMut<'w, Assets<TerrainMaterial>>>,
     water: Option<ResMut<'w, Assets<WaterMaterial>>>,
     props: Option<ResMut<'w, Assets<PropMaterial>>>,
+    decor: Option<ResMut<'w, Assets<DecorMaterial>>>,
 }
 
 impl TerrainAssets<'_> {
@@ -244,12 +286,12 @@ struct BuiltChunk {
 
 /// Build every chunk's meshes, spread over the compute task pool (the
 /// results keep the chunks' order, so the scene is the same every time).
-fn build_chunks(field: &Field) -> Vec<BuiltChunk> {
+fn build_chunks(field: &Field, keep: PropKeep) -> Vec<BuiltChunk> {
     let build = |(rect, on_map): (ChunkRect, bool)| BuiltChunk {
         on_map,
         ground: ground_mesh(field, rect),
         water: water_mesh(field, rect),
-        props: if on_map { props::prop_mesh(props::chunk_props(field, rect)) } else { None },
+        props: if on_map { props::prop_mesh(props::chunk_props(field, rect, keep)) } else { None },
     };
     let rects = chunks(field);
     match ComputeTaskPool::try_get() {
@@ -262,7 +304,8 @@ fn build_chunks(field: &Field) -> Vec<BuiltChunk> {
     }
 }
 
-/// (Re)build the terrain when a new map appears.
+/// (Re)build the terrain when a new map appears (once the decor models
+/// have finished loading, or after [`DECOR_WAIT`] without them).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_terrain(
     mut commands: Commands,
@@ -271,13 +314,24 @@ pub(crate) fn build_terrain(
     nav: Res<Nav>,
     map: Res<MapInfo>,
     features: Option<Res<MapFeatures>>,
+    library: Option<Res<StaticLibrary>>,
+    real: Res<Time<Real>>,
     mut state: ResMut<TerrainState>,
-    old: Query<Entity, With<TerrainChunk>>,
+    old: Query<Entity, TheLand>,
 ) {
     let key = (map.seed, map.size.x.to_bits(), map.size.y.to_bits(), nav.width(), nav.height(), features.is_some());
     if state.built_for == Some(key) {
         return;
     }
+    if library.as_ref().is_some_and(|l| l.decor_loading()) {
+        let now = real.elapsed_secs();
+        let since = *state.waiting.get_or_insert(now);
+        if now - since < DECOR_WAIT {
+            return;
+        }
+        warn!("af_render: decor models still loading after {DECOR_WAIT} s; the land is built with those that are ready");
+    }
+    state.waiting = None;
     let started = Instant::now();
     for e in &old {
         commands.entity(e).try_despawn();
@@ -293,8 +347,9 @@ pub(crate) fn build_terrain(
         }
         None => assets.materials(params, &field),
     };
+    let (catalogue, decor_models) = library.as_deref().map(StaticLibrary::decor_catalogue).unwrap_or_default();
     let (mut count, mut prop_vertices) = (0, 0);
-    for BuiltChunk { on_map, ground, water, props } in build_chunks(&field) {
+    for BuiltChunk { on_map, ground, water, props } in build_chunks(&field, decor::keep_props(&catalogue)) {
         let mut e = commands.spawn((
             Name::new("Terrain chunk"),
             Mesh3d(assets.meshes.add(ground.mesh)),
@@ -335,11 +390,88 @@ pub(crate) fn build_terrain(
         mats.props.insert(&mut e);
         count += 1;
     }
+    let decor_started = Instant::now();
+    let placed = decor::plan(&field, features.as_deref(), &catalogue);
+    let (parts, decor_mats) = match library.as_deref() {
+        Some(library) if !placed.is_empty() => spawn_decor(&mut commands, &mut assets, library, &decor_models, &placed, params),
+        _ => (0, Vec::new()),
+    };
+    let decor_ms = decor_started.elapsed().as_secs_f32() * 1000.0;
+    if !placed.is_empty() {
+        let mut counts = [0usize; DecorKind::COUNT];
+        for p in &placed {
+            counts[p.kind.index()] += 1;
+        }
+        let list: Vec<String> = DecorKind::ALL.iter().filter(|k| counts[k.index()] > 0).map(|k| format!("{} {}", k.id(), counts[k.index()])).collect();
+        debug!("af_render: decor placed: {}", list.join(", "));
+    }
     commands.insert_resource(surface_of(&field));
-    info!("af_render: built the terrain of a {}x{} map in {:.0} ms (field {field_ms:.0} ms; {count} chunks, {prop_vertices} prop vertices)", nav.width(), nav.height(), started.elapsed().as_secs_f32() * 1000.0);
+    info!(
+        "af_render: built the terrain of a {}x{} map in {:.0} ms (field {field_ms:.0} ms; {count} chunks, {prop_vertices} prop vertices; {} decor models in {parts} parts, {decor_ms:.0} ms)",
+        nav.width(),
+        nav.height(),
+        started.elapsed().as_secs_f32() * 1000.0,
+        placed.len()
+    );
     state.built_for = Some(key);
     state.materials = Some(mats);
+    state.decor = decor_mats;
     state.fog_bound = None;
+}
+
+/// Spawn the placed decor: one entity per mesh part of each placed model,
+/// sharing the model's mesh, with a fog-aware copy of each of its
+/// materials made once (plain materials without the render stack), casting
+/// shadows where the placement says. Returns the parts spawned and the
+/// materials made.
+fn spawn_decor(
+    commands: &mut Commands,
+    assets: &mut TerrainAssets,
+    library: &StaticLibrary,
+    models: &[(DecorKind, StaticId, Vec<usize>)],
+    placed: &[Placed],
+    params: GroundParams,
+) -> (usize, Vec<Handle<DecorMaterial>>) {
+    let mut by_kind: Vec<Option<(StaticId, &[usize])>> = vec![None; DecorKind::COUNT];
+    for (kind, id, index) in models {
+        by_kind[kind.index()] = Some((*id, index.as_slice()));
+    }
+    let mut mats: HashMap<AssetId<StandardMaterial>, Mat<DecorMaterial>> = HashMap::new();
+    let mut made = Vec::new();
+    let mut parts = 0;
+    for p in placed {
+        let Some((id, index)) = by_kind[p.kind.index()] else { continue };
+        let Some(mesh) = index.get(p.variant).and_then(|v| library.model(id).variant(*v)) else { continue };
+        for part in &mesh.parts {
+            let mat = match mats.get(&part.material.id()) {
+                Some(m) => m.clone(),
+                None => {
+                    let m = match assets.decor.as_mut() {
+                        Some(decor) => {
+                            let base = assets.plain.get(&part.material).cloned().unwrap_or_default();
+                            let h = decor.add(DecorMaterial { base, extension: DecorExt { params, fog: None } });
+                            made.push(h.clone());
+                            Mat::Shaded(h)
+                        }
+                        None => Mat::Plain(part.material.clone()),
+                    };
+                    mats.insert(part.material.id(), m.clone());
+                    m
+                }
+            };
+            // The build writes no node transforms, so a part's own transform
+            // is plain (the instance's may scale unevenly).
+            let mut e = commands.spawn((Mesh3d(part.mesh.clone()), p.transform.mul_transform(part.transform), Visibility::Inherited, DecorPart(p.kind), RenderScene));
+            mat.insert(&mut e);
+            if !p.shadow {
+                // Small scenery: no shadow, and not drawn from further than
+                // any play zoom shows it (the dev overview's kilometres).
+                e.insert((NotShadowCaster, VisibilityRange::abrupt(0.0, SMALL_DECOR_RANGE)));
+            }
+            parts += 1;
+        }
+    }
+    (parts, made)
 }
 
 /// Give the terrain materials the fog-of-war texture while one is shown
@@ -380,6 +512,14 @@ pub(crate) fn bind_fog(
         && let Some(mut m) = a.get_mut(h)
     {
         m.extension.fog = image.clone();
+    }
+    if let Some(a) = assets.decor.as_mut() {
+        for h in &state.decor {
+            if let Some(mut m) = a.get_mut(h) {
+                set_fog(&mut m.extension.params, extent, on);
+                m.extension.fog = image.clone();
+            }
+        }
     }
     state.fog_bound = Some(want);
 }

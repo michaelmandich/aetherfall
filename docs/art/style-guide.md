@@ -220,9 +220,11 @@ Rules:
   green canopy, never black stains) and its rivers wind on, narrowing.
 - **The fog of war** is drawn into the land: out of sight darkened and
   greyed, unexplored near black.
-- **Scenery models** made later (mountain pieces, crater rims, reeds, ...)
+- **Scenery models** (decor: mountain pieces, crater rims, reeds, ...)
   follow this palette rather than the muted object rule, may carry snow, and
-  must blend into the ground instead of standing on a plate.
+  must blend into the ground instead of standing on a plate; the engine
+  sinks them into the land and scales them to it (where each goes:
+  `docs/art/static-models.md`, "Decor").
 
 ## 10. How prompts are built (Meshy)
 

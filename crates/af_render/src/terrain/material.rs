@@ -1,10 +1,12 @@
-//! The terrain's three materials: [`TerrainMaterial`] (the ground),
-//! [`WaterMaterial`] (the water surface) and [`PropMaterial`] (brambles,
-//! reeds, scree, meteor rock, the spire). Each is a `StandardMaterial`
-//! (so sunlight, shadows and the distance fog stay Bevy's) extended with
-//! one of the embedded WGSL shaders, which paints the surface, darkens it
-//! with the fog of war and greys it off the map. Created once per match;
-//! animation reads `globals.time`, so no material changes per frame.
+//! The terrain's materials: [`TerrainMaterial`] (the ground),
+//! [`WaterMaterial`] (the water surface), [`PropMaterial`] (brambles,
+//! reeds, scree, meteor rock, the spire) and [`DecorMaterial`] (the decor
+//! models, one per material of theirs). Each is a `StandardMaterial` (so
+//! sunlight, shadows and the distance fog stay Bevy's) extended with one
+//! of the embedded WGSL shaders, which paints the surface (decor keeps its
+//! model's own texture), darkens it with the fog of war and greys it off
+//! the map. Created once per match; animation reads `globals.time`, so no
+//! material changes per frame.
 
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -14,6 +16,7 @@ use bevy::shader::ShaderRef;
 pub const TERRAIN_SHADER: &str = "embedded://af_render/terrain/terrain.wgsl";
 pub const WATER_SHADER: &str = "embedded://af_render/terrain/water.wgsl";
 pub const PROP_SHADER: &str = "embedded://af_render/terrain/props.wgsl";
+pub const DECOR_SHADER: &str = "embedded://af_render/terrain/decor.wgsl";
 /// Shared WGSL (`af_render::terrain_common`: the uniforms, noise, the fog
 /// of war), imported by the three shaders above.
 pub const COMMON_SHADER: &str = "embedded://af_render/terrain/common.wgsl";
@@ -21,6 +24,7 @@ pub const COMMON_SHADER: &str = "embedded://af_render/terrain/common.wgsl";
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainExt>;
 pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExt>;
 pub type PropMaterial = ExtendedMaterial<StandardMaterial, PropExt>;
+pub type DecorMaterial = ExtendedMaterial<StandardMaterial, DecorExt>;
 
 /// What every terrain shader knows of the map (`GroundParams` in
 /// `common.wgsl`).
@@ -94,6 +98,23 @@ pub struct PropExt {
 impl MaterialExtension for PropExt {
     fn fragment_shader() -> ShaderRef {
         PROP_SHADER.into()
+    }
+}
+
+/// A decor model's extension: the fog of war over its own material (the
+/// base: the model's `StandardMaterial`, texture, cutout and all).
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct DecorExt {
+    #[uniform(100)]
+    pub params: GroundParams,
+    #[texture(101)]
+    #[sampler(102)]
+    pub fog: Option<Handle<Image>>,
+}
+
+impl MaterialExtension for DecorExt {
+    fn fragment_shader() -> ShaderRef {
+        DECOR_SHADER.into()
     }
 }
 

@@ -1,5 +1,6 @@
 //! The visual registry: which unit, building and node types are drawn with
-//! a model, and the manifest of each (contracts: `docs/art/peasant.md`,
+//! a model, the scenery (decor) models the land is dressed with, and the
+//! manifest of each (contracts: `docs/art/peasant.md`,
 //! `docs/art/static-models.md`).
 //!
 //! Every `*.ron` in `assets/visuals/` is a registry file (`units.ron` is
@@ -10,6 +11,7 @@
 //!     units: { "peasant": "models/peasant/peasant.model.ron" },
 //!     buildings: { "house": "models/static/buildings/house/house.model.ron" },
 //!     nodes: { "pine": "models/static/nodes/pine/pine.model.ron" },
+//!     decor: { "reeds": "models/static/decor/reeds/reeds.model.ron" },
 //! )
 //! ```
 //!
@@ -52,6 +54,9 @@ pub struct RegistryFile {
     /// Resource node id -> static model manifest.
     #[serde(default)]
     pub nodes: BTreeMap<String, String>,
+    /// Decor id (`crate::terrain::decor::DecorKind`) -> static model manifest.
+    #[serde(default)]
+    pub decor: BTreeMap<String, String>,
 }
 
 /// Parse one registry file.
@@ -73,13 +78,19 @@ pub struct Registry {
     pub units: BTreeMap<String, Entry>,
     pub buildings: BTreeMap<String, Entry>,
     pub nodes: BTreeMap<String, Entry>,
+    pub decor: BTreeMap<String, Entry>,
 }
 
 impl Registry {
     /// Add one parsed file. An id already listed keeps its entry and the
     /// duplicate is reported.
     fn add(&mut self, file: &str, parsed: RegistryFile, warnings: &mut Vec<String>) {
-        let sections = [(&mut self.units, parsed.units, "unit"), (&mut self.buildings, parsed.buildings, "building"), (&mut self.nodes, parsed.nodes, "node")];
+        let sections = [
+            (&mut self.units, parsed.units, "unit"),
+            (&mut self.buildings, parsed.buildings, "building"),
+            (&mut self.nodes, parsed.nodes, "node"),
+            (&mut self.decor, parsed.decor, "decor"),
+        ];
         for (section, entries, what) in sections {
             for (id, manifest) in entries {
                 match section.get(&id) {
@@ -97,10 +108,11 @@ impl Registry {
         self.units.extend(over.units);
         self.buildings.extend(over.buildings);
         self.nodes.extend(over.nodes);
+        self.decor.extend(over.decor);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.units.is_empty() && self.buildings.is_empty() && self.nodes.is_empty()
+        self.units.is_empty() && self.buildings.is_empty() && self.nodes.is_empty() && self.decor.is_empty()
     }
 }
 
@@ -218,6 +230,42 @@ mod tests {
         let shipped = include_str!("../../../assets/visuals/units.ron");
         let r = parse_registry(shipped).unwrap_or_else(|e| panic!("assets/visuals/units.ron: {e}"));
         assert_eq!(r.units.get("peasant").map(String::as_str), Some("models/peasant/peasant.model.ron"));
+    }
+
+    #[test]
+    fn the_generated_registry_parses_with_its_decor_section() {
+        let shipped = include_str!("../../../assets/visuals/static.ron");
+        let r = parse_registry(shipped).unwrap_or_else(|e| panic!("assets/visuals/static.ron: {e}"));
+        assert!(r.buildings.contains_key("house") && r.nodes.contains_key("pine"));
+        // As the static build writes it, with decor built.
+        let r = parse_registry(
+            r#"(
+                units: {},
+                buildings: {},
+                nodes: {},
+                decor: {
+                    "mountain_peak": "models/static/decor/mountain_peak/mountain_peak.model.ron",
+                    "reeds": "models/static/decor/reeds/reeds.model.ron",
+                },
+            )"#,
+        )
+        .unwrap();
+        assert_eq!(r.decor.get("reeds").map(String::as_str), Some("models/static/decor/reeds/reeds.model.ron"));
+        assert_eq!(r.decor.len(), 2);
+        assert!(parse_registry(r#"(decors: {"reeds": "r.ron"})"#).is_err(), "a misspelt section");
+    }
+
+    #[test]
+    fn decor_merges_and_overlays_like_the_rest() {
+        let (r, warnings) = merge(
+            vec![file("visuals/static.ron", r#"(decor: {"reeds": "real/reeds.ron", "fern": "real/fern.ron"})"#), file("visuals/x.ron", r#"(decor: {"reeds": "x/reeds.ron"})"#)],
+            vec![file("visuals-placeholders/static.ron", r#"(decor: {"fern": "stand-in/fern.ron", "shrub": "stand-in/shrub.ron"})"#)],
+        );
+        assert_eq!(manifest(&r.decor, "reeds").as_deref(), Some("real/reeds.ron"), "first wins in a folder");
+        assert_eq!(manifest(&r.decor, "fern").as_deref(), Some("stand-in/fern.ron"), "the extra folder wins");
+        assert_eq!(manifest(&r.decor, "shrub").as_deref(), Some("stand-in/shrub.ron"));
+        assert!(warnings.len() == 1 && warnings[0].contains("decor `reeds` is already listed"), "{warnings:?}");
+        assert!(!r.is_empty());
     }
 
     #[test]

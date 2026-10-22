@@ -142,6 +142,19 @@ Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
   meteor sites' rims), meteor rock and the Starspire (a cluster of
   pointed crystal prisms, its own shadow-casting mesh), from cell hashes,
   only on unbuildable ground, merged per chunk.
+* **Decor** (`terrain::decor`): scenery models from the registry's `decor`
+  section (mountain peaks, ridges and foothills, crater rims, the
+  Starspire's monoliths, reeds, river rocks, lily pads, brambles, sea
+  stacks and cliffs, and off the map bridges, ruins and backdrops), placed
+  once per match by `decor::plan`, a pure function of the field and
+  `MapFeatures` (rules: `docs/art/static-models.md`, "Decor"): never a sim
+  entity, never on buildable ground, only low pieces where units walk,
+  landmarks only beyond the edge. The land waits (at most 5 s) for decor
+  models still loading. Each part is an entity sharing its model's mesh
+  and a fog-aware copy of its material (`DecorMaterial`, `decor.wgsl`), so
+  they batch; big pieces cast shadows, small ones do not and are culled
+  past 340 m. Where brambles or reeds have models, a share of the
+  procedural ones stays. With no decor models the land is as before.
 * **Published:** `TerrainSurface` (the drawn top of the map: ground, rock
   or water surface, with each cell's triangle split, so `top_at` lies on
   the drawn triangles) for markers on mountains and water, and for
@@ -163,8 +176,8 @@ else (and every effect) stays boxes.
 
 * **Registry** (`af_render::registry`): every `*.ron` in `assets/visuals/`,
   merged in file-name order, each with optional sections
-  `(units: {...}, buildings: {...}, nodes: {...})` mapping game ids to
-  manifests. `units.ron` is hand-written; `static.ron` is written by the
+  `(units: {...}, buildings: {...}, nodes: {...}, decor: {...})` mapping
+  game ids (decor: the ids the land places) to manifests. `units.ron` is hand-written; `static.ron` is written by the
   static art build. An id listed twice keeps its first entry and a file
   that does not parse is skipped, both with a warning. `--visuals DIR`
   merges `assets/DIR/*.ron` on top (its entries win), to try models
@@ -212,7 +225,8 @@ vehicle, siege engine or beast built rigid) is drawn as it is.
 
 Contract: `docs/art/static-models.md`; pipeline: `art/static/` (drop a GLB
 into `art/static/source/`, run the build; `-- --prune` takes out models
-whose source was deleted). Engine: `af_render::statics`.
+whose source was deleted). Engine: `af_render::statics` (decor models load
+through the same library; the land places them, see "The land").
 
 * **Manifest** (`statics::manifest`): kind, id, `fit`, `random_yaw`, the
   variants (each a GLB with its bounds) and an optional stump; settings

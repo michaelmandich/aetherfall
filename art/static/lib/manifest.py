@@ -8,7 +8,8 @@ import os
 
 from .discover import STUMP
 
-KIND_NAME = {"buildings": "Building", "nodes": "Node"}
+KIND_NAME = {"buildings": "Building", "nodes": "Node", "decor": "Decor"}
+KINDS = ("buildings", "nodes", "decor")  # the registry's sections, in order
 MANIFEST_SUFFIX = ".model.ron"
 
 
@@ -32,9 +33,10 @@ def _part(p):
     return f'(model: "{p["model"]}", min: {_vec(p["min"])}, max: {_vec(p["max"])}, triangles: {p["triangles"]})'
 
 
-def write_manifest(path, kind, ident, fit, random_yaw, variants, stump, banner):
+def write_manifest(path, kind, ident, fit, random_yaw, variants, stump, banner, size=None):
     """`variants`: list of {model, min, max, triangles} in variant order;
-    `stump`: one such dict or None."""
+    `stump`: one such dict or None; `size`: decor's drawn size (w, h, d),
+    written only when given (buildings and nodes have the game's box)."""
     lines = [
         "// Written by art/static/build_static.py; do not edit by hand.",
         "// Paths are relative to the asset folder. min/max: the model's bounds in",
@@ -44,6 +46,10 @@ def write_manifest(path, kind, ident, fit, random_yaw, variants, stump, banner):
         f'    id: "{ident}",',
         f"    fit: {fit},",
         f"    random_yaw: {'true' if random_yaw else 'false'},",
+    ]
+    if size is not None:
+        lines.append(f"    size: {_vec(size)},")
+    lines += [
         "    variants: [",
     ]
     lines += [f"        {_part(v)}," for v in variants]
@@ -61,7 +67,7 @@ def write_manifest(path, kind, ident, fit, random_yaw, variants, stump, banner):
 
 def find_manifests(out_root):
     """{kind: {id: manifest path}} for every <kind>/<id>/<id>.model.ron under out_root."""
-    found = {"buildings": {}, "nodes": {}}
+    found = {kind: {} for kind in KINDS}
     for kind in found:
         folder = os.path.join(out_root, kind)
         if not os.path.isdir(folder):
@@ -74,7 +80,7 @@ def find_manifests(out_root):
 
 
 def write_registry(path, manifests, asset_root, out_root):
-    """The registry (`visuals/static.ron`): building and node ids -> manifest."""
+    """The registry (`visuals/static.ron`): building, node and decor ids -> manifest."""
     where = asset_path(out_root, asset_root)
     where = "this folder" if where in ("", ".") else where + "/"
     lines = [
@@ -84,7 +90,7 @@ def write_registry(path, manifests, asset_root, out_root):
         "(",
         "    units: {},",
     ]
-    for kind in ("buildings", "nodes"):
+    for kind in KINDS:
         entries = manifests.get(kind, {})
         if not entries:
             lines.append(f"    {kind}: {{}},")

@@ -1,9 +1,10 @@
-# Static models: buildings and resource nodes
+# Static models: buildings, resource nodes and decor
 
-A scripted Blender build turns any model of a building or a resource node
-(a Meshy GLB, an FBX, an OBJ...) into what the game loads: one cleaned,
-reduced, normalised GLB per variant, a manifest per asset and the registry
-`assets/visuals/static.ron`. The contract with the engine (formats, fit
+A scripted Blender build turns any model of a building, a resource node or
+a piece of landscape scenery ("decor": mountain peaks, crater rims, reeds,
+sea cliffs, bridges...; a Meshy or Tripo GLB, an FBX, an OBJ...) into what
+the game loads: one cleaned, reduced, normalised GLB per variant, a manifest
+per asset and the registry `assets/visuals/static.ron`. The contract with the engine (formats, fit
 modes, engine behaviour) is
 [docs/art/static-models.md](../../docs/art/static-models.md); what to model
 first is [docs/art/model-queue.md](../../docs/art/model-queue.md).
@@ -21,11 +22,14 @@ by hand: change the source or `assets.toml` and rebuild.
    | `source/nodes/<id>.glb` | a node: `stone_outcrop.glb`, `berry_bush.glb` |
    | `source/nodes/<id>_a.glb`, `_b`, `_c`... | variants: the engine picks one per tree or rock |
    | `source/nodes/<id>_stump.glb` | what a felled tree leaves (optional) |
+   | `source/decor/<id>_<variant>.glb` | decor: `mountain_peak_a.glb`, `reeds_c.glb`, `lily_pads.glb` (the ids are in `lib/settings.py` `DECOR`; Tripo's `import-studio` puts them here) |
 
    `.glb`, `.gltf`, `.fbx` and `.obj` all work. Polygon count, texture size,
    rigs and animations do not matter. The model should stand on the ground
    facing +Z (its door or front toward +Z), roughly in the proportions of
-   the game's box (`size` in `assets/data`); the build does the rest.
+   the game's box (`size` in `assets/data`); the build does the rest. Decor
+   has no game box: it is drawn at its `size` (below) and the engine scales
+   each piece further to where it stands (see "Decor").
 2. Build (from the repository root):
 
    ```bash
@@ -46,6 +50,7 @@ BLENDER="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe"
 "$BLENDER" -b -P art/static/build_static.py -- --only pine,house     # just these (the registry keeps the rest)
 "$BLENDER" -b -P art/static/build_static.py -- --selftest            # check the pipeline itself
 "$BLENDER" -b -P art/static/placeholders.py -- --build               # the placeholder set (git-ignored)
+"$BLENDER" -b -P art/static/placeholders.py -- --kind decor --build  # just (re)write the decor stand-ins, then build
 "$BLENDER" -b -P art/static/placeholders.py -- --fixtures            # the engine's test models
 ```
 
@@ -55,8 +60,8 @@ BLENDER="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe"
 |---|---|
 | (none) | Builds every source in `source/` into `assets/models/static/` and rewrites `assets/visuals/static.ron`. |
 | `--only a,b` | Builds only these ids. The registry still lists every asset already built. |
-| `--source DIR` | Sources from `DIR/buildings/` and `DIR/nodes/` instead. |
-| `--out-root DIR` | Models to `DIR/<buildings\|nodes>/<id>/` instead. |
+| `--source DIR` | Sources from `DIR/buildings/`, `DIR/nodes/` and `DIR/decor/` instead. |
+| `--out-root DIR` | Models to `DIR/<buildings\|nodes\|decor>/<id>/` instead. |
 | `--registry PATH` | The registry to write. |
 | `--asset-root DIR` | The folder asset paths are relative to (default `assets/`); `--out-root` must be inside it. |
 | `--settings PATH` | Another `assets.toml`. |
@@ -78,15 +83,19 @@ Per variant (and stump), in order:
 
 1. **Find** (`lib/discover.py`, `lib/content.py`). The file name is split
    against the game's ids (`stone_outcrop_b` is variant `b` of
-   `stone_outcrop`). An id the game does not have gets a warning and is
-   built anyway, with the defaults of its folder.
+   `stone_outcrop`; decor against `settings.DECOR`: `mountain_peak_a` is
+   variant `a` of `mountain_peak`). An id the game does not have gets a
+   warning and is built anyway, with the defaults of its folder.
 2. **Import** (`lib/scene.py`). Animations are dropped and every bone goes
    to its rest pose; the skin deformation and shape keys are baked into the
    mesh (a rigged model becomes a statue). Every mesh is joined into one,
    with its transforms applied; cameras, lights, empties and loose vertices
    go.
 3. **Normalise.** Turned by `yaw`, then based on y = 0 and centred on x/z
-   by its bounding box. A variant named in `cut_plate` then loses the faces
+   by its bounding box. A long decor piece (its `size` at least 1.4 times
+   wider than deep: ridges, rim arcs, cliffs, bridges, logs, backdrops)
+   whose longer side lies along Z is turned a quarter more, so it lies
+   along X. A variant named in `cut_plate` then loses the faces
    lying wholly in that bottom fraction of its height (a ground plate or
    mound), and is based and centred again.
 4. **Materials** (`lib/materials.py`). Per material: the base colour
@@ -133,7 +142,9 @@ Per variant (and stump), in order:
    exported file: the model's bounds without the banner (so a building
    fits its box by its walls and roof, and the flag may rise above the
    box); `triangles` counts everything in the file, the banner included.
-   The registry is rebuilt from every manifest under `--out-root`.
+   A decor manifest also carries its drawn `size`. The registry is rebuilt
+   from every manifest under `--out-root`, in three sections: `buildings`,
+   `nodes` and `decor` (each written even when empty).
 9. **Contact sheet** (`lib/sheets.py`).
 
 A source with no suffix (`house.glb`) becomes variant `a`
@@ -151,15 +162,31 @@ error.
 | buildings | Box | no | 6000 | 1024 px |
 | `town_center`, `citadel` | Box | no | 10000 | 1024 px |
 | stumps | (the tree's) | (the tree's) | 300 (`stump_triangles`) | 512 px |
+| decor: mountain pieces (`mountain_peak`, `_ridge`, `_foothill`) | Height / Footprint | yes | 8000, 6000, 4000 | 1024 px |
+| decor: meteor sites (`crater_rim`, `star_core`, `aether_monolith`) | | yes | 5000, 5000, 3500 | 1024 px |
+| decor: coast and landmarks (`sea_cliff`, `sea_stack`, `shipwreck`, `ruined_watchtower`, `stone_bridge`, `backdrop_mountains`) | | yes | 2500-5000 | 1024 px |
+| decor: small scenery (reeds, rocks, shrubs, ferns, brambles, lily pads, shards, logs...) | | yes | 600-2000 | 512 px |
+
+Every decor id's fit, drawn size, budget and texture is in
+`lib/settings.py` `DECOR` (an id not there gets 1500 triangles at 512 px,
+with a warning).
 
 Keys: `fit`, `triangles`, `stump_triangles`, `random_yaw`, `yaw`, `banner`
 (`false`, or `[x, y, z]`: the pole's foot in metres in the model frame after
 yaw and centring, before fitting), `texture`, `cut_plate` (`{ c = 0.08 }`:
 cut away the ground plate or mound under variant `c`, the faces wholly in
-that bottom fraction of its height) and `tint` (`{ a = [0.7, 0.75, 0.55] }`:
+that bottom fraction of its height), `tint` (`{ a = [0.7, 0.75, 0.55] }`:
 multiply variant `a`'s base colour textures, in sRGB values, to bring it in
-line with the other variants). Unknown keys and wrong types stop the
-build.
+line with the other variants) and, for decor only, `size` (`[w, h, d]`
+metres: the size the game draws it at before a placement scales it to the
+land). Unknown keys and wrong types stop the build.
+
+Decor budgets: mountain pieces stand by the dozen on a map (a Huge map
+carries about 50 peaks, 20 ridges and 20 foothills) and cast shadows;
+small scenery by the hundred (reeds, ferns and shrubs, 100-400 each). With
+stand-ins subdivided to these budgets (`placeholders.py --heavy`), a Huge
+map's 1,000 or so pieces cost about half a millisecond a frame at play
+zooms (see `docs/art/static-models.md`, "Decor").
 
 Why these budgets: about 900 trees are on a map at once, so a tree at 3000
 triangles is 2.7 M triangles for the forests; buildings are a few dozen.
@@ -183,21 +210,51 @@ box (the stump at its tree's scale), the team material tinted blue:
 | 2 | side, orthographic, from +X |
 | 3 | three-quarter, from the front-left, above |
 | 4 | the game's camera at its start zoom (66 m) at the game's pixel scale on a 1080p screen: what a player sees (a big building that does not fit the tile is zoomed out, and labelled so) |
-| strip | "in game": nodes as a patch of nine (the variants mixed, turned at random when `random_yaw` is on), buildings as three copies at 40 %, 75 % and 100 % build progress tinted red, blue and green |
+| strip | "in game": nodes as a patch of nine (the variants mixed, turned at random when `random_yaw` is on), decor as its variants side by side at their drawn size, buildings as three copies at 40 %, 75 % and 100 % build progress tinted red, blue and green |
 
 The magenta wireframe is the game's box. Trees overflow it sideways (the
 box is the trunk); buildings fill it; rocks fill its width. The strip is
 enlarged 2x or 3x when that still fits, or zoomed out when even 1x does not;
 its label says which.
 
+## Decor
+
+Scenery is not a game entity: nothing in `assets/data` names it, and the
+engine places it over the land from the terrain (rules:
+[docs/art/static-models.md](../../docs/art/static-models.md), "Decor").
+What the build needs from a decor model:
+
+- the id from `lib/settings.py` `DECOR` (the Tripo requests' ids) and a
+  variant letter: `mountain_peak_a.glb`;
+- its front toward +Z where it has one: a rim arc's steep, scorched inner
+  face (it faces the crater's centre), a sea cliff's sheer face (the sea),
+  a backdrop's side toward the map, a shrine's niche; long pieces (ridges,
+  rim arcs, cliffs, bridges, logs, driftwood, the wreck, backdrops) lie along
+  X, which the build sees to (a quarter turn) but not which way round they
+  face: check the sheet's front view and set `yaw = 180` if it shows the
+  back;
+- no ground plate (or `cut_plate`): pieces are sunk into the land as far
+  as the land needs, and a plate would show as a slab on a slope.
+
+The contact sheet's strip shows every variant at its drawn size; the game
+then scales peaks to the range they crown, rim arcs to the rim, bridges to
+the river and so on. To see them, build and run the game; or try the
+stand-ins (`placeholders.py --kind decor --build`, then
+`--visuals visuals-placeholders`).
+
 ## Placeholders and fixtures
 
 `placeholders.py` models low-poly stand-ins for the commonly seen things
 (model queue batches 1-3 and the base buildings) and writes them as
-sources to `placeholders/source/` (committed: 1.3 MB). `--build` builds
-them like real models into `assets/models/_placeholders/` with the registry
-`assets/visuals-placeholders/static.ron` (both git-ignored); run the game
-with `--visuals visuals-placeholders` to see them. The placeholder build
+sources to `placeholders/source/` (committed: 1.3 MB), and rough stand-ins
+for every decor model asked of Tripo (`art/tripo/requests.json`: 56
+variants of 28 ids) to `placeholders/source/decor/` (git-ignored: they are
+throwaway; `--kind decor` writes just those, `--heavy` subdivides them to
+about their triangle budgets, to measure what the real ones will cost).
+`--build` builds them like real models into `assets/models/_placeholders/`
+with the registry `assets/visuals-placeholders/static.ron` (both
+git-ignored); run the game with `--visuals visuals-placeholders` to see
+them. The placeholder build
 reads its own settings, `placeholders/assets.toml` (banner spots for the
 two camps), and never `assets.toml`, so settings made for real models do
 not move the stand-ins; the fixtures are built with no settings at all.
@@ -242,16 +299,19 @@ alpha, a duplicate of that material on a second mesh, flat shading (a
 split surface) and 11,640 triangles; an OBJ stump with loose vertices; an
 unknown id; an FBX house facing -Z (`yaw = 180`); a banner at an anchor and
 `banner = false`; 40 tufts of blades sharing their stems, where collapse
-stalls (`triangles = 1500`, so the split fallback must run); and two
+stalls (`triangles = 1500`, so the split fallback must run); two
 columns standing on a plate, off the origin, with `cut_plate` naming one
-of them; the oak also gets `tint = { a = [0.5, 1.0, 1.0] }`. It then
-checks 56 things in the output (rest pose, budget, welding, merged
+of them; and three decor sources: reeds with `size = [1.0, 2.0, 1.0]`, a
+mountain ridge modelled along Z (to be turned along X) and an id the game
+does not place; the oak also gets `tint = { a = [0.5, 1.0, 1.0] }`. It then
+checks 70 things in the output (rest pose, budget, welding, merged
 materials, cutout alpha with an RGBA texture, 512 px, the tint, no
 emission, front turned to +Z, banner placement, the stalled collapse
 reaching its budget, the plate cut from one variant only and the model
-based and centred again, bounds, manifests and registry parse), plus 2 on
-an FBX-style material whose alpha comes from a separate opacity map, and
-fails if any is wrong. Run it after changing anything in `lib/`.
+based and centred again, bounds, manifests and registry parse, decor's
+kind, size, quarter turn and registry section, `size` refused on a node),
+plus 2 on an FBX-style material whose alpha comes from a separate opacity
+map, and fails if any is wrong. Run it after changing anything in `lib/`.
 
 ## Rehearsal: the Meshy peasant as a statue
 
@@ -279,13 +339,14 @@ art/static/
   build_static.py      entry point (headless)
   placeholders.py      placeholder and fixture models (recipes) and their build
   assets.toml          per-asset settings (every key and default documented)
-  source/              YOUR MODELS: buildings/<id>.glb, nodes/<id>[_<variant>].glb, nodes/<id>_stump.glb
-  placeholders/source/ the placeholder sources (generated by placeholders.py, committed)
+  source/              YOUR MODELS: buildings/<id>.glb, nodes/<id>[_<variant>].glb, nodes/<id>_stump.glb,
+                       decor/<id>[_<variant>].glb
+  placeholders/source/ the placeholder sources (generated by placeholders.py; committed but decor/)
   placeholders/assets.toml  settings for the placeholder build only
   lib/
     content.py         game ids, boxes and resources from assets/data (a small RON reader)
     discover.py        file names -> assets, variants, stumps
-    settings.py        defaults and assets.toml
+    settings.py        defaults (decor: DECOR) and assets.toml
     scene.py           import, statue (rest pose, baked skin), join, normalise
     materials.py       material cleanup, alpha cutout, texture downscale, merging
     png.py             compact PNG writer (palette or RGBA cutout)

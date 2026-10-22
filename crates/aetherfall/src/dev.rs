@@ -483,6 +483,7 @@ fn report_frame_stats(
     units: Query<(), (With<Unit>, Without<Dead>)>,
     models: Query<(), With<af_render::model::ModelUnit>>,
     statics: Query<(), With<af_render::statics::StaticVisual>>,
+    decor: Query<(), With<af_render::terrain::DecorPart>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -496,10 +497,11 @@ fn report_frame_stats(
     let summary = FrameStats::summary(&mut stats.frames);
     let sim = clock.map_or(0.0, |c| c.elapsed);
     info!(
-        "frame stats at {sim:.0} s sim: {summary}; {} units, {} drawn as models; {} buildings and nodes drawn as models",
+        "frame stats at {sim:.0} s sim: {summary}; {} units, {} drawn as models; {} buildings and nodes drawn as models; {} decor parts",
         units.iter().count(),
         models.iter().count(),
-        statics.iter().count()
+        statics.iter().count(),
+        decor.iter().count()
     );
     stats.frames.clear();
     stats.since = 0.0;

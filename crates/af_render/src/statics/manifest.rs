@@ -1,7 +1,7 @@
 //! The manifest of a static model (`<id>.model.ron`, written by the static
 //! art build; contract: `docs/art/static-models.md`): what it is, how the
-//! engine fits it to the game's box, and its variants (each a glTF file with
-//! its bounds) and optional stump.
+//! engine fits it to the game's box (decor: to the size it is drawn at),
+//! and its variants (each a glTF file with its bounds) and optional stump.
 
 use bevy::prelude::*;
 use ron::extensions::Extensions;
@@ -12,6 +12,9 @@ use serde::Deserialize;
 pub enum StaticKind {
     Node,
     Building,
+    /// Landscape scenery: not a game entity; placed from the terrain
+    /// (`crate::terrain::decor`).
+    Decor,
 }
 
 impl StaticKind {
@@ -20,6 +23,7 @@ impl StaticKind {
         match self {
             StaticKind::Node => "nodes",
             StaticKind::Building => "buildings",
+            StaticKind::Decor => "decor",
         }
     }
 }
@@ -43,13 +47,14 @@ pub fn default_fit(kind: StaticKind, id: &str) -> Fit {
     match kind {
         StaticKind::Building => Fit::Box,
         StaticKind::Node if TREE_IDS.contains(&id) => Fit::Height,
-        StaticKind::Node => Fit::Footprint,
+        StaticKind::Node | StaticKind::Decor => Fit::Footprint,
     }
 }
 
-/// The contract's default for `random_yaw`: nodes turn, buildings do not.
+/// The contract's default for `random_yaw`: nodes and decor turn,
+/// buildings do not.
 pub fn default_random_yaw(kind: StaticKind) -> bool {
-    kind == StaticKind::Node
+    kind != StaticKind::Building
 }
 
 /// One glTF file of a model and the bounds of its geometry (metres, as the
@@ -105,6 +110,8 @@ struct RawManifest {
     fit: Option<Fit>,
     #[serde(default)]
     random_yaw: Option<bool>,
+    #[serde(default)]
+    size: Option<[f32; 3]>,
     variants: Vec<MeshSpec>,
     #[serde(default)]
     stump: Option<MeshSpec>,
@@ -127,6 +134,10 @@ pub struct StaticManifest {
     pub stump: Option<MeshSpec>,
     /// The model has a `Team_banner` (buildings).
     pub banner: bool,
+    /// Decor: the size (w, h, d metres) it is drawn at before a
+    /// placement's own scaling; `None` leaves it to the engine's default
+    /// for its id. Buildings and nodes are sized by the game's box.
+    pub size: Option<Vec3>,
 }
 
 impl StaticManifest {
@@ -157,13 +168,24 @@ impl StaticManifest {
                 None
             }
         });
-        if stump.is_some() && raw.kind == StaticKind::Building {
-            warnings.push("a building has no use for a stump (ignored)".into());
+        if stump.is_some() && raw.kind != StaticKind::Node {
+            warnings.push(format!("a {} model has no use for a stump (ignored)", raw.kind.section()));
+        }
+        let size = raw.size.map(Vec3::from).filter(|s| {
+            let ok = s.is_finite() && s.min_element() > 0.0;
+            if !ok {
+                warnings.push(format!("size {s} is not a size (ignored)"));
+            }
+            ok
+        });
+        if size.is_some() && raw.kind != StaticKind::Decor {
+            warnings.push("only decor has a drawn size; the game's box sizes the rest (ignored)".into());
         }
         let manifest = StaticManifest {
             fit: raw.fit.unwrap_or_else(|| default_fit(raw.kind, &raw.id)),
             random_yaw: raw.random_yaw.unwrap_or_else(|| default_random_yaw(raw.kind)),
             stump: stump.filter(|_| raw.kind == StaticKind::Node),
+            size: size.filter(|_| raw.kind == StaticKind::Decor),
             kind: raw.kind,
             id: raw.id,
             variants,
@@ -274,6 +296,37 @@ mod tests {
         assert!(err(r#"(kind: Node, id: "pine", fit: Squash, variants: [(model: "a.glb", min: (0.0, 0.0, 0.0), max: (1.0, 1.0, 1.0))])"#).contains("Squash"));
         assert!(err(r#"(kind: Node, id: "pine")"#).contains("variants"));
         err("(");
+    }
+
+    #[test]
+    fn decor_has_its_drawn_size_and_turns_by_default() {
+        // As the static build writes it (art/static/lib/manifest.py).
+        let (m, warnings) = StaticManifest::parse(
+            r#"(
+                kind: Decor,
+                id: "mountain_peak",
+                fit: Height,
+                random_yaw: true,
+                size: (13.000, 8.500, 13.000),
+                variants: [
+                    (model: "models/static/decor/mountain_peak/a.glb", min: (-6.0, 0.0, -6.5), max: (6.0, 9.0, 6.5), triangles: 7990),
+                ],
+                stump: None,
+                banner: false,
+            )"#,
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!((m.kind, m.fit, m.size), (StaticKind::Decor, Fit::Height, Some(Vec3::new(13.0, 8.5, 13.0))));
+        assert!(!m.falls() && !m.shrinks(), "decor is no node");
+        assert_eq!(StaticKind::Decor.section(), "decor");
+        let (bare, _) = StaticManifest::parse(r#"(kind: Decor, id: "reeds", variants: [(model: "r.glb", min: (-0.5, 0.0, -0.5), max: (0.5, 1.4, 0.5))])"#).unwrap();
+        assert_eq!((bare.fit, bare.random_yaw, bare.size), (Fit::Footprint, true, None));
+        // A size on anything else, or a broken one, is dropped with a warning.
+        let (house, warnings) = StaticManifest::parse(r#"(kind: Building, id: "house", size: (1.0, 1.0, 1.0), variants: [(model: "h.glb", min: (-1.0, 0.0, -1.0), max: (1.0, 1.0, 1.0))])"#).unwrap();
+        assert!(house.size.is_none() && warnings.iter().any(|w| w.contains("only decor")), "{warnings:?}");
+        let (flat, warnings) = StaticManifest::parse(r#"(kind: Decor, id: "reeds", size: (1.0, 0.0, 1.0), variants: [(model: "r.glb", min: (-0.5, 0.0, -0.5), max: (0.5, 1.4, 0.5))])"#).unwrap();
+        assert!(flat.size.is_none() && warnings.len() == 1, "{warnings:?}");
     }
 
     #[test]

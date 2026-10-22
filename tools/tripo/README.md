@@ -259,9 +259,15 @@ drawn first (generate 4 images, pick one) takes about 5 minutes: P0 is about
 - `birch` and `willow` are new node ids: they need game data
   (`assets/data/core/nodes.ron`: resource wood, amount, box) and the engine's
   tree list (`TREE_IDS`) before the game uses them.
-- `decor` is a new kind: the static build, the visual registry and the map
-  generator do not know it yet (the art review's "must change" list); until
-  then the decor GLBs only sit in `art/static/source/decor/`.
+- `decor` is built by the static build like buildings and nodes (its
+  budgets and drawn sizes are in `art/static/lib/settings.py` `DECOR`), listed
+  in the registry's `decor` section, and placed over the land by af_render
+  (`crates/af_render/src/terrain/decor.rs`; rules in
+  `docs/art/static-models.md`, "Decor"). After `import-studio`, run the
+  static build; the next match shows them. Long pieces (ridges, rim arcs,
+  cliffs, bridges, backdrops) are turned to lie along X; check on the contact
+  sheet which way their front faces (a rim's steep inner face, a cliff's
+  sea face, a backdrop's side toward the map: +Z) and set `yaw` if not.
 
 ## Tested, and what is not
 
