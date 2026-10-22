@@ -20,7 +20,12 @@
 //!   worker sent to a tree behind two others goes round to an open side
 //!   instead of stopping at the cell facing it across a slot it cannot pass.
 //! * Only searches that ended on their own are cached; one cut short by its
-//!   expansion budget is flagged `truncated`, and a bigger budget may do better.
+//!   expansion budget is flagged `truncated` (a bigger budget may do better)
+//!   and ends where the search had got to on its frontier, nearest the
+//!   goal: not at the dead end facing the goal across a river or a wall.
+//! * [`NavGrid::find_path_routed`] answers long requests the way the path
+//!   service does: goals out of the mover's region at once, long ways on a
+//!   coarse route (see [`crate::regions`]) searched leg by leg.
 //! * [`NavGrid::find_path_sliced`] spreads one search over several calls (the
 //!   path service gives each tick a fixed budget): a search out of its
 //!   slice is set aside with its open list and goes on, with the same
@@ -42,12 +47,16 @@ use std::fmt;
 use bevy_math::{IVec2, Vec2};
 
 use crate::clearance::{ClearQuery, Clearance, MAX_TABLE_CLEARANCE};
-use crate::grid::{NavGrid, FLYING};
+use crate::grid::{traverse_cells, NavGrid, FLYING};
 use crate::obb::{Frame, Obb};
+use crate::regions::RegionMap;
 
 /// Greedy weight on the heuristic: routes are at most 25% longer than optimal
 /// (far less after smoothing) and cluttered searches expand ~30% fewer cells.
 const HEURISTIC_WEIGHT: f32 = 1.25;
+/// A search cut by its budget ends on its frontier at most this much (in
+/// cells of heuristic cost) above the least g + h (see `NavGrid::astar`).
+const FRONTIER_SLACK: f32 = 2.0;
 /// Searches remembered for reuse by nearby movers heading to the same cell.
 const RECENT_PATHS: usize = 32;
 /// A cached search is reused for starts within this distance (metres).
@@ -55,7 +64,7 @@ const REUSE_RADIUS: f32 = 6.0;
 /// How many leading waypoints of a cached path a reusing mover may join at.
 const REUSE_JOIN: usize = 3;
 /// Fallback radius (metres) for an open cell around a blocked goal.
-const GOAL_SEARCH_RADIUS: f32 = 8.0;
+pub const GOAL_SEARCH_RADIUS: f32 = 8.0;
 /// A blocked goal accepts open cells up to this many cells farther from it
 /// than the open cell facing the start.
 const GOAL_ACCEPT_SLACK: f32 = 0.75;
@@ -63,7 +72,7 @@ const GOAL_ACCEPT_SLACK: f32 = 0.75;
 /// cell around the goal is this many cells closer to it.
 const FACING_PREFERENCE: f32 = 1.5;
 /// Radius (metres) searched for an open cell when the mover starts somewhere tight.
-const START_SEARCH_RADIUS: f32 = 6.0;
+pub const START_SEARCH_RADIUS: f32 = 6.0;
 /// Step-cost factor on a cell a request asked to go round (another mover in
 /// the way): a detour up to this many times as long is taken instead.
 pub const AVOID_COST: f32 = 4.0;
@@ -285,8 +294,9 @@ struct PausedSearch {
 
 /// Outcome of one A* run.
 struct Found {
-    /// Cells from the start to the accepted cell (else to the expanded cell
-    /// closest to the goal).
+    /// Cells from the start to the accepted cell (else, cut short by the
+    /// budget, to the frontier cell of least g + h; else to the expanded
+    /// cell closest to the goal).
     cells: Vec<IVec2>,
     reached: bool,
     truncated: bool,
@@ -481,40 +491,8 @@ impl NavGrid {
 
     /// Visit, in order, every cell the segment `a`-`b` passes through
     /// (Amanatides-Woo traversal). Stops and returns false as soon as `f` does.
-    pub fn traverse(&self, a: Vec2, b: Vec2, mut f: impl FnMut(IVec2) -> bool) -> bool {
-        let pa = (a - self.origin) / self.cell;
-        let pb = (b - self.origin) / self.cell;
-        let mut c = IVec2::new(pa.x.floor() as i32, pa.y.floor() as i32);
-        let end = IVec2::new(pb.x.floor() as i32, pb.y.floor() as i32);
-        if !f(c) {
-            return false;
-        }
-        let d = pb - pa;
-        let step = IVec2::new(if d.x > 0.0 { 1 } else { -1 }, if d.y > 0.0 { 1 } else { -1 });
-        let axis = |p: f32, cell: i32, s: i32, dv: f32| -> (f32, f32) {
-            if dv.abs() < 1e-9 {
-                (f32::INFINITY, f32::INFINITY)
-            } else {
-                let boundary = if s > 0 { cell as f32 + 1.0 } else { cell as f32 };
-                ((boundary - p) / dv, 1.0 / dv.abs())
-            }
-        };
-        let (mut tx, dtx) = axis(pa.x, c.x, step.x, d.x);
-        let (mut ty, dty) = axis(pa.y, c.y, step.y, d.y);
-        let steps = (end.x - c.x).abs() + (end.y - c.y).abs();
-        for _ in 0..steps {
-            if tx < ty {
-                c.x += step.x;
-                tx += dtx;
-            } else {
-                c.y += step.y;
-                ty += dty;
-            }
-            if !f(c) {
-                return false;
-            }
-        }
-        true
+    pub fn traverse(&self, a: Vec2, b: Vec2, f: impl FnMut(IVec2) -> bool) -> bool {
+        traverse_cells(self.origin, self.cell, a, b, f)
     }
 
     /// Nearest point (cell centre) within `max_dist` where the mover fits.
@@ -532,6 +510,58 @@ impl NavGrid {
             PathStep::Done { result, .. } => result,
             PathStep::Paused { .. } => unreachable!("an unsliced search runs to its end"),
         }
+    }
+
+    /// [`find_path`](Self::find_path) the way the path service answers a
+    /// long request, all at once: a goal outside the start's region of
+    /// `map` (the mover's class, see [`crate::regions`]) is swapped for the
+    /// reachable point nearest it, with no search to find that out (the
+    /// path is never `complete`); a goal beyond a straight walk is planned
+    /// on the coarse graph first and searched leg by leg, about `leg`
+    /// metres of the route at a time, each leg within
+    /// `req.max_expansions`. The legs join into one path, and `expansions`
+    /// counts them all.
+    pub fn find_path_routed(&mut self, req: &PathRequest, map: &RegionMap, leg: f32) -> PathResult {
+        if req.mobility & FLYING != 0 {
+            return PathResult::straight(req.goal, true);
+        }
+        let Some(start) = map.open_near(req.start, START_SEARCH_RADIUS) else { return self.find_path(req) };
+        let region = map.region_at(start);
+        let near = req.reach.map_or(GOAL_SEARCH_RADIUS, |(b, r)| GOAL_SEARCH_RADIUS.max(b.bounding_radius() + r));
+        let reachable = map.touches(region, req.goal, near);
+        let goal = if reachable { req.goal } else { map.nearest_in(region, req.goal).unwrap_or(start) };
+        let plain = PathRequest { goal, reach: if reachable { req.reach } else { None }, ..*req };
+        if let Some(quick) = self.quick_path(&plain, &[]) {
+            return PathResult { complete: quick.complete && reachable, ..quick };
+        }
+        let route = map.open_near(goal, GOAL_SEARCH_RADIUS).and_then(|end| map.route(start, end));
+        let Some(route) = route.filter(|r| r.length() > leg * 1.5) else {
+            let found = self.find_path(&plain);
+            return PathResult { complete: found.complete && reachable, ..found };
+        };
+        let mut out = PathResult::default();
+        let (mut from, mut segment) = (req.start, 0);
+        let most_legs = (route.length() / leg) as usize * 2 + 4;
+        for _ in 0..most_legs {
+            let next = map.next_leg(&route, from, segment, leg);
+            segment = next.segment;
+            let ask = if next.last { PathRequest { start: from, ..plain } } else { PathRequest { start: from, goal: next.target, reach: None, ..*req } };
+            let found = self.find_path(&ask);
+            out.expansions += found.expansions;
+            out.truncated = found.truncated;
+            let Some(&end) = found.waypoints.last() else { break };
+            out.waypoints.extend(found.waypoints);
+            if next.last {
+                out.complete = found.complete && reachable;
+                break;
+            }
+            if end.distance(from) < self.cell {
+                // No headway: the obstacles close the way the terrain leaves open.
+                break;
+            }
+            from = end;
+        }
+        out
     }
 
     /// [`find_path`](Self::find_path) spread over several calls: a search
@@ -879,8 +909,27 @@ impl NavGrid {
             }
         }
 
+        // Cut short by the budget: end where the search was heading. The
+        // cells it would have expanded next (the frontier of least g + h,
+        // give or take FRONTIER_SLACK) are where it had got to on every
+        // side; of those, the one nearest the goal. Not the expanded cell
+        // nearest the goal, which behind a river or a wall is the dead end
+        // facing it: the frontier has moved on along the obstacle.
+        let mut end = run.best.1;
+        if truncated {
+            let frontier: Vec<Node> = s.open.drain().filter(|n| s.cells[n.idx as usize].closed != id).collect();
+            if let Some(least) = frontier.iter().map(|n| n.f).min_by(f32::total_cmp) {
+                let limit = least + FRONTIER_SLACK * h_scale;
+                let h = |n: &Node| octile(to_cell(n.idx), target);
+                end = frontier
+                    .iter()
+                    .filter(|n| n.f <= limit)
+                    .min_by(|a, b| h(a).total_cmp(&h(b)).then(a.idx.cmp(&b.idx)))
+                    .map_or(end, |n| n.idx);
+            }
+        }
         let mut cells = Vec::new();
-        let mut cur = run.best.1;
+        let mut cur = end;
         while cur != u32::MAX {
             cells.push(to_cell(cur));
             if cur == run.start {
@@ -1384,6 +1433,171 @@ mod tests {
         assert!(!g.clear_cell(IVec2::new(10, 10), 1, 0.4, 0));
         assert!(!g.line_clear(Vec2::new(5.5, 10.5), Vec2::new(15.5, 10.5), 1, 0.4, 0));
     }
+
+    // --- big maps: regions and coarse routes --------------------------------
+
+    const DEEP: u8 = 1;
+    const FORD: u8 = 2;
+    const SHALLOW: u8 = 3;
+    const ROCK: u8 = 4;
+    const WHEELS: u16 = 2;
+
+    /// A square map of grass; deep water and rock nobody enters; fords
+    /// everyone does; shallows feet do but wheels do not.
+    fn big(n: u32) -> NavGrid {
+        let mut g = NavGrid::new(n, n, 1.0, Vec2::ZERO);
+        g.set_terrain_info(0, 1 | WHEELS, true);
+        g.set_terrain_info(DEEP, 0, false);
+        g.set_terrain_info(FORD, 1 | WHEELS, false);
+        g.set_terrain_info(SHALLOW, 1, false);
+        g.set_terrain_info(ROCK, 0, false);
+        g
+    }
+
+    /// A 12 m river down x = cx - 6 .. cx + 6 over the whole map, crossed
+    /// by 7 m wide bands (centred on y) of the given terrain.
+    fn river_x(g: &mut NavGrid, cx: i32, crossings: &[(i32, u8)]) {
+        for y in 0..g.height() as i32 {
+            for x in cx - 6..cx + 6 {
+                let t = crossings.iter().find(|(c, _)| (y - c).abs() < 4).map_or(DEEP, |c| c.1);
+                g.set_terrain(IVec2::new(x, y), t);
+            }
+        }
+    }
+
+    /// The same across, along z = cy - 6 .. cy + 6, crossings centred on x.
+    fn river_y(g: &mut NavGrid, cy: i32, crossings: &[(i32, u8)]) {
+        for x in 0..g.width() as i32 {
+            for y in cy - 6..cy + 6 {
+                let t = crossings.iter().find(|(c, _)| (x - c).abs() < 4).map_or(DEEP, |c| c.1);
+                g.set_terrain(IVec2::new(x, y), t);
+            }
+        }
+    }
+
+    fn routed(g: &mut NavGrid, start: Vec2, goal: Vec2, mobility: u16, radius: f32) -> PathResult {
+        let map = RegionMap::build(&g.terrain_snapshot(), mobility, radius);
+        let r = PathRequest { start, goal, mobility, radius, team: 0, max_expansions: 24_000, reach: None };
+        g.find_path_routed(&r, &map, 64.0)
+    }
+
+    /// Every leg of the path stays on ground the mover may use.
+    fn assert_walkable_for(g: &NavGrid, start: Vec2, r: &PathResult, mobility: u16, radius: f32) {
+        let mut prev = start;
+        for w in &r.waypoints {
+            assert!(g.line_clear(prev, *w, mobility, radius, 0), "segment {prev} -> {w} blocked: {r:?}");
+            prev = *w;
+        }
+    }
+
+    /// The case that strands units today: a 768 m map, a river across it
+    /// and its only ford 300 m off the straight line. One search of 24,000
+    /// cells ends on the near bank (a full search needs 138,000); the
+    /// coarse route finds the ford and the legs walk there for a few
+    /// thousand cells in all.
+    #[test]
+    fn a_ford_far_off_the_line_is_found_in_a_few_legs() {
+        let mut g = big(768);
+        river_x(&mut g, 384, &[(684, FORD)]);
+        let (start, goal) = (Vec2::new(344.5, 384.5), Vec2::new(424.5, 384.5));
+        let plain = g.clone().find_path(&PathRequest { start, goal, mobility: 1, radius: 0.4, team: 0, max_expansions: 24_000, reach: None });
+        assert!(plain.truncated && !plain.complete, "{plain:?}");
+        let r = routed(&mut g, start, goal, 1, 0.4);
+        println!("ford 300 m off the line, 768 m map: {} expansions in legs ({} waypoints) vs a single search cut at 24,000", r.expansions, r.waypoints.len());
+        assert!(r.complete && !r.truncated, "{r:?}");
+        assert!(r.expansions < 4_000, "{} expansions", r.expansions);
+        assert!(r.waypoints.iter().any(|w| w.y > 670.0), "through the ford: {r:?}");
+        assert_walkable_for(&g, start, &r, 1, 0.4);
+    }
+
+    /// A goal across a river with no ford costs no search: the path leads
+    /// to the near bank facing it, and is not complete.
+    #[test]
+    fn an_unreachable_goal_costs_no_search() {
+        let mut g = big(768);
+        river_x(&mut g, 384, &[]);
+        let (start, goal) = (Vec2::new(344.5, 384.5), Vec2::new(424.5, 384.5));
+        let r = routed(&mut g, start, goal, 1, 0.4);
+        assert!(!r.complete && r.expansions == 0, "{r:?}");
+        let end = *r.waypoints.last().expect("to the bank");
+        assert!(end.distance(Vec2::new(377.5, 384.5)) < 1.0, "the near bank: {end}");
+    }
+
+    /// A mountain range across the map with one 8 m pass far from the line.
+    #[test]
+    fn a_range_is_crossed_at_its_pass() {
+        let mut g = big(512);
+        for y in 250..266 {
+            for x in 0..512 {
+                if !(400..408).contains(&x) {
+                    g.set_terrain(IVec2::new(x, y), ROCK);
+                }
+            }
+        }
+        let (start, goal) = (Vec2::new(100.5, 200.5), Vec2::new(100.5, 320.5));
+        let r = routed(&mut g, start, goal, 1, 0.4);
+        println!("one pass 300 m off the line, 512 m map: {} expansions", r.expansions);
+        assert!(r.complete && r.expansions < 4_000, "{r:?}");
+        assert!(r.waypoints.iter().any(|w| (399.0..409.0).contains(&w.x) && (249.0..267.0).contains(&w.y)), "through the pass: {r:?}");
+        assert_walkable_for(&g, start, &r, 1, 0.4);
+        // A mover too wide for the pass is told so at once.
+        let wide = routed(&mut g, start, goal, 1, 4.6);
+        assert!(!wide.complete && wide.expansions == 0, "{wide:?}");
+    }
+
+    /// Two rivers crossing in a plus, one ford on each arm: from one
+    /// quadrant to the opposite one through two fords.
+    #[test]
+    fn two_crossing_rivers_are_crossed_at_their_fords() {
+        let mut g = big(512);
+        river_x(&mut g, 256, &[(60, FORD), (450, FORD)]);
+        river_y(&mut g, 256, &[(60, FORD), (450, FORD)]);
+        let (start, goal) = (Vec2::new(200.5, 200.5), Vec2::new(312.5, 312.5));
+        let r = routed(&mut g, start, goal, 1, 0.4);
+        println!("two crossing rivers, 512 m map: {} expansions", r.expansions);
+        assert!(r.complete && r.expansions < 6_000, "{r:?}");
+        assert_walkable_for(&g, start, &r, 1, 0.4);
+    }
+
+    /// Wheels cross only at fords: a shallow crossing on the straight line
+    /// serves feet, while wheels go round by the ford 200 m off.
+    #[test]
+    fn wheels_cross_at_fords_never_in_shallows() {
+        let mut g = big(512);
+        river_x(&mut g, 256, &[(256, SHALLOW), (456, FORD)]);
+        let (start, goal) = (Vec2::new(216.5, 256.5), Vec2::new(296.5, 256.5));
+        let foot = routed(&mut g, start, goal, 1, 0.4);
+        assert!(foot.complete && foot.waypoints.iter().all(|w| w.y < 300.0), "feet wade the shallows: {foot:?}");
+        let wheels = routed(&mut g, start, goal, WHEELS, 0.4);
+        assert!(wheels.complete && wheels.waypoints.iter().any(|w| w.y > 440.0), "wheels go by the ford: {wheels:?}");
+        assert_walkable_for(&g, start, &wheels, WHEELS, 0.4);
+        let mut prev = start;
+        for w in &wheels.waypoints {
+            g.traverse(prev, *w, |c| {
+                assert_ne!(g.terrain_at(c), SHALLOW, "wheels in the shallows at {c}");
+                true
+            });
+            prev = *w;
+        }
+    }
+
+    /// A search cut by its budget ends at the frontier cell the search
+    /// would have expanded next, not at the bank facing the goal.
+    #[test]
+    fn a_cut_search_ends_where_it_was_heading() {
+        let mut g = big(256);
+        // A wall of rock across the straight line, open far to the north.
+        for y in 0..200 {
+            g.set_terrain(IVec2::new(128, y), ROCK);
+        }
+        let (start, goal) = (Vec2::new(100.5, 60.5), Vec2::new(156.5, 60.5));
+        let r = g.find_path(&PathRequest { start, goal, mobility: 1, radius: 0.4, team: 0, max_expansions: 3_000, reach: None });
+        assert!(r.truncated && !r.complete, "{r:?}");
+        let end = *r.waypoints.last().expect("a partial path");
+        assert!(end.x > 120.0 && end.distance(Vec2::new(127.5, 60.5)) > 20.0, "on along the wall, not standing at it facing the goal: {end}");
+        assert_walkable(&g, start, &r, 0.4);
+    }
+
 
     #[test]
     fn sync_tag_survives_clone() {
