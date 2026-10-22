@@ -10,6 +10,7 @@
 pub(crate) mod card_view;
 pub(crate) mod groups;
 pub(crate) mod minimap;
+pub(crate) mod netbar;
 pub(crate) mod notices;
 pub(crate) mod overlays;
 pub(crate) mod selection;
@@ -78,6 +79,7 @@ pub(crate) fn plugin(app: &mut App) {
     card_view::plugin(app);
     minimap::plugin(app);
     overlays::plugin(app);
+    netbar::plugin(app);
 }
 
 /// Fresh per-match HUD state (the previous match's selection, card page,
@@ -105,6 +107,7 @@ fn spawn_hud(mut commands: Commands, data: Res<Data>, mut images: ResMut<Assets<
         .with_children(|root| {
             topbar::spawn(root, &data);
             notices::spawn(root);
+            netbar::spawn(root);
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
