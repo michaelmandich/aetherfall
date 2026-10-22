@@ -2,11 +2,13 @@
 
 use std::f32::consts::TAU;
 
+use af_core::ext::movement::ReachFrom;
+use af_core::prelude::af_geom::GOAL_SEARCH_RADIUS;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
 use crate::lanes::{Mover, ground_movers, seals_pocket};
-use crate::view::{AiView, Snapshot, WorkerInfo, WorkerTask};
+use crate::view::{AiView, WorkerInfo, WorkerTask};
 
 /// Free space kept between a new building and blocking nodes (metres).
 pub const NODE_GAP: f32 = 0.8;
@@ -32,13 +34,16 @@ pub struct SpotQuery {
 
 /// Spiral outward from the anchor and return the first spot where
 /// [`check_placement`] accepts the building, the [`clear_around`] gap
-/// holds and the footprint encloses no ground the realm's ground units
-/// could leave before ([`seals_pocket`]): their own buildings must never
-/// trap them. Placements are axis-aligned (facing 0) unless snapped onto a
-/// node. `extra` = footprints placed but not yet in the spatial index;
-/// `avoid` = points (with radius) to skip, e.g. spots that failed before.
+/// holds, the workers at the anchor can get to it (not across the river,
+/// see `AiView::reach_from`) and the footprint encloses no ground the
+/// realm's ground units could leave before ([`seals_pocket`]): their own
+/// buildings must never trap them. Placements are axis-aligned (facing 0)
+/// unless snapped onto a node. `extra` = footprints placed but not yet in
+/// the spatial index; `avoid` = points (with radius) to skip, e.g. spots
+/// that failed before.
 pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Vec2, f32)]) -> Option<Placement> {
     let movers = ground_movers(view);
+    let reach = view.reach_from(view.worker_kind(), q.anchor);
     let def = view.data.building(q.kind);
     let width = def.size[0].max(def.size[2]);
     let ring_step = (width * 0.5 + q.gap * 0.5).max(1.5);
@@ -55,7 +60,7 @@ pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Ve
             if avoid.iter().any(|(p, rad)| p.distance_squared(pos) < rad * rad) {
                 continue;
             }
-            if let Some(p) = try_spot(view, q, pos, extra, &movers) {
+            if let Some(p) = try_spot(view, q, pos, extra, &movers, &reach) {
                 return Some(p);
             }
         }
@@ -64,8 +69,12 @@ pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Ve
     None
 }
 
-fn try_spot(view: &AiView, q: &SpotQuery, pos: Vec2, extra: &[Obb], movers: &[Mover]) -> Option<Placement> {
+fn try_spot(view: &AiView, q: &SpotQuery, pos: Vec2, extra: &[Obb], movers: &[Mover], reach: &ReachFrom) -> Option<Placement> {
     let p = check_placement(view.data, view.nav, view.spatial, view.me, q.kind, pos, 0.0, false, extra).ok()?;
+    // Placeable ground is open ground: the reach test is a lookup there.
+    if !reach.reaches(p.pos, GOAL_SEARCH_RADIUS) {
+        return None;
+    }
     let obb = Obb::from_size(p.pos, view.data.building(q.kind).size, p.facing);
     (clear_around(view, &obb, q.gap, p.node, extra) && !seals_pocket(view, movers, &[obb], extra)).then_some(p)
 }
@@ -101,15 +110,18 @@ pub fn clear_around(view: &AiView, obb: &Obb, gap: f32, ignore: Option<Entity>, 
 const IDLE_BONUS: f32 = 15.0;
 
 /// Up to `n` workers to send to `at`, nearest first (idle ones favoured),
-/// skipping `taken`. Appends to `out`.
-pub fn pick_workers(snap: &Snapshot, at: Vec2, n: usize, taken: &[Entity], out: &mut Vec<Entity>) {
+/// skipping `taken` and those the terrain keeps from `at` (across the
+/// river). Appends to `out`.
+pub fn pick_workers(view: &AiView, at: Vec2, n: usize, taken: &[Entity], out: &mut Vec<Entity>) {
     let start = out.len();
+    let reach: ReachFrom = view.reach_from(view.worker_kind(), at);
     let score = |w: &WorkerInfo| w.pos.distance(at) - if w.task == WorkerTask::Idle { IDLE_BONUS } else { 0.0 };
     for _ in 0..n {
-        let best = snap
+        let best = view
+            .snap
             .workers
             .iter()
-            .filter(|w| w.task.available() && !taken.contains(&w.entity) && !out[start..].contains(&w.entity))
+            .filter(|w| w.task.available() && !taken.contains(&w.entity) && !out[start..].contains(&w.entity) && reach.reaches(w.pos, GOAL_SEARCH_RADIUS))
             .min_by(|a, b| score(a).total_cmp(&score(b)));
         match best {
             Some(w) => out.push(w.entity),

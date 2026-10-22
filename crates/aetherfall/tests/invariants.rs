@@ -17,11 +17,16 @@
 //!   effect boxes and resources are finite, and resources never negative;
 //!   a living unit or building has hit points in `(0, max]`;
 //! * `PlayerState` populations and per-type counts match a recount;
-//! * no unit trying to reach a `MoveGoal` stays within [`STUCK_RADIUS`] for
-//!   [`STUCK_SECS`];
+//! * no unit trying to reach a `MoveGoal` (its path pending or followed; one
+//!   af_movement gave up on waits for af_behavior, but the time it stands
+//!   there counts if it tries again) goes [`STUCK_SECS`] without leaving
+//!   the spot ([`STUCK_RADIUS`]) or getting that much farther along its
+//!   path;
 //! * no worker on a Gather or ReturnCargo order goes [`GATHER_STALL_SECS`]
-//!   without loading, unloading or getting closer to where it walks (its
-//!   source or a drop site);
+//!   without loading, unloading, getting closer to where it walks (its
+//!   source or a drop site) along its path, or setting out on the next leg
+//!   of a long way: progress is the way left, so a detour round a river
+//!   by its ford is progress all the way;
 //! * no production queue stalls for [`QUEUE_STALL_SECS`] unless its front
 //!   unit waits for population room;
 //! * effect boxes stay under [`FX_LIMIT`] and no other entities pile up;
@@ -44,12 +49,19 @@
 //! ```text
 //! cargo test -p aetherfall --test invariants -- --ignored --nocapture
 //! AF_SWEEP=6:9:30,4:40:20 cargo test -p aetherfall --test invariants sweep_custom -- --ignored --nocapture
+//! AF_SWEEP=8:52:20:shuge:w3:r2:kshattered cargo test -p aetherfall --test invariants sweep_custom -- --ignored --nocapture
 //! ```
+//!
+//! Every match sets the map options (`af_core::ext::map::MapOptions`: size,
+//! water, rivers, meteor site) as the menu and the CLI do; the sweep specs
+//! name them (see [`sweep_custom`]), and [`sweep_big_maps`] plays six to
+//! eight players on maps of 512-768 m.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use aetherfall::*;
+use af_core::ext::map::{MapOptions, MapSize, RiverCount, SiteChoice, WaterLevel};
 use af_core::ext::movement::CollisionStats;
 use af_core::prelude::*;
 use af_core::spawn::SpawnStats;
@@ -78,6 +90,9 @@ const STUCK_SECS: f32 = 20.0;
 const GATHER_STALL_SECS: f32 = 30.0;
 /// A worker getting this much closer to where it walks makes progress (metres).
 const GATHER_APPROACH: f32 = 1.0;
+/// A path whose end moved this far (metres) leads somewhere new: the next
+/// leg of a long way, or another way round. Setting out on it is progress.
+const NEW_WAY: f32 = 8.0;
 /// A production queue this long without progress is blocked (sim seconds).
 const QUEUE_STALL_SECS: f32 = 60.0;
 /// Most effect boxes alive at once (af_combat's soft cap plus a tick's worth).
@@ -110,6 +125,8 @@ impl Violation {
 #[derive(Clone, Copy, Debug)]
 struct MoverTrack {
     anchor: Vec2,
+    /// The way left along its path when it stood at `anchor`.
+    left: f32,
     since: f32,
     seen: u64,
 }
@@ -119,11 +136,23 @@ struct WorkerTrack {
     target: Option<Entity>,
     amount: f32,
     /// What the worker walks to (followed entity, else point) and the
-    /// closest it has come since the last progress.
+    /// shortest way left it has had since the last progress.
     heading_for: Option<(Option<Entity>, Vec2)>,
     best: f32,
+    /// Where its path ended at the last progress.
+    path_end: Option<Vec2>,
     since: f32,
     seen: u64,
+}
+
+/// The way left along a unit's path (metres): to its next waypoint and
+/// along the rest; past the last one, or with no path yet, straight to
+/// `goal`.
+fn way_left(pos: Vec2, path: &PathState, goal: Vec2) -> f32 {
+    match path.waypoints.get(path.next) {
+        Some(&next) => pos.distance(next) + path.waypoints[path.next..].windows(2).map(|w| w[0].distance(w[1])).sum::<f32>(),
+        None => pos.distance(goal),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -383,13 +412,17 @@ fn follow_progress(w: World, dead: Query<Entity, With<Dead>>, everything: Query<
     }
 
     for (e, _, _, pos, facing, fp, _, _, path, orders, goal, gatherer) in &w.units {
-        // Movers: a unit trying to reach a goal keeps leaving the spot it is on.
-        if goal.is_some() && path.status != PathStatus::Arrived {
-            let t = watch.movers.entry(e).or_insert(MoverTrack { anchor: pos.0, since: now, seen: tick });
+        // Movers: a unit trying to reach a goal keeps leaving the spot it is
+        // on, or getting along its path. One af_movement gave up on is not
+        // trying (af_behavior decides what next), but its track is kept: a
+        // unit that keeps trying from the same spot is stuck all the same.
+        if let Some(g) = goal.filter(|_| path.status != PathStatus::Arrived) {
+            let left = way_left(pos.0, path, g.target);
+            let t = watch.movers.entry(e).or_insert(MoverTrack { anchor: pos.0, left, since: now, seen: tick });
             t.seen = tick;
-            if pos.0.distance(t.anchor) > STUCK_RADIUS {
-                *t = MoverTrack { anchor: pos.0, since: now, seen: tick };
-            } else if now - t.since > STUCK_SECS {
+            if pos.0.distance(t.anchor) > STUCK_RADIUS || left < t.left - STUCK_RADIUS {
+                *t = MoverTrack { anchor: pos.0, left, since: now, seen: tick };
+            } else if now - t.since > STUCK_SECS && path.status != PathStatus::Failed {
                 let since = t.since;
                 let detail = || {
                     let g = goal.expect("goal");
@@ -420,16 +453,37 @@ fn follow_progress(w: World, dead: Query<Entity, With<Dead>>, everything: Query<
         };
         let me = fp.obb(pos.0, facing.0);
         let heading_for = goal.map(|g| (g.follow, g.target));
+        // The way left: along the path, then (walking up to a box) on from
+        // its end to the box; straight at it before there is a path.
+        let path_end = path.waypoints.last().copied().filter(|_| goal.is_some_and(|g| path.goal_seq == g.seq));
         let dist = match heading_for {
-            Some((Some(e), _)) => w.gap_to(&me, e).unwrap_or(f32::INFINITY),
-            Some((None, p)) => pos.0.distance(p),
+            Some((follow, p)) => match path_end.filter(|_| path.next < path.waypoints.len()) {
+                // Along the path, then on from its end.
+                Some(end) => {
+                    let rest = match follow {
+                        Some(e) => w.boxes.get(e).ok().map(|(bp, bf, bfp)| bfp.obb(bp.0, bf.0).distance_to_point(end)).unwrap_or(f32::INFINITY),
+                        None => end.distance(p),
+                    };
+                    way_left(pos.0, path, p) + rest
+                }
+                // Past its end, or no path for this goal yet: straight at it.
+                None => match follow {
+                    Some(e) => w.gap_to(&me, e).unwrap_or(f32::INFINITY),
+                    None => pos.0.distance(p),
+                },
+            },
             None => f32::INFINITY,
         };
-        let fresh = WorkerTrack { target, amount: g.amount, heading_for, best: dist, since: now, seen: tick };
+        let fresh = WorkerTrack { target, amount: g.amount, heading_for, best: dist, path_end, since: now, seen: tick };
         let t = watch.workers.entry(e).or_insert(fresh);
         t.seen = tick;
         let new_walk = t.heading_for.map(|h| h.0) != heading_for.map(|h| h.0);
-        if t.target != target || new_walk || (t.amount - g.amount).abs() > 1e-3 || dist < t.best - GATHER_APPROACH {
+        let new_way = match (t.path_end, path_end) {
+            (Some(a), Some(b)) => a.distance(b) > NEW_WAY,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if t.target != target || new_walk || new_way || (t.amount - g.amount).abs() > 1e-3 || dist < t.best - GATHER_APPROACH {
             *t = fresh;
         } else if now - t.since > GATHER_STALL_SECS {
             let since = t.since;
@@ -671,12 +725,27 @@ struct Match {
     minutes: f32,
     start_age: u8,
     res_mult: f32,
+    /// Side of the map (metres; 0: from the options and the player count).
     map_size: f32,
+    /// The map options (size, water, rivers, meteor site).
+    map: MapOptions,
 }
 
 impl Match {
     fn new(seed: u64, factions: &[&'static str], minutes: f32) -> Match {
-        Match { seed, factions: factions.to_vec(), minutes, start_age: 1, res_mult: 1.0, map_size: 0.0 }
+        Match { seed, factions: factions.to_vec(), minutes, start_age: 1, res_mult: 1.0, map_size: 0.0, map: MapOptions::default() }
+    }
+
+    /// On a map of these options.
+    fn on(mut self, map: MapOptions) -> Match {
+        self.map = map;
+        self
+    }
+
+    /// On a map `side` metres square.
+    fn sized(mut self, side: f32) -> Match {
+        self.map_size = side;
+        self
     }
 
     /// Start late and rich on a small map, so armies meet within minutes.
@@ -745,6 +814,8 @@ fn watch_match(m: &Match) -> Outcome {
     };
     let setup = skirmish_setup(&data, &opts).expect("setup");
     let mut app = headless_app(data, setup, 30);
+    // As the menu and the CLI do: af_map reads it on entering the match.
+    app.insert_resource(m.map);
     app.add_plugins(WatchPlugin);
     run_headless(&mut app, (m.minutes * 60.0 * SIM_HZ as f32) as u64, 0, |_| {});
 
@@ -777,7 +848,9 @@ fn watch_match(m: &Match) -> Outcome {
         players.list.iter().map(|p| p.age).collect::<Vec<_>>()
     );
     watch.violations.sort_by(|a, b| a.time.total_cmp(&b.time));
-    let title = format!("seed {} {} ({} min{})", m.seed, m.factions.join(","), m.minutes, if m.start_age > 1 { ", brawl" } else { "" });
+    let map = app.world().resource::<MapInfo>().size.x;
+    let options = if m.map == MapOptions::default() { String::new() } else { format!(", {}", describe_options(&m.map)) };
+    let title = format!("seed {} {} ({} min, {map:.0} m{options}{})", m.seed, m.factions.join(","), m.minutes, if m.start_age > 1 { ", brawl" } else { "" });
     Outcome {
         title,
         violations: watch.violations,
@@ -849,6 +922,11 @@ fn assert_clean(matches: &[Match], tolerance: Tolerance) {
 
 const FACTIONS: [&str; 6] = ["ironhold", "sylvan", "dune", "tide", "steppe", "starborn"];
 
+/// How a match's map options read in its title.
+fn describe_options(o: &MapOptions) -> String {
+    format!("{} map, water {}, rivers {}, site {}", o.size.name(), o.water.name(), o.rivers.name(), o.site.name())
+}
+
 /// `n` factions, starting `offset` along the list.
 fn factions_from(offset: usize, n: usize) -> Vec<&'static str> {
     (0..n).map(|k| FACTIONS[(offset + k) % FACTIONS.len()]).collect()
@@ -904,6 +982,23 @@ fn sweep_brawls() {
     assert_clean(&matches, Tolerance::SoftBudget);
 }
 
+/// Six to eight players on big maps (512-768 m) of every kind: rivers,
+/// coasts, mountains and the meteor sites, twenty minutes each. Long ways
+/// round the terrain (coarse routes searched leg by leg), unreachable
+/// goals, and the AI's reach and route distances, at scale.
+#[test]
+#[ignore = "long: cargo test --release -p aetherfall --test invariants sweep_big_maps -- --ignored --nocapture"]
+fn sweep_big_maps() {
+    let options = |size, water, rivers, site| MapOptions { size, water, rivers, site };
+    let matches = [
+        Match::new(51, &FACTIONS, 20.0).sized(640.0).on(options(MapSize::Huge, WaterLevel::Lakes, RiverCount::Two, SiteChoice::Random)),
+        Match::new(52, &factions_from(2, 8), 20.0).sized(768.0).on(options(MapSize::Huge, WaterLevel::Coast, RiverCount::Two, SiteChoice::Random)),
+        Match::new(53, &factions_from(4, 6), 20.0).sized(512.0).on(options(MapSize::Large, WaterLevel::Seas, RiverCount::One, SiteChoice::Random)),
+        Match::new(54, &factions_from(1, 7), 20.0).sized(704.0).on(options(MapSize::Huge, WaterLevel::Dry, RiverCount::Random, SiteChoice::Random)),
+    ];
+    assert_clean(&matches, Tolerance::SoftBudget);
+}
+
 /// Seeds no tuning has seen, of every size, so the checks generalise
 /// beyond the matches the solver was tuned against.
 #[test]
@@ -927,12 +1022,15 @@ fn parse_sweep(spec: &str) -> Vec<Match> {
     spec.split(',')
         .map(|entry| {
             fn bad(entry: &str) -> ! {
-                panic!("AF_SWEEP entry `{entry}`: want players:seed:minutes[:brawl][:o<offset>|:f<faction>+<faction>...]")
+                panic!(
+                    "AF_SWEEP entry `{entry}`: want players:seed:minutes[:brawl][:o<offset>|:f<faction>+<faction>...][:s<size>][:w<water>][:r<rivers>][:k<site>][:m<metres>]"
+                )
             }
             let parts: Vec<&str> = entry.trim().split(':').collect();
             let number = |i: usize| parts.get(i).and_then(|p| p.parse::<f32>().ok()).unwrap_or_else(|| bad(entry));
             let (players, seed, minutes) = (number(0) as usize, number(1) as u64, number(2));
             let (mut factions, mut brawl) = (factions_from(seed as usize, players.clamp(1, 8)), false);
+            let (mut map, mut side) = (MapOptions::default(), 0.0);
             for flag in parts.iter().skip(3) {
                 if let Some(n) = flag.strip_prefix('o').and_then(|n| n.parse().ok()) {
                     factions = factions_from(n, players.clamp(1, 8));
@@ -941,29 +1039,58 @@ fn parse_sweep(spec: &str) -> Vec<Match> {
                     factions = named.filter(|f| f.len() == players).unwrap_or_else(|| bad(entry));
                 } else if *flag == "brawl" {
                     brawl = true;
+                } else if let Some(size) = flag.strip_prefix('s').and_then(MapSize::parse) {
+                    map.size = size;
+                } else if let Some(water) = flag.strip_prefix('w').and_then(WaterLevel::parse) {
+                    map.water = water;
+                } else if let Some(rivers) = flag.strip_prefix('r').and_then(RiverCount::parse) {
+                    map.rivers = rivers;
+                } else if let Some(site) = flag.strip_prefix('k').and_then(SiteChoice::parse) {
+                    map.site = site;
+                } else if let Some(metres) = flag.strip_prefix('m').and_then(|m| m.parse::<f32>().ok()) {
+                    side = metres;
                 } else {
                     bad(entry);
                 }
             }
-            let m = Match::new(seed, &factions, minutes);
-            if brawl { m.brawl() } else { m }
+            let m = Match::new(seed, &factions, minutes).on(map).sized(side);
+            let m = if brawl { m.brawl() } else { m };
+            // A brawl keeps its small map unless the entry names one.
+            if side > 0.0 { m.sized(side) } else { m }
         })
         .collect()
 }
 
 #[test]
 fn sweep_specs_parse() {
-    let m = parse_sweep("2:4:30:fsylvan+tide, 6:21:30:o0, 3:7:10:brawl:o2");
+    let m = parse_sweep("2:4:30:fsylvan+tide, 6:21:30:o0, 3:7:10:brawl:o2, 8:52:20:shuge:w3:r2:kshattered:m700");
     assert_eq!((m[0].seed, m[0].minutes, m[0].factions.as_slice()), (4, 30.0, ["sylvan", "tide"].as_slice()));
+    assert_eq!(m[0].map, MapOptions::default());
     assert_eq!(m[1].factions, FACTIONS);
-    assert_eq!((m[2].start_age, m[2].factions.as_slice()), (3, ["dune", "tide", "steppe"].as_slice()));
+    assert_eq!((m[2].start_age, m[2].factions.as_slice(), m[2].map_size), (3, ["dune", "tide", "steppe"].as_slice(), 160.0));
+    let big = &m[3];
+    assert_eq!((big.factions.len(), big.map_size), (8, 700.0));
+    assert_eq!(big.map, MapOptions { size: MapSize::Huge, water: WaterLevel::Coast, rivers: RiverCount::Two, site: SiteChoice::Kind(af_core::ext::map::SiteKind::Shattered) });
+}
+
+/// The way left along a path: to the next waypoint and along the rest;
+/// straight to the goal past its end.
+#[test]
+fn the_way_left_follows_the_path() {
+    let path = PathState { waypoints: vec![Vec2::new(0.0, 10.0), Vec2::new(10.0, 10.0)], next: 0, status: PathStatus::Following, ..Default::default() };
+    assert!((way_left(Vec2::ZERO, &path, Vec2::new(10.0, 10.0)) - 20.0).abs() < 1e-4, "round the corner, not the straight 14 m");
+    let past = PathState { next: 2, ..path };
+    assert!((way_left(Vec2::new(10.0, 13.0), &past, Vec2::new(10.0, 10.0)) - 3.0).abs() < 1e-4);
 }
 
 /// The matches named in `AF_SWEEP`: comma-separated `players:seed:minutes`,
 /// then optionally `:brawl` for a brawl, and `:o<N>` for the factions in
 /// list order from the `N`th (default: from the seed's) or
-/// `:f<faction>+<faction>...` to name them (one per player). Does nothing
-/// without it.
+/// `:f<faction>+<faction>...` to name them (one per player); and the map:
+/// `:s<size>` (small, medium, large, huge), `:w<water>` (0-4 or dry,
+/// ponds, lakes, coast, seas), `:r<rivers>` (1, 2, random), `:k<site>`
+/// (random, crater, shattered, lake, scar, spire) and `:m<metres>` for the
+/// side of the map. Does nothing without it.
 #[test]
 #[ignore = "on demand: AF_SWEEP=6:9:30:o0,4:40:20,2:4:30:fsylvan+tide cargo test -p aetherfall --test invariants sweep_custom -- --ignored --nocapture"]
 fn sweep_custom() {

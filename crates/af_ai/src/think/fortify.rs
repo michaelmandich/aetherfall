@@ -123,7 +123,7 @@ impl Think<'_, '_> {
             return;
         }
         let mut crew = Vec::new();
-        pick_workers(snap, (from_a + to_b) * 0.5, WALL_BUILDERS, &self.taken, &mut crew);
+        pick_workers(&self.view, (from_a + to_b) * 0.5, WALL_BUILDERS, &self.taken, &mut crew);
         if crew.is_empty() {
             return;
         }

@@ -111,6 +111,7 @@ pub fn run(view: &AiView, mem: &mut AiMemory, out: &mut Vec<PlayerCommand>) {
     mem.observe_income(view.time, &view.me.stats.gathered);
     mem.note_age(view.me.age, view.time);
     let plan = Plan::new(view, mem);
+    mem.home_way = Some(plan.home_way.clone());
     let mut t = Think::new(*view, plan, mem, out);
     t.defend();
     t.abandon_stalled_sites();
@@ -202,7 +203,8 @@ impl<'m, 'v> Think<'m, 'v> {
             if cached.is_some() && !mined_out {
                 continue;
             }
-            let found = search_remote(&view, plan.home, r);
+            let field = mem.home_field(&view, plan.home);
+            let found = search_remote(&view, plan.home, r, field.as_deref());
             mem.remote[r.index()] = Some(RemoteSearch { clusters: found, at: now });
             for pos in found.iter().flatten() {
                 sources.add_remote(&view, r, *pos, |e| mem.is_bad_target(e));
@@ -495,7 +497,7 @@ impl<'m, 'v> Think<'m, 'v> {
     /// Issue a placement already validated by `check_placement`.
     fn commit_place(&mut self, kind: BuildingTypeId, p: Placement, builders: usize, cost: ResAmounts) -> bool {
         let mut crew = Vec::new();
-        pick_workers(self.view.snap, p.pos, builders, &self.taken, &mut crew);
+        pick_workers(&self.view, p.pos, builders, &self.taken, &mut crew);
         if crew.is_empty() {
             self.mem.no_spot.push((kind, self.now() + NO_SPOT_RETRY));
             return false;
@@ -860,7 +862,7 @@ impl<'m, 'v> Think<'m, 'v> {
                 continue;
             }
             let mut crew = Vec::new();
-            pick_workers(snap, b.pos, 1, &self.taken, &mut crew);
+            pick_workers(&self.view, b.pos, 1, &self.taken, &mut crew);
             let Some(&w) = crew.first() else { break };
             self.claim_worker(w, Entity::PLACEHOLDER);
             self.mem.builder_sent.push((b.entity, now));
@@ -1096,8 +1098,9 @@ impl<'m, 'v> Think<'m, 'v> {
             }
             let mut avoid: Vec<Vec2> = self.mem.bad_spots.iter().filter(|s| s.0 == kind).map(|s| s.1).collect();
             let movers = ground_movers(&self.view);
+            let field = self.mem.home_field(&self.view, self.plan.home);
             for _ in 0..MAX_VENT_TRIES {
-                let Some(vent) = nearest_free_node(&self.view, node, self.plan.home, &avoid) else {
+                let Some(vent) = nearest_free_node(&self.view, node, self.plan.home, &avoid, field.as_deref()) else {
                     self.mem.no_spot.push((kind, now + NO_SPOT_RETRY));
                     break;
                 };

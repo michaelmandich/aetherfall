@@ -1,6 +1,7 @@
 //! Progression decisions: the age-up path, research choices, military
 //! production buildings, aether vents and towers. All read only the view.
 
+use af_core::ext::movement::RouteField;
 use af_core::prelude::*;
 use af_core::stats::Target;
 use bevy::prelude::*;
@@ -381,16 +382,18 @@ pub fn vent_target(age: u8) -> u32 {
 }
 
 /// Nearest node of `kind` to `from` with no building on it, skipping nodes
-/// within a metre of an `avoid` point (claims that failed there before).
-pub fn nearest_free_node(view: &AiView, kind: NodeTypeId, from: Vec2, avoid: &[Vec2]) -> Option<Vec2> {
+/// within a metre of an `avoid` point (claims that failed there before),
+/// among those the workers can get to: nearest by their way round as
+/// `field` measures it (route distances from `from`, see
+/// `AiView::nearest_by_route`), else in a straight line.
+pub fn nearest_free_node(view: &AiView, kind: NodeTypeId, from: Vec2, avoid: &[Vec2], field: Option<&RouteField>) -> Option<Vec2> {
     let spatial = view.spatial;
-    spatial
-        .nearest_anywhere(from, |e| {
-            e.kind == SpatialKind::Node && e.type_index == kind.0 && !avoid.iter().any(|a| a.distance_squared(e.pos) < 1.0) && {
-                let mut claimed = false;
-                spatial.for_each_near(e.pos, 0.5, |o| claimed |= o.kind == SpatialKind::Building && o.pos.distance(e.pos) < 0.5);
-                !claimed
-            }
-        })
-        .map(|e| e.pos)
+    view.nearest_by_route(view.worker_kind(), from, field, |e| {
+        e.kind == SpatialKind::Node && e.type_index == kind.0 && !avoid.iter().any(|a| a.distance_squared(e.pos) < 1.0) && {
+            let mut claimed = false;
+            spatial.for_each_near(e.pos, 0.5, |o| claimed |= o.kind == SpatialKind::Building && o.pos.distance(e.pos) < 0.5);
+            !claimed
+        }
+    })
+    .map(|e| e.pos)
 }

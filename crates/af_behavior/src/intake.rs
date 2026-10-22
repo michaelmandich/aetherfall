@@ -5,6 +5,7 @@
 //! buildings listed in a Smart command.
 
 use af_core::ext::combat::{attack_reach, TargetClass};
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -14,6 +15,7 @@ use crate::brain::Brain;
 use crate::formation::{self, Member};
 use crate::gather::node_room;
 use crate::notice::notify;
+use crate::reach::Reach;
 use crate::tuning::*;
 
 /// A unit that may receive orders.
@@ -76,6 +78,7 @@ pub(crate) struct Intake<'w, 's> {
     data: Res<'w, Data>,
     players: Res<'w, Players>,
     nav: Res<'w, Nav>,
+    regions: Option<Res<'w, NavRegions>>,
     spatial: Res<'w, SpatialIndex>,
     clock: Res<'w, SimClock>,
     notices: ResMut<'w, Notices>,
@@ -191,11 +194,13 @@ impl Intake<'_, '_> {
         }
     }
 
-    /// `p` inside the map, nudged to the nearest spot this unit fits.
+    /// `p` inside the map, nudged to the nearest spot this unit fits: on
+    /// ground it can get to (the bank facing a slot across the water from
+    /// it, see `reach`), then clear of obstacles.
     fn open_spot(&self, e: Entity, p: Vec2) -> Vec2 {
         let Ok(a) = self.actors.get(e) else { return p };
         let (mask, radius, team) = (a.mobile.mobility.0, a.mobile.radius, self.players.team(a.owner.0));
-        let p = self.nav.clamp_point(p, radius);
+        let p = Reach::of(self.regions.as_deref(), a.pos.0, a.mobile).nearest(self.nav.clamp_point(p, radius));
         if self.nav.clear_at(p, mask, radius, team) {
             p
         } else {

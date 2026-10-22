@@ -21,9 +21,12 @@
 //! e.g. a slot between two obstacles whose centre clears both by the margin
 //! yet is too narrow for a box to pass at an angle.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use bevy_math::{IVec2, Vec2};
 
 use crate::obb::Obb;
+use crate::regions::TerrainSnapshot;
 
 /// Bit of `MoveFlag::Flying` in a mobility mask (must match af_data's
 /// `Mobility::of(MoveFlag::Flying)`; af_core asserts this in a test).
@@ -31,6 +34,15 @@ pub const FLYING: u16 = 1 << 5;
 
 /// Team value meaning "no team": passes no gates.
 pub const NO_TEAM: u8 = u8::MAX;
+
+/// Source of terrain stamps: every terrain change of every grid takes a
+/// fresh one, so a stamp names one terrain layout across grids (a new map's
+/// grid never repeats the last one's).
+static TERRAIN_STAMPS: AtomicU64 = AtomicU64::new(1);
+
+fn fresh_terrain_stamp() -> u64 {
+    TERRAIN_STAMPS.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Clone, Debug)]
 pub struct NavGrid {
@@ -41,6 +53,8 @@ pub struct NavGrid {
     pub(crate) terrain: Vec<u8>,
     pub(crate) terrain_mask: [u16; 256],
     pub(crate) terrain_buildable: [bool; 256],
+    /// Changes with the terrain or what it admits (see [`NavGrid::terrain_stamp`]).
+    pub(crate) terrain_stamp: u64,
     /// Number of static obstacles covering each cell (centre inside the box).
     pub(crate) blockers: Vec<u16>,
     /// Number of static obstacles within `walk_margin` of each cell centre.
@@ -67,6 +81,7 @@ impl NavGrid {
             terrain: vec![0; n],
             terrain_mask: [0; 256],
             terrain_buildable: [false; 256],
+            terrain_stamp: fresh_terrain_stamp(),
             blockers: vec![0; n],
             walk_blockers: vec![0; n],
             walk_margin: 0.0,
@@ -136,6 +151,7 @@ impl NavGrid {
     pub fn set_terrain_info(&mut self, terrain: u8, mobility_mask: u16, buildable: bool) {
         self.terrain_mask[terrain as usize] = mobility_mask;
         self.terrain_buildable[terrain as usize] = buildable;
+        self.terrain_stamp = fresh_terrain_stamp();
         self.version += 1;
     }
 
@@ -147,7 +163,33 @@ impl NavGrid {
         if self.in_bounds(c) {
             let i = self.index(c);
             self.terrain[i] = terrain;
+            self.terrain_stamp = fresh_terrain_stamp();
             self.version += 1;
+        }
+    }
+
+    /// Names the grid's terrain and what each terrain admits: it changes
+    /// whenever either does (never for obstacles or gates), and no other
+    /// terrain layout, on this grid or any other, ever had it. Cloning keeps
+    /// it. Region maps ([`crate::regions`]) built from a snapshot carry it, so
+    /// their users can tell when the terrain moved on.
+    #[inline]
+    pub fn terrain_stamp(&self) -> u64 {
+        self.terrain_stamp
+    }
+
+    /// The grid's terrain as it stands now, for region maps (see
+    /// [`crate::regions`]): dimensions, terrain ids, what each admits, and
+    /// the [`terrain_stamp`](Self::terrain_stamp).
+    pub fn terrain_snapshot(&self) -> TerrainSnapshot {
+        TerrainSnapshot {
+            width: self.width,
+            height: self.height,
+            cell: self.cell,
+            origin: self.origin,
+            terrain: self.terrain.clone(),
+            masks: self.terrain_mask,
+            stamp: self.terrain_stamp,
         }
     }
 
@@ -331,6 +373,45 @@ impl NavGrid {
             self.blockers[i] == 0 && self.gates[i] == 0 && self.terrain_buildable[self.terrain[i] as usize]
         })
     }
+}
+
+/// Visit, in order, every cell of a grid (cells of `cell` metres from
+/// `origin`) that the segment `a`-`b` passes through (Amanatides-Woo
+/// traversal). Stops and returns false as soon as `f` does.
+pub(crate) fn traverse_cells(origin: Vec2, cell: f32, a: Vec2, b: Vec2, mut f: impl FnMut(IVec2) -> bool) -> bool {
+    let pa = (a - origin) / cell;
+    let pb = (b - origin) / cell;
+    let mut c = IVec2::new(pa.x.floor() as i32, pa.y.floor() as i32);
+    let end = IVec2::new(pb.x.floor() as i32, pb.y.floor() as i32);
+    if !f(c) {
+        return false;
+    }
+    let d = pb - pa;
+    let step = IVec2::new(if d.x > 0.0 { 1 } else { -1 }, if d.y > 0.0 { 1 } else { -1 });
+    let axis = |p: f32, cell: i32, s: i32, dv: f32| -> (f32, f32) {
+        if dv.abs() < 1e-9 {
+            (f32::INFINITY, f32::INFINITY)
+        } else {
+            let boundary = if s > 0 { cell as f32 + 1.0 } else { cell as f32 };
+            ((boundary - p) / dv, 1.0 / dv.abs())
+        }
+    };
+    let (mut tx, dtx) = axis(pa.x, c.x, step.x, d.x);
+    let (mut ty, dty) = axis(pa.y, c.y, step.y, d.y);
+    let steps = (end.x - c.x).abs() + (end.y - c.y).abs();
+    for _ in 0..steps {
+        if tx < ty {
+            c.x += step.x;
+            tx += dtx;
+        } else {
+            c.y += step.y;
+            ty += dty;
+        }
+        if !f(c) {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]

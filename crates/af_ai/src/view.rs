@@ -6,11 +6,26 @@
 //! [`AiView`] bundles it with the shared resources. Every decision function
 //! reads only an `AiView`, so decisions can be tested without the other sim
 //! crates.
+//!
+//! What the terrain lets units reach comes from af_movement's `NavRegions`
+//! and the map's sites from af_map's `MapFeatures`, both optional: without
+//! them (flat-world tests) everything is reachable by the straight line and
+//! the contested middle is `MapInfo`'s crater.
 
 use af_core::ext::economy::RevealedPlayers;
 use af_core::ext::fog::SeenBy;
+use af_core::ext::map::MapFeatures;
+use af_core::ext::movement::{NavRegions, ReachFrom, RouteField};
+use af_core::prelude::af_geom::GOAL_SEARCH_RADIUS;
 use af_core::prelude::*;
 use bevy::prelude::*;
+
+/// The map side (metres) the military radii are tuned for; bigger maps
+/// scale them up (see [`AiView::map_scale`]).
+pub const TUNED_MAP_SIDE: f32 = 384.0;
+/// Candidates re-ranked by the way round when looking for the nearest
+/// reachable node (see [`AiView::nearest_by_route`]).
+const ROUTE_CHOICES: usize = 3;
 
 /// What a worker is doing, as far as the AI cares.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -239,6 +254,10 @@ pub struct AiView<'a> {
     /// Players every team sees the buildings of, because they lost every
     /// production building (see `RevealedPlayers`; None without af_economy).
     pub revealed: Option<&'a RevealedPlayers>,
+    /// What ground units can reach (None without af_movement's regions).
+    pub regions: Option<&'a NavRegions>,
+    /// The map's meteor sites, rivers and ranges (None without af_map's features).
+    pub features: Option<&'a MapFeatures>,
     pub snap: &'a Snapshot,
 }
 
@@ -259,12 +278,24 @@ impl<'a> AiView<'a> {
         let me = players.try_get(player)?;
         let map_size = map.map_or(nav.world_size(), |m| m.size);
         let crater = map.map_or(map_size * 0.5, |m| m.crater_center);
-        Some(AiView { data, players, me, nav, spatial, map_size, crater, time, fog, revealed: None, snap })
+        Some(AiView { data, players, me, nav, spatial, map_size, crater, time, fog, revealed: None, regions: None, features: None, snap })
     }
 
     /// The view with af_economy's revealed players (see [`AiView::revealed`]).
     pub fn with_revealed(self, revealed: Option<&'a RevealedPlayers>) -> AiView<'a> {
         AiView { revealed, ..self }
+    }
+
+    /// The view with af_movement's regions (see [`AiView::regions`]).
+    pub fn with_regions(self, regions: Option<&'a NavRegions>) -> AiView<'a> {
+        AiView { regions, ..self }
+    }
+
+    /// The view with af_map's features (see [`AiView::features`]): the main
+    /// meteor site is the contested middle.
+    pub fn with_features(self, features: Option<&'a MapFeatures>) -> AiView<'a> {
+        let crater = features.and_then(|f| f.sites.first()).map_or(self.crater, |s| s.center);
+        AiView { features, crater, ..self }
     }
 
     /// Has `player` lost every production building, so that its remaining
@@ -303,6 +334,126 @@ impl<'a> AiView<'a> {
     /// Mobility mask of the faction's worker (for nav queries).
     pub fn ground_mask(&self) -> u16 {
         self.data.unit_mobility(self.worker_kind(), self.me.faction).0
+    }
+
+    /// How units of `kind` move: their mobility (faction traits included)
+    /// and clearance radius (as `spawn_unit` gives their `Mobile`).
+    pub fn unit_class(&self, kind: UnitTypeId) -> (Mobility, f32) {
+        (self.data.unit_mobility(kind, self.me.faction), (self.data.unit(kind).size[0] * 0.5).max(0.2))
+    }
+
+    /// What a unit of `kind` at `from` can reach over the terrain (see
+    /// `NavRegions::from`): everything, by the straight line, without regions.
+    pub fn reach_from(&self, kind: UnitTypeId, from: Vec2) -> ReachFrom {
+        let (mobility, radius) = self.unit_class(kind);
+        af_core::ext::movement::reach_from(self.regions, from, mobility, radius)
+    }
+
+    /// Can a unit of `kind` at `from` get within `near` metres of `to` over
+    /// the terrain (see `NavRegions::reachable`)? Always without regions.
+    pub fn reaches(&self, kind: UnitTypeId, from: Vec2, to: Vec2, near: f32) -> bool {
+        self.reach_from(kind, from).reaches(to, near)
+    }
+
+    /// Can a worker at `from` get to `to` (within [`GOAL_SEARCH_RADIUS`],
+    /// as the path service takes a goal)?
+    pub fn worker_reaches(&self, from: Vec2, to: Vec2) -> bool {
+        self.reaches(self.worker_kind(), from, to, GOAL_SEARCH_RADIUS)
+    }
+
+    /// Route distance for a unit of `kind` from `from` to `to`: the way
+    /// round the terrain, `None` when it cannot get there; the straight
+    /// distance without regions.
+    pub fn route_distance(&self, kind: UnitTypeId, from: Vec2, to: Vec2) -> Option<f32> {
+        self.reach_from(kind, from).route_distance(to)
+    }
+
+    /// Route distances from `from` for units of `kind` (one search for many
+    /// lookups; see `NavRegions::field`). `None` without regions, for
+    /// flyers and from nowhere open.
+    pub fn route_field(&self, kind: UnitTypeId, from: Vec2) -> Option<RouteField> {
+        let (mobility, radius) = self.unit_class(kind);
+        self.regions?.field(from, mobility, radius, f32::INFINITY)
+    }
+
+    /// The army unit most of the army's population is (ground units only;
+    /// the worker when there is none): whose way the army's distances are
+    /// measured by.
+    pub fn lead_unit(&self) -> UnitTypeId {
+        let mut pop: Vec<(UnitTypeId, u32)> = Vec::new();
+        for a in &self.snap.army {
+            if self.data.unit(a.kind).locomotion == MoveFlag::Flying {
+                continue;
+            }
+            match pop.iter_mut().find(|p| p.0 == a.kind) {
+                Some(p) => p.1 += a.pop,
+                None => pop.push((a.kind, a.pop)),
+            }
+        }
+        pop.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map_or(self.worker_kind(), |p| p.0)
+    }
+
+    /// How much bigger than [`TUNED_MAP_SIDE`] the map is (at least 1): the
+    /// military radii (defence, home, recall) grow with it.
+    pub fn map_scale(&self) -> f32 {
+        (self.map_size.max_element() / TUNED_MAP_SIDE).max(1.0)
+    }
+
+    /// Of the spatial entries passing `wanted`, the one a unit of `kind` at
+    /// `from` gets to soonest: without regions the nearest in a straight
+    /// line; with them, of the [`ROUTE_CHOICES`] nearest that it can reach,
+    /// the nearest by the way round, as `field` measures it (route
+    /// distances from `from` for `kind`, see [`AiView::route_field`]: one
+    /// search for every look a decision makes).
+    pub fn nearest_by_route(
+        &self,
+        kind: UnitTypeId,
+        from: Vec2,
+        field: Option<&RouteField>,
+        wanted: impl Fn(&SpatialEntry) -> bool,
+    ) -> Option<SpatialEntry> {
+        if self.regions.is_none() {
+            return self.spatial.nearest_anywhere(from, wanted);
+        }
+        // The few nearest that pass and can be reached, in growing rings as
+        // `SpatialIndex::nearest_anywhere` looks (the tests only run on
+        // entries that would make the list).
+        let reach = self.reach_from(kind, from);
+        let way = |e: &SpatialEntry| field.and_then(|f| f.get(e.pos, GOAL_SEARCH_RADIUS)).unwrap_or_else(|| e.pos.distance(from));
+        let max = self.map_size.max_element() * 3.0;
+        let mut found: Vec<(f32, SpatialEntry)> = Vec::with_capacity(ROUTE_CHOICES);
+        let mut r = 16.0;
+        loop {
+            // Nothing farther in a straight line than the way to the best
+            // found so far can be nearer by the way round.
+            let bound = found.iter().map(|f| way(&f.1)).fold(f32::INFINITY, f32::min);
+            found.clear();
+            self.spatial.for_each_near(from, r, |e| {
+                let d = e.obb.distance_to_point(from);
+                let before = |b: &(f32, SpatialEntry)| b.0 < d || (b.0 == d && b.1.entity < e.entity);
+                // Out of the ring, or no nearer than the last of a full list.
+                if d > r || (found.len() == ROUTE_CHOICES && found.last().is_some_and(&before)) {
+                    return;
+                }
+                if !wanted(e) || !reach.reaches(e.pos, GOAL_SEARCH_RADIUS) {
+                    return;
+                }
+                let at = found.partition_point(before);
+                found.insert(at, (d, *e));
+                found.truncate(ROUTE_CHOICES);
+            });
+            if found.len() >= ROUTE_CHOICES || r > max || r >= bound {
+                break;
+            }
+            r *= 2.0;
+        }
+        let found: Vec<SpatialEntry> = found.into_iter().map(|f| f.1).collect();
+        if found.len() < 2 {
+            return found.first().copied();
+        }
+        let mut ranked: Vec<(f32, SpatialEntry)> = found.into_iter().map(|e| (way(&e), e)).collect();
+        ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.entity.cmp(&b.1.entity)));
+        ranked.first().map(|r| r.1)
     }
 
     /// Clamp a point into the map, `margin` metres from the edges.

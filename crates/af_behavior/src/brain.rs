@@ -103,24 +103,54 @@ impl Brain {
 
 /// Entities af_movement recently failed to reach. Automatic choices (target
 /// acquisition, the next patient, tree or drop site) skip them for
-/// [`UNREACHABLE_TICKS`]. A fixed table that never allocates: a new entry
-/// takes the slot that expires first.
+/// [`UNREACHABLE_TICKS`], or, when the terrain keeps them out of reach
+/// (another region, see `reach`), until the regions change. A fixed table
+/// that never allocates: a new entry takes the slot that expires first.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Unreachable {
-    /// (entity, tick until which it is skipped).
+    /// (entity, tick until which it is skipped; [`FOR_GOOD`] until the
+    /// regions change).
     entries: [(Entity, u64); UNREACHABLE_MEMORY],
+    /// Terrain stamp of the regions the for-good entries were found in.
+    stamp: u64,
 }
+
+/// `Unreachable` entry that lasts until the regions change.
+const FOR_GOOD: u64 = u64::MAX;
 
 impl Default for Unreachable {
     fn default() -> Self {
-        Unreachable { entries: [(Entity::PLACEHOLDER, 0); UNREACHABLE_MEMORY] }
+        Unreachable { entries: [(Entity::PLACEHOLDER, 0); UNREACHABLE_MEMORY], stamp: 0 }
     }
 }
 
 impl Unreachable {
     /// `e` could not be reached at `tick`.
     pub(crate) fn remember(&mut self, e: Entity, tick: u64) {
-        let until = tick + UNREACHABLE_TICKS;
+        self.put(e, tick + UNREACHABLE_TICKS);
+    }
+
+    /// `e` lies out of the unit's reach over the terrain of regions
+    /// `stamp` (see `Reach::stamp`): skipped until they change.
+    pub(crate) fn remember_for_good(&mut self, e: Entity, stamp: u64) {
+        self.sync(stamp);
+        self.put(e, FOR_GOOD);
+    }
+
+    /// Keep the for-good entries to the regions of terrain `stamp`: those
+    /// of other regions (another map, changed terrain) are forgotten.
+    pub(crate) fn sync(&mut self, stamp: u64) {
+        if self.stamp != stamp {
+            self.stamp = stamp;
+            for entry in &mut self.entries {
+                if entry.1 == FOR_GOOD {
+                    *entry = (Entity::PLACEHOLDER, 0);
+                }
+            }
+        }
+    }
+
+    fn put(&mut self, e: Entity, until: u64) {
         let slot = match self.entries.iter().position(|&(x, _)| x == e) {
             Some(i) => i,
             None => (0..UNREACHABLE_MEMORY).min_by_key(|&i| self.entries[i].1).unwrap_or(0),
@@ -180,6 +210,23 @@ mod tests {
         assert!(table.skips(entity(1), 10 + UNREACHABLE_TICKS - 1));
         assert!(!table.skips(entity(1), 10 + UNREACHABLE_TICKS));
         assert!(!table.skips(entity(2), 10));
+    }
+
+    /// What the terrain keeps out of reach stays skipped until the regions
+    /// change, and outlasts timed entries when the table fills up.
+    #[test]
+    fn terrain_unreachable_entries_last_until_the_regions_change() {
+        let mut table = Unreachable::default();
+        table.remember_for_good(entity(1), 7);
+        assert!(table.skips(entity(1), 1_000_000));
+        for i in 2..=UNREACHABLE_MEMORY as u32 + 3 {
+            table.remember(entity(i), i as u64);
+        }
+        assert!(table.skips(entity(1), 20), "timed entries go first");
+        table.sync(7);
+        assert!(table.skips(entity(1), 20), "the same regions");
+        table.sync(8);
+        assert!(!table.skips(entity(1), 20), "new regions");
     }
 
     #[test]

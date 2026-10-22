@@ -1,13 +1,14 @@
 //! Facts derived once per think from the view: where home is, how many
 //! workers and soldiers there are, the age-up step and what to save for.
 
+use af_core::prelude::af_geom::GOAL_SEARCH_RADIUS;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
 use crate::army::{army_mix, army_target, wave_due, wave_floor, wave_size};
 use crate::budget::just_in_time_reserve;
 use crate::economy::worker_target;
-use crate::memory::AiMemory;
+use crate::memory::{AiMemory, HomeWay};
 use crate::progress::{AgeUpStep, age_path_cost, age_up_step};
 use crate::view::AiView;
 
@@ -20,6 +21,9 @@ pub const ADVANTAGE: f32 = 1.6;
 pub const MIN_SEEN: f32 = 4.0;
 /// The army gathers this far in front of the main hall (toward the crater).
 pub const RALLY_DISTANCE: f32 = 20.0;
+/// The front faces the point this far (metres) along the way from home to
+/// the main meteor site: past the rally point, round what bends the way.
+pub const FRONT_LOOKAHEAD: f32 = 30.0;
 /// Seconds an age (1..=4) may take before its age-up is behind schedule:
 /// from then on investments and the army leave its saving alone (see
 /// `Think::invest_share` and `Think::mil_share`). Tight on purpose, so that
@@ -36,10 +40,14 @@ pub struct Plan {
     pub home: Vec2,
     /// Radius of the main hall's footprint (0 without one).
     pub hall_radius: f32,
-    /// Unit direction from home toward the middle of the map.
+    /// Unit direction from home toward the middle of the map: along the way
+    /// there (see [`front_from`]).
     pub front: Vec2,
     /// Army gathering point.
     pub rally: Vec2,
+    /// What `front` and the mix's reach were worked out from (kept in
+    /// `AiMemory::home_way` for the next thinks).
+    pub home_way: HomeWay,
     pub worker_kind: UnitTypeId,
     pub workers: u32,
     pub workers_queued: u32,
@@ -114,8 +122,20 @@ impl Plan {
             let s = data.building(b.kind).size;
             Vec2::new(s[0], s[2]).length() * 0.5
         });
-        let front = (view.crater - home).normalize_or(Vec2::Y);
-        let wanted = view.clamp(home + front * RALLY_DISTANCE, 4.0);
+        let stamp = view.regions.map_or(0, |r| r.stamp());
+        let known = mem.home_way.as_ref().filter(|w| w.home == home && w.stamp == stamp);
+        let front = known.map_or_else(|| front_from(view, home), |w| w.front);
+        let mut home_way = HomeWay { home, stamp, front, reach: known.map_or_else(Vec::new, |w| w.reach.clone()) };
+        let mut wanted = view.clamp(home + front * RALLY_DISTANCE, 4.0);
+        if !view.worker_reaches(home, wanted)
+            && let Some(near) = view.regions.and_then(|r| {
+                let (mobility, radius) = view.unit_class(worker_kind);
+                r.nearest_reachable(home, wanted, mobility, radius)
+            })
+        {
+            // Over the water from home: gather on the near bank.
+            wanted = near;
+        }
         let rally = view.nav.nearest_open(wanted, view.ground_mask(), 1.0, me.team, 15.0).unwrap_or(wanted);
 
         let mut trains_army = vec![false; data.buildings.len()];
@@ -190,12 +210,14 @@ impl Plan {
         let allowed = AGE_SCHEDULE.get(me.age.saturating_sub(1) as usize).copied().unwrap_or(f32::INFINITY);
         let behind_schedule = pending && mem.age_duration(view.time) > allowed;
 
+        let comp = reachable_mix(view, home, army_mix(data, me, &mem.intel, &mem.known, mem.razing_lately(view.time), &pop_by_kind), &mut home_way.reach);
         Plan {
             hall: hall.map(|b| b.entity),
             home,
             hall_radius,
             front,
             rally,
+            home_way,
             worker_kind,
             workers: snap.workers.len() as u32,
             workers_queued,
@@ -207,7 +229,7 @@ impl Plan {
             wave_size,
             queued_pop,
             production,
-            comp: army_mix(data, me, &mem.intel, &mem.known, mem.razing_lately(view.time), &pop_by_kind),
+            comp,
             age_up,
             age_cost,
             shortfall: mem.shortfall,
@@ -222,6 +244,42 @@ impl Plan {
             pop_by_kind,
         }
     }
+}
+
+/// Unit direction from `home` toward the main meteor site (the contested
+/// middle), along the way a worker walks there: toward the point
+/// [`FRONT_LOOKAHEAD`] down the coarse route, so a base whose way to the
+/// middle bends round a river or a range faces where its army will go,
+/// not the water. Straight at the site without regions or a route.
+pub fn front_from(view: &AiView, home: Vec2) -> Vec2 {
+    let toward = (view.crater - home).normalize_or(Vec2::Y);
+    let Some(regions) = view.regions else { return toward };
+    let (mobility, radius) = view.unit_class(view.worker_kind());
+    let Some(route) = regions.route(home, view.crater, mobility, radius) else { return toward };
+    let ahead = route.point_at(FRONT_LOOKAHEAD.min(route.length()));
+    (ahead - home).normalize_or(toward)
+}
+
+/// The army mix less the units no route leads for from `home` to the main
+/// meteor site (siege on wheels where only shallows cross a river, giants
+/// too wide for every pass), unless that would leave nothing. Flyers always
+/// get there; without regions everything does. `known` holds the verdicts
+/// worked out so far for this home (looked up, and added to).
+pub(crate) fn reachable_mix(view: &AiView, home: Vec2, comp: Vec<(UnitTypeId, f32)>, known: &mut Vec<(UnitTypeId, bool)>) -> Vec<(UnitTypeId, f32)> {
+    if view.regions.is_none() {
+        return comp;
+    }
+    let near = view.features.and_then(|f| f.sites.first()).map_or(GOAL_SEARCH_RADIUS, |s| s.radius.max(GOAL_SEARCH_RADIUS));
+    let mut gets_there = |u: UnitTypeId| match known.iter().find(|k| k.0 == u) {
+        Some(k) => k.1,
+        None => {
+            let yes = view.data.unit(u).locomotion == MoveFlag::Flying || view.reaches(u, home, view.crater, near);
+            known.push((u, yes));
+            yes
+        }
+    };
+    let kept: Vec<(UnitTypeId, f32)> = comp.iter().copied().filter(|(u, _)| gets_there(*u)).collect();
+    if kept.is_empty() { comp } else { kept }
 }
 
 /// Passive income per second: the trickle of every complete own building

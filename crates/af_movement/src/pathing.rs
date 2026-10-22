@@ -2,23 +2,41 @@
 //!
 //! * New goals (`MoveGoal::seq` differs from `PathState::goal_seq`) and
 //!   repaths of following units (stuck, path cut by a newly placed obstacle,
-//!   followed entity moved away) are answered on the spot when they need no
-//!   search: flyers (they fly straight), clear straight lines, goals a
-//!   groupmate's fresh search already leads to (the same goal cell), and
-//!   goals near the end of a route found lately from near the mover (see
-//!   [`PathQueue::share`]); the line checks of offering routes are charged
-//!   to the tick's search budget (at most half of it before the queue is
-//!   served, the rest waiting in line to be offered them there).
-//! * The rest join a FIFO queue: new goals as `Pending`, repaths keeping
-//!   their current path until the new one is ready. The queue is served in
-//!   order under a per-tick A* expansion budget, so a mass order spreads over
-//!   a few ticks and nobody starves; each request is first offered the
-//!   routes of searches served before it, so a group ordered to one place
-//!   (each unit to its own spot of a formation) costs a few searches, not
-//!   one per unit. A search the tick's budget cuts short is set aside
-//!   (`NavGrid::find_path_sliced`) and goes on where it stopped at the front
-//!   of the next tick's line, so a long search costs several short ticks
-//!   instead of one long one.
+//!   followed entity moved away, end of a leg reached) are answered on the
+//!   spot when they need no search: flyers (they fly straight), clear
+//!   straight lines, goals a groupmate's fresh search already leads to (the
+//!   same goal cell), and goals near the end of a route found lately from
+//!   near the mover (see [`PathQueue::share`]); the line checks of offering
+//!   routes are charged to the tick's search budget (at most half of it
+//!   before the queue is served, the rest waiting in line to be offered
+//!   them there).
+//! * Regions (`docs/design/maps-and-terrain.md`, section 7): a ground goal
+//!   out of the mover's region of the terrain (see
+//!   `af_core::ext::movement::NavRegions`) is swapped for the reachable
+//!   point nearest it, with no search to find that out; the path leads
+//!   there and is partial, so the unit walks to the bank facing the goal
+//!   and af_behavior hears that it failed.
+//! * Long ways: a goal farther than [`LONG_WAY`] that no straight line
+//!   reaches is planned on the coarse route graph of the mover's class
+//!   first. A route that bends round the terrain (a river crossed at a
+//!   ford, a range at its pass) is then searched leg by leg, about
+//!   [`LEG_LENGTH`] of it at a time, each leg well within the search cap:
+//!   the path ends at the end of the leg (partial, more to come), and once
+//!   less than [`LEG_AHEAD`] of it is left, the next leg is searched from
+//!   its end and added to it while the unit walks on. Groupmates share
+//!   coarse routes as they share paths, and the coarse search is charged
+//!   to the budget too.
+//! * The rest join the queue: new goals as `Pending`, repaths keeping their
+//!   current path until the new one is ready. The queue holds a line per
+//!   player, served in turn, one request each round, under a per-tick A*
+//!   expansion budget: a mass order spreads over a few ticks, nobody
+//!   starves, and one player's long searches never hold up another's
+//!   workers. Each request is first offered the routes of searches served
+//!   before it, so a group ordered to one place (each unit to its own spot
+//!   of a formation) costs a few searches, not one per unit. A search the
+//!   tick's budget cuts short is set aside (`NavGrid::find_path_sliced`)
+//!   and goes on where it stopped first thing next tick, so a long search
+//!   costs several short ticks instead of one long one.
 //! * A repath asked for because the unit got stuck goes round the ground
 //!   units near it where it can (the cells they stand on cost more): a
 //!   worker held up by another at work in a gap, or a column wading into a
@@ -26,21 +44,23 @@
 //!   when there is none.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
-use af_core::prelude::af_geom::{PathRequest, PathStep};
+use af_core::ext::movement::NavRegions;
+use af_core::prelude::af_geom::{CoarseRoute, PathRequest, PathStep, RegionClass, RegionMap, GOAL_SEARCH_RADIUS, START_SEARCH_RADIUS};
 use af_core::prelude::*;
 use bevy::prelude::*;
 
-use crate::mover::{FollowTarget, Mover};
+use crate::mover::{Aim, FollowTarget, Mover};
 use crate::obstacles::ObstacleRegistry;
 
 /// A* expansions allowed per tick across all requests (a hard cap: each
 /// search may use only what is left of it, and goes on next tick when that
 /// runs out). About 1.5 ms of searching.
 const TICK_EXPANSION_BUDGET: u32 = 8_000;
-/// Expansion cap of one search, over however many ticks it takes; a longer
-/// search returns its best partial path and the unit repaths when it gets
-/// there.
+/// Expansion cap of one search (one leg of a long way), over however many
+/// ticks it takes; a longer search returns its best partial path and the
+/// unit repaths when it gets there.
 const MAX_EXPANSIONS_PER_PATH: u32 = 24_000;
 /// No request is taken up with less budget than this left in the tick.
 const MIN_SEARCH_BUDGET: u32 = 500;
@@ -57,7 +77,9 @@ const AVOID_MARGIN: f32 = 0.2;
 const FOLLOW_REPATH_DISTANCE: f32 = 1.5;
 /// Minimum seconds between follow-target repaths of one unit.
 const REPATH_COOLDOWN: f32 = 0.25;
-/// A truncated path is extended only while each leg gets this much closer.
+/// A path that falls short of its aim (a search cut by its budget, a leg
+/// that ends short of the leg's end) is only taken while the way left from
+/// its end shrinks by this much each time; else the unit gives up.
 const TRUNCATED_MIN_GAIN: f32 = 1.0;
 /// Walking up to an entity, a path may end this much farther from its box
 /// than `arrive` plus the unit's radius (half a nav cell: the path ends on
@@ -77,6 +99,33 @@ const SHARE_TRIES: usize = 4;
 /// expansions per nav cell it crosses (it tests one clearance per cell,
 /// several times cheaper than expanding a cell).
 const LINE_CHECK_CELL_COST: f32 = 0.25;
+/// A goal farther than this (metres) that no straight line reaches is
+/// planned on the coarse route graph first.
+const LONG_WAY: f32 = 48.0;
+/// Length of route one leg of a long way covers (metres). A leg over open
+/// ground is a straight line or a search of a few hundred cells; one
+/// through a forest a few thousand.
+const LEG_LENGTH: f32 = 64.0;
+/// The next leg is searched once this much of the path is left (metres:
+/// several seconds of walking, while the unit walks on).
+const LEG_AHEAD: f32 = 24.0;
+/// A leg path ending this close to the leg's end got there (metres; a leg
+/// end inside a tree or a building is reached beside it).
+const LEG_REACHED: f32 = GOAL_SEARCH_RADIUS;
+/// A unit this far off its coarse route (metres; pushed, or chasing a goal
+/// that ran) gets a new one.
+const OFF_ROUTE: f32 = 32.0;
+/// Coarse routes kept for sharing (see [`PathQueue::shared_route`]).
+const SHARED_COARSE: usize = 16;
+/// A coarse route serves a mover starting this close to where it started...
+const COARSE_SHARE_START: f32 = 24.0;
+/// ...and a way ending this close to where it leads (metres). A unit's own
+/// route is kept as long as its goal stays this close to the route's end.
+const COARSE_SHARE_GOAL: f32 = 16.0;
+/// What a coarse search costs against the budget, in A* expansions per
+/// coarse node it expands (measured: about what a cell expansion costs;
+/// each looks at up to eight links instead of eight cells' clearance).
+const COARSE_EXPANSION_COST: u32 = 1;
 
 /// Budget charged for checking the line from `a` to `b` (see
 /// [`LINE_CHECK_CELL_COST`]): the walk visits one cell per cell boundary it
@@ -86,11 +135,19 @@ fn line_check_cost(nav: &NavGrid, a: Vec2, b: Vec2) -> u32 {
     1 + (cells * LINE_CHECK_CELL_COST) as u32
 }
 
-/// Units waiting for a path, oldest first, and recent routes to share.
+/// Units waiting for a path, a line per player, and recent routes to share.
 #[derive(Resource, Debug, Default)]
 pub(crate) struct PathQueue {
-    fifo: VecDeque<Entity>,
+    /// Waiting units by owner (player index), each line oldest first.
+    lines: Vec<VecDeque<Entity>>,
+    /// The line served last: the lines take turns.
+    turn: usize,
+    /// A unit whose search the last tick's budget cut short (or whose look
+    /// for a route to share spent it): first in line next tick.
+    resume: Option<Entity>,
     routes: VecDeque<Route>,
+    /// Coarse routes planned lately, for groupmates.
+    coarse: VecDeque<SharedCoarse>,
     /// Budget (in A* expansions) spent this tick on offering new requests
     /// routes to share, before the queue is served: the queue gets what is
     /// left of the tick's budget.
@@ -98,6 +155,12 @@ pub(crate) struct PathQueue {
     /// `NavGrid::sync_tag` of the grid `routes` were found on: a new map
     /// (a new grid, whose version count starts over) drops them.
     grid: u64,
+    /// Cells expanded by searches, and coarse nodes by route planning,
+    /// since the app started (for tests and measurements).
+    #[cfg_attr(not(test), allow(dead_code))]
+    expanded: u64,
+    #[cfg_attr(not(test), allow(dead_code))]
+    coarse_expanded: u64,
 }
 
 /// A complete route to a point, found by a search or shared from one.
@@ -118,17 +181,50 @@ struct Route {
     waypoints: Vec<Vec2>,
 }
 
+/// A coarse route planned lately, for groupmates going the same way.
+#[derive(Clone, Debug)]
+struct SharedCoarse {
+    class: RegionClass,
+    /// Terrain stamp of the region map it was planned on.
+    stamp: u64,
+    from: Vec2,
+    to: Vec2,
+    route: Arc<CoarseRoute>,
+}
+
 impl PathQueue {
-    fn push(&mut self, e: Entity, mover: &mut Mover) {
+    fn push(&mut self, e: Entity, owner: PlayerId, mover: &mut Mover) {
         if !mover.queued {
             mover.queued = true;
-            self.fifo.push_back(e);
+            let i = owner.index();
+            if self.lines.len() <= i {
+                self.lines.resize_with(i + 1, VecDeque::new);
+            }
+            self.lines[i].push_back(e);
         }
     }
 
+    /// The next unit to serve: the one set aside last tick, else the
+    /// front of the next line after the one served last.
+    fn pop(&mut self) -> Option<Entity> {
+        if let Some(e) = self.resume.take() {
+            return Some(e);
+        }
+        let n = self.lines.len();
+        for step in 1..=n {
+            let i = (self.turn + step) % n;
+            if let Some(e) = self.lines[i].pop_front() {
+                self.turn = i;
+                return Some(e);
+            }
+        }
+        None
+    }
+
+    /// Units waiting, set aside included.
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.fifo.len()
+        self.lines.iter().map(VecDeque::len).sum::<usize>() + usize::from(self.resume.is_some())
     }
 
     /// A recent route that serves `ask` without a search: one found on this
@@ -185,6 +281,7 @@ impl PathQueue {
         if self.grid != nav.sync_tag() {
             self.grid = nav.sync_tag();
             self.routes.clear();
+            self.coarse.clear();
         }
     }
 
@@ -206,6 +303,25 @@ impl PathQueue {
             goal: ask.target,
             waypoints: waypoints.to_vec(),
         });
+    }
+
+    /// A coarse route planned lately on `map` from within
+    /// [`COARSE_SHARE_START`] of `from` to within [`COARSE_SHARE_GOAL`] of
+    /// `to` (the newest such).
+    fn shared_route(&self, map: &RegionMap, from: Vec2, to: Vec2) -> Option<Arc<CoarseRoute>> {
+        let (class, stamp) = (map.class(), map.stamp());
+        self.coarse
+            .iter()
+            .rev()
+            .find(|c| c.class == class && c.stamp == stamp && c.from.distance(from) <= COARSE_SHARE_START && c.to.distance(to) <= COARSE_SHARE_GOAL)
+            .map(|c| c.route.clone())
+    }
+
+    fn remember_route(&mut self, map: &RegionMap, from: Vec2, to: Vec2, route: Arc<CoarseRoute>) {
+        if self.coarse.len() >= SHARED_COARSE {
+            self.coarse.pop_front();
+        }
+        self.coarse.push_back(SharedCoarse { class: map.class(), stamp: map.stamp(), from, to, route });
     }
 }
 
@@ -267,15 +383,18 @@ pub(crate) fn invalidate_blocked_paths(
     }
 }
 
-/// One unit's path request this tick.
+/// One search request of a unit this tick.
 struct Ask<'a> {
     goal: &'a MoveGoal,
     mob: &'a Mobile,
+    /// Where the search starts: the unit, or the end of its path when the
+    /// search is for the next leg.
     pos: Vec2,
     team: u8,
-    /// Where the goal is now (see [`goal_point`]).
+    /// Where the search heads: the goal (see [`goal_point`]), the
+    /// reachable point nearest it, or the end of a leg.
     target: Vec2,
-    /// The followed entity's box, when following one.
+    /// The followed entity's box, when the search walks up to it.
     follow: Option<Obb>,
 }
 
@@ -283,6 +402,22 @@ impl Ask<'_> {
     /// How far from the followed box a path may end (see [`FOLLOW_REACH_SLACK`]).
     fn follow_reach(&self) -> f32 {
         self.goal.arrive + self.mob.radius + FOLLOW_REACH_SLACK
+    }
+
+    /// How near the goal a unit must be able to get for it to count as in
+    /// reach when the goal stands on ground the unit's class cannot use (a
+    /// tree, a spot in the water): within reach of the followed box, or
+    /// where the path search would accept an open cell for a blocked point.
+    fn near(&self) -> f32 {
+        match self.follow {
+            Some(b) => b.bounding_radius() + self.follow_reach(),
+            None => GOAL_SEARCH_RADIUS.max(self.goal.arrive),
+        }
+    }
+
+    /// The same request heading for `aim` from `from`.
+    fn toward(&self, aim: &Aim, from: Vec2) -> Ask<'_> {
+        Ask { goal: self.goal, mob: self.mob, pos: from, team: self.team, target: aim.goal, follow: self.follow.filter(|_| aim.reach) }
     }
 
     /// The grid request (registers the mover's terrain costs on first use).
@@ -302,17 +437,101 @@ impl Ask<'_> {
     }
 }
 
+/// The region map of a ground mover's class (none for flyers, or without
+/// `NavRegions`).
+fn class_map(regions: Option<&NavRegions>, mob: &Mobile) -> Option<Arc<RegionMap>> {
+    if mob.flying {
+        return None;
+    }
+    regions?.map(mob.mobility, mob.radius)
+}
+
+/// Where the way to `ask`'s goal ends for the unit (at `ask.pos`): the goal
+/// itself, unless the regions say it is out of the unit's reach; then the
+/// reachable point nearest it, found without a search.
+fn way_end(map: Option<&RegionMap>, ask: &Ask) -> Aim {
+    let to_goal = Aim { goal: ask.target, reach: ask.follow.is_some(), last: true, unreachable: false, beyond: 0.0, extends: false };
+    let Some(map) = map else { return to_goal };
+    let from = map.region_near(ask.pos, START_SEARCH_RADIUS);
+    if from == 0 {
+        // Nowhere open about: the search sorts it out.
+        return to_goal;
+    }
+    let reachable = match map.region_at(ask.target) {
+        0 => map.touches(from, ask.target, ask.near()),
+        r => r == from,
+    };
+    if reachable {
+        return to_goal;
+    }
+    let goal = map.nearest_in(from, ask.target).unwrap_or(ask.pos);
+    Aim { goal, reach: false, unreachable: true, ..to_goal }
+}
+
+/// What a search from `from` on the way to `last` (where the way ends)
+/// heads for: `last` itself on a short way, or when the coarse route is
+/// straight (obstacles are the search's business); else the end of the
+/// next leg of the route (see [`RegionMap::next_leg`]). Plans the route,
+/// or takes the unit's own or a groupmate's, and charges a coarse search
+/// to `spent`.
+fn leg_aim(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2, last: Aim, spent: &mut u32) -> Aim {
+    if from.distance(last.goal) <= LONG_WAY {
+        return last;
+    }
+    let Some(route) = route_for(queue, map, mover, from, last.goal, spent) else { return last };
+    if route.points.len() <= 2 || route.length() <= LEG_LENGTH * 1.5 {
+        return last;
+    }
+    let leg = map.next_leg(&route, from, mover.route_segment, LEG_LENGTH);
+    mover.route_segment = leg.segment;
+    if leg.last {
+        return last;
+    }
+    Aim { goal: leg.target, reach: false, last: false, unreachable: false, beyond: leg.beyond, extends: false }
+}
+
+/// The coarse route from `from` to `to`: the unit's own while it still
+/// leads there and the unit is near it, else a groupmate's planned lately,
+/// else a new one (its coarse search charged to `spent`). `None` when the
+/// ends have no open ground about or lie apart (`way_end` keeps the latter
+/// from happening).
+fn route_for(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2, to: Vec2, spent: &mut u32) -> Option<Arc<CoarseRoute>> {
+    if let Some(route) = mover.route.as_ref().filter(|r| mover.route_stamp == map.stamp() && r.end().distance(to) <= COARSE_SHARE_GOAL)
+        && route.locate(from, mover.route_segment).2 <= OFF_ROUTE
+    {
+        return Some(route.clone());
+    }
+    let route = match queue.shared_route(map, from, to) {
+        Some(r) => r,
+        None => {
+            let (a, b) = (map.open_near(from, START_SEARCH_RADIUS)?, map.open_near(to, GOAL_SEARCH_RADIUS)?);
+            let planned = map.route(a, b)?;
+            *spent += planned.expansions * COARSE_EXPANSION_COST;
+            queue.coarse_expanded += u64::from(planned.expansions);
+            let r = Arc::new(planned);
+            queue.remember_route(map, from, to, r.clone());
+            r
+        }
+    };
+    mover.route = Some(route.clone());
+    mover.route_stamp = map.stamp();
+    mover.route_segment = 0;
+    Some(route)
+}
+
 type RequestQuery<'a> = (Entity, &'a Position, &'a Facing, &'a Mobile, &'a Owner, Option<&'a MoveGoal>, &'a mut PathState, &'a mut Mover);
 
 /// Turn goal changes and repath wishes into paths, on the spot when no
-/// search is needed, else through the queue; drop state of units whose goal
-/// was removed.
+/// search is needed, else through the queue; ask for the next leg of a long
+/// way in time; drop state of units whose goal was removed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_requests(
     mut queue: ResMut<PathQueue>,
     mut nav: ResMut<Nav>,
     data: Res<Data>,
     players: Res<Players>,
     spatial: Res<SpatialIndex>,
+    regions: Option<Res<NavRegions>>,
     mut avoid: Local<Vec<IVec2>>,
     mut units: Query<RequestQuery, Without<Dead>>,
 ) {
@@ -343,6 +562,11 @@ pub(crate) fn collect_requests(
                         mover.wants_repath = true;
                     }
                     if !mover.wants_repath {
+                        // Near the end of a leg: ask for the next one.
+                        if mover.on_leg && !mover.extend && !mover.queued && mover.way_left(pos.0, &path) - mover.beyond < LEG_AHEAD {
+                            mover.extend = true;
+                            queue.push(e, owner.0, &mut mover);
+                        }
                         continue;
                     }
                 }
@@ -356,14 +580,18 @@ pub(crate) fn collect_requests(
         }
         if let Some(target) = goal_point(goal, mover.follow.as_ref()) {
             let follow = goal.follow.and(mover.follow).map(|f| f.obb);
-            let ask = Ask { goal, mob, pos: pos.0, team: players.team(owner.0), target, follow };
+            let to_goal = Ask { goal, mob, pos: pos.0, team: players.team(owner.0), target, follow };
+            let map = class_map(regions.as_deref(), mob);
+            let last = way_end(map.as_deref(), &to_goal);
+            (mover.way_end, mover.unreachable) = (last.goal, last.unreachable);
+            let ask = to_goal.toward(&last, pos.0);
             let req = ask.request(nav, &data, 0);
             avoid.clear();
             if mover.stuck_repath {
                 movers_in_the_way(&spatial, nav, e, pos.0, mob.radius, goal.follow, &mut avoid);
             }
             if let Some(result) = nav.quick_path(&req, &avoid) {
-                apply_path(&ask, result, &mut path, &mut mover);
+                apply_path(&ask, &last, target, result, &mut path, &mut mover);
                 continue;
             }
             // Offer it a recent route while this tick's share of the budget
@@ -375,24 +603,27 @@ pub(crate) fn collect_requests(
                 if let Some(result) = shared {
                     queue.spent += REQUEST_OVERHEAD;
                     queue.remember(nav, &ask, &result.waypoints);
-                    apply_path(&ask, result, &mut path, &mut mover);
+                    apply_path(&ask, &last, target, result, &mut path, &mut mover);
                     continue;
                 }
             }
         }
-        queue.push(e, &mut mover);
+        queue.push(e, owner.0, &mut mover);
     }
 }
 
 type ServiceQuery<'a> = (&'a Position, &'a Mobile, &'a Owner, Option<&'a MoveGoal>, &'a mut PathState, &'a mut Mover);
 
-/// Serve queued requests in order until this tick's budget is spent.
+/// Serve queued requests, the players' lines in turn, until this tick's
+/// budget is spent.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn service_paths(
     mut queue: ResMut<PathQueue>,
     mut nav: ResMut<Nav>,
     data: Res<Data>,
     players: Res<Players>,
     spatial: Res<SpatialIndex>,
+    regions: Option<Res<NavRegions>>,
     mut avoid: Local<Vec<IVec2>>,
     mut units: Query<ServiceQuery, Without<Dead>>,
 ) {
@@ -400,19 +631,16 @@ pub(crate) fn service_paths(
     let nav = nav.bypass_change_detection();
     // What offering new requests a route already spent of the tick.
     let mut spent = queue.spent;
-    while let Some(&e) = queue.fifo.front() {
-        let budget = TICK_EXPANSION_BUDGET.saturating_sub(spent);
-        if budget < MIN_SEARCH_BUDGET {
-            break;
-        }
-        queue.fifo.pop_front();
+    while TICK_EXPANSION_BUDGET.saturating_sub(spent) >= MIN_SEARCH_BUDGET {
+        let Some(e) = queue.pop() else { break };
         let Ok((pos, mob, owner, goal, mut path, mut mover)) = units.get_mut(e) else { continue };
         mover.queued = false;
         let Some(goal) = goal else { continue };
         // Skip entries answered meanwhile (a newer goal got a quick path) or
         // of units no longer going anywhere.
-        let waiting = path.status == PathStatus::Pending || (path.status == PathStatus::Following && mover.wants_repath);
-        if !waiting {
+        let full = path.status == PathStatus::Pending || (path.status == PathStatus::Following && mover.wants_repath);
+        let extension = !full && path.status == PathStatus::Following && mover.extend && mover.on_leg;
+        if !full && !extension {
             continue;
         }
         let Some(target) = goal_point(goal, mover.follow.as_ref()) else {
@@ -420,13 +648,46 @@ pub(crate) fn service_paths(
             continue;
         };
         let follow = goal.follow.and(mover.follow).map(|f| f.obb);
-        let ask = Ask { goal, mob, pos: pos.0, team: players.team(owner.0), target, follow };
+        let to_goal = Ask { goal, mob, pos: pos.0, team: players.team(owner.0), target, follow };
+        let map = class_map(regions.as_deref(), mob);
+        // A search set aside last tick goes on with the aim it had.
+        let resumed = mover.aim.filter(|a| a.extends == extension);
+        let from = if extension { path.waypoints.last().copied().unwrap_or(pos.0) } else { pos.0 };
+        let aim = match resumed {
+            Some(aim) => aim,
+            None => {
+                let last = if extension {
+                    Aim { goal: mover.way_end, reach: follow.is_some() && !mover.unreachable, last: true, unreachable: mover.unreachable, beyond: 0.0, extends: false }
+                } else {
+                    let last = way_end(map.as_deref(), &to_goal);
+                    (mover.way_end, mover.unreachable) = (last.goal, last.unreachable);
+                    last
+                };
+                let aim = match map.as_deref() {
+                    Some(map) if !mob.flying => leg_aim(&mut queue, map, &mut mover, from, last, &mut spent),
+                    _ => last,
+                };
+                mover.searches += 1;
+                Aim { extends: extension, ..aim }
+            }
+        };
+        let ask = to_goal.toward(&aim, from);
         let req = ask.request(nav, &data, MAX_EXPANSIONS_PER_PATH);
         avoid.clear();
-        if mover.stuck_repath {
+        if mover.stuck_repath && !extension {
             movers_in_the_way(&spatial, nav, e, pos.0, mob.radius, goal.follow, &mut avoid);
-        } else if !mob.flying {
-            // A groupmate served earlier in the line may have found the way.
+        } else if !mob.flying && resumed.is_none() {
+            // A leg along open ground needs no search (the goal itself was
+            // tried when the request came in) ...
+            if !aim.last || aim.extends {
+                spent += line_check_cost(nav, from, aim.goal);
+                if let Some(result) = nav.quick_path(&req, &[]) {
+                    spent += REQUEST_OVERHEAD;
+                    apply_path(&ask, &aim, target, result, &mut path, &mut mover);
+                    continue;
+                }
+            }
+            // ... and a groupmate served earlier in the line may have found the way.
             nav.prepare(mob.mobility.0, ask.team);
             let mut checks = 0;
             let shared = queue.share(nav, &ask, &mut checks);
@@ -434,29 +695,34 @@ pub(crate) fn service_paths(
             if let Some(result) = shared {
                 spent += REQUEST_OVERHEAD;
                 queue.remember(nav, &ask, &result.waypoints);
-                apply_path(&ask, result, &mut path, &mut mover);
+                apply_path(&ask, &aim, target, result, &mut path, &mut mover);
                 continue;
             }
         }
         let budget = TICK_EXPANSION_BUDGET.saturating_sub(spent);
         if budget < MIN_SEARCH_BUDGET {
-            // The look for a route to share spent the tick: first in line next tick.
+            // Planning and the look for a route to share spent the tick:
+            // first in line next tick, with this aim.
+            mover.aim = Some(aim);
             mover.queued = true;
-            queue.fifo.push_front(e);
+            queue.resume = Some(e);
             break;
         }
-        match nav.find_path_sliced(&req, budget, search_token(e, goal.seq), &avoid) {
+        match nav.find_path_sliced(&req, budget, search_token(e, goal.seq, mover.searches), &avoid) {
             PathStep::Done { result, spent: used } => {
                 spent += used + REQUEST_OVERHEAD;
+                queue.expanded += u64::from(used);
                 if result.complete && !result.truncated && avoid.is_empty() {
                     queue.remember(nav, &ask, &result.waypoints);
                 }
-                apply_path(&ask, result, &mut path, &mut mover);
+                apply_path(&ask, &aim, target, result, &mut path, &mut mover);
             }
-            PathStep::Paused { .. } => {
+            PathStep::Paused { spent: used } => {
+                queue.expanded += u64::from(used);
                 // Out of this tick: first in line next tick, where it goes on.
+                mover.aim = Some(aim);
                 mover.queued = true;
-                queue.fifo.push_front(e);
+                queue.resume = Some(e);
                 break;
             }
         }
@@ -478,19 +744,28 @@ fn movers_in_the_way(spatial: &SpatialIndex, nav: &NavGrid, me: Entity, pos: Vec
     });
 }
 
-/// Names a mover's search for its current goal, so a search the path
-/// service set aside is only taken up again for that same request.
-fn search_token(e: Entity, seq: u32) -> u64 {
-    e.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(seq)
+/// Names a mover's search for its current goal (and which search for it
+/// this is: each leg is a search of its own), so a search the path service
+/// set aside is only taken up again for that same request.
+fn search_token(e: Entity, seq: u32, search: u32) -> u64 {
+    e.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(seq) ^ (u64::from(search) << 32)
 }
 
-/// Install a computed path.
-fn apply_path(ask: &Ask, result: af_geom::PathResult, path: &mut PathState, mover: &mut Mover) {
+/// Install a computed path for `aim` (on the way to the goal at `real`), or
+/// add the next leg to the path.
+fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, path: &mut PathState, mover: &mut Mover) {
+    mover.aim = None;
+    if aim.extends {
+        return extend_path(ask, aim, real, result, path, mover);
+    }
     mover.wants_repath = false;
+    mover.extend = false;
     mover.repath_cooldown = REPATH_COOLDOWN;
-    // A path taken because the unit was stuck goes on with the progress
-    // count: the same route again must not reset it.
-    if !std::mem::take(&mut mover.stuck_repath) {
+    // A path taken because the unit was stuck, or on along the same way,
+    // goes on with the progress count: the same route again must not reset
+    // it.
+    let stuck = std::mem::take(&mut mover.stuck_repath);
+    if !std::mem::take(&mut mover.continuing) && !stuck {
         mover.restart_progress();
     }
     let Some(&end) = result.waypoints.last() else {
@@ -500,26 +775,73 @@ fn apply_path(ask: &Ask, result: af_geom::PathResult, path: &mut PathState, move
         }
         return;
     };
-    if result.truncated {
-        let remaining = end.distance(ask.target);
-        if remaining > mover.best_remaining - TRUNCATED_MIN_GAIN {
-            path.status = PathStatus::Failed;
-            return;
-        }
-        mover.best_remaining = remaining;
+    if !gains(ask, aim, &result, end, mover) {
+        path.status = PathStatus::Failed;
+        return;
     }
-    // Can the unit fulfil the goal from where the path ends?
-    let reach = match ask.follow {
-        Some(b) => b.distance_to_point(end) <= ask.follow_reach() + 1e-3,
-        None => end.distance(ask.target) <= ask.goal.arrive + 0.05,
-    };
     path.waypoints = result.waypoints;
     path.next = 0;
-    path.partial = !result.complete && !reach;
+    path.partial = partial(ask, aim, real, result.complete, end);
     path.status = PathStatus::Following;
-    mover.truncated = result.truncated;
+    mover.truncated = result.truncated || !aim.last;
+    mover.on_leg = !aim.last;
+    mover.beyond = aim.beyond;
     mover.path_start = ask.pos;
-    mover.path_goal = ask.target;
+    mover.path_goal = real;
+}
+
+/// Add the next leg (searched from the end of the path) to the path. A leg
+/// that gets nowhere is dropped: the unit walks to the end of its path and
+/// asks afresh from there.
+fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, path: &mut PathState, mover: &mut Mover) {
+    mover.extend = false;
+    let Some(&end) = result.waypoints.last() else {
+        mover.on_leg = false;
+        return;
+    };
+    if !gains(ask, aim, &result, end, mover) {
+        mover.on_leg = false;
+        return;
+    }
+    path.waypoints.extend(result.waypoints.iter().copied().filter(|w| w.distance(ask.pos) > 1e-3));
+    path.partial = partial(ask, aim, real, result.complete, end);
+    mover.truncated = result.truncated || !aim.last;
+    mover.on_leg = !aim.last;
+    mover.beyond = aim.beyond;
+}
+
+/// Is a path ending at `end` worth taking? Always when it got to its aim;
+/// one that falls short (cut by the search budget, or a leg that ends
+/// short of the leg's end) only when the way left from its end is
+/// [`TRUNCATED_MIN_GAIN`] shorter than from the last such path's: a unit
+/// does not walk round in circles for ever.
+fn gains(_ask: &Ask, aim: &Aim, result: &af_geom::PathResult, end: Vec2, mover: &mut Mover) -> bool {
+    let short = result.truncated || (!aim.last && end.distance(aim.goal) > LEG_REACHED);
+    if !short {
+        return true;
+    }
+    let remaining = end.distance(aim.goal) + aim.beyond;
+    if remaining > mover.best_remaining - TRUNCATED_MIN_GAIN {
+        return false;
+    }
+    mover.best_remaining = remaining;
+    true
+}
+
+/// Does a path for `aim` ending at `end` stop short of what the goal (at
+/// `real`) asks? Every leg but the last does; the last when the unit cannot
+/// fulfil the goal from its end: it is too far from the followed box, or
+/// from the goal point (the reachable point nearest a goal out of the
+/// unit's region is not the goal).
+fn partial(ask: &Ask, aim: &Aim, real: Vec2, complete: bool, end: Vec2) -> bool {
+    if !aim.last {
+        return true;
+    }
+    let reach = match ask.follow {
+        Some(b) => b.distance_to_point(end) <= ask.follow_reach() + 1e-3,
+        None => end.distance(real) <= ask.goal.arrive + 0.05,
+    };
+    !reach && (!complete || aim.unreachable)
 }
 
 /// Register A* step costs (1 / terrain speed) for a mobility, once per grid.
@@ -531,6 +853,35 @@ fn register_terrain_costs(nav: &mut NavGrid, data: &GameData, mobility: Mobility
         let speed = data.terrain_speed(t, mobility);
         nav.set_terrain_cost(t.0, mobility.0, if speed > 1e-3 { 1.0 / speed } else { 1.0 });
     }
+}
+
+/// Keep `NavRegions` for the map's terrain: (re)made whenever the grid's
+/// terrain stamp moves on (a new map). On entering a match it also builds
+/// the region maps of the start units' classes, so the first ticks do not
+/// pay for them.
+pub(crate) fn sync_regions(mut commands: Commands, nav: Option<Res<Nav>>, regions: Option<Res<NavRegions>>) {
+    let Some(nav) = nav else { return };
+    if regions.is_none_or(|r| r.stamp() != nav.terrain_stamp()) {
+        commands.insert_resource(NavRegions::new(&nav.0));
+    }
+}
+
+/// `OnEnter(GameState::Playing)`, after af_map: regions for the new map,
+/// with the start units' classes built.
+pub(crate) fn prepare_regions(mut commands: Commands, nav: Option<Res<Nav>>, units: Query<&Mobile>) {
+    let Some(nav) = nav else { return };
+    let regions = NavRegions::new(&nav.0);
+    for mob in &units {
+        if !mob.flying {
+            regions.map(mob.mobility, mob.radius);
+        }
+    }
+    commands.insert_resource(regions);
+}
+
+/// `OnExit(GameState::Playing)`: the map's regions go with it.
+pub(crate) fn drop_regions(mut commands: Commands) {
+    commands.remove_resource::<NavRegions>();
 }
 
 #[cfg(test)]
@@ -916,5 +1267,295 @@ mod tests {
         let nav = app.world().resource::<Nav>();
         assert!(walkable(nav, start, &path.waypoints, &mob), "a path through the new wall: {:?}", path.waypoints);
         assert!(path.status == PathStatus::Following && path.partial, "up to the wall: {:?}, partial {}", path.status, path.partial);
+    }
+
+    // --- big maps: regions, coarse routes and legs -----------------------------
+
+    /// Paint a 12 m river down x = cx - 6 .. cx + 6 over the whole map,
+    /// crossed by 7 m bands (centred on y) of the named terrains.
+    fn paint_river(app: &mut App, cx: i32, crossings: &[(i32, &str)]) {
+        let data = app.world().resource::<Data>().0.clone();
+        let id = |name: &str| data.terrain_id(name).unwrap_or_else(|| panic!("no terrain `{name}`")).0;
+        let deep = id("deep_water");
+        let crossings: Vec<(i32, u8)> = crossings.iter().map(|(y, t)| (*y, id(t))).collect();
+        let mut nav = app.world_mut().resource_mut::<Nav>();
+        for y in 0..nav.height() as i32 {
+            for x in cx - 6..cx + 6 {
+                let t = crossings.iter().find(|(c, _)| (y - c).abs() < 4).map_or(deep, |c| c.1);
+                nav.set_terrain(IVec2::new(x, y), t);
+            }
+        }
+    }
+
+    fn unit_of(data: &GameData, locomotion: MoveFlag) -> UnitTypeId {
+        data.unit_ids()
+            .filter(|u| data.unit(*u).locomotion == locomotion)
+            .max_by(|a, b| data.unit(*a).speed.total_cmp(&data.unit(*b).speed).then(b.cmp(a)))
+            .expect("a unit of that locomotion")
+    }
+
+    /// Walk `e` until its path service is done with the goal (or `ticks`
+    /// run out); returns its status, the ticks taken and every position it
+    /// stood on.
+    fn walk(app: &mut App, e: Entity, ticks: u32) -> (PathStatus, u32, Vec<Vec2>) {
+        let mut trail = Vec::new();
+        for t in 1..=ticks {
+            run_ticks(app, 1);
+            trail.push(app.world().get::<Position>(e).expect("position").0);
+            let s = status(app, e);
+            if matches!(s, PathStatus::Arrived | PathStatus::Failed) {
+                return (s, t, trail);
+            }
+        }
+        (status(app, e), ticks, trail)
+    }
+
+    fn expanded(app: &App) -> (u64, u64) {
+        let q = app.world().resource::<PathQueue>();
+        (q.expanded, q.coarse_expanded)
+    }
+
+    /// The case that stranded units on big maps: a 768 m map, a river
+    /// across it and its only ford 300 m off the straight line. A rider
+    /// ordered across gets a path at once, walks up the bank, crosses at
+    /// the ford and arrives, the next leg always found before it needs it,
+    /// for a few hundred cell expansions in all (a single search of the
+    /// whole way takes 138,000, and one cut at 24,000 ends on the near bank).
+    #[test]
+    fn a_unit_crosses_a_river_by_a_ford_far_off_the_line() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 768.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 384, &[(684, "ford")]);
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let (start, goal) = (Vec2::new(344.5, 384.5), Vec2::new(424.5, 384.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        run_ticks(&mut app, 2);
+        let first = app.world().get::<PathState>(e).expect("path").clone();
+        assert_eq!(first.status, PathStatus::Following, "a path at once: {first:?}");
+        let mut waits = 0;
+        let mut ticks = 0;
+        let mut trail = Vec::new();
+        let (mut done, mut status_now) = (false, PathStatus::Following);
+        while !done && ticks < 20_000 {
+            let (s, t, mut part) = walk(&mut app, e, 30);
+            ticks += t;
+            trail.append(&mut part);
+            status_now = s;
+            done = matches!(s, PathStatus::Arrived | PathStatus::Failed);
+            let mover = app.world().get::<Mover>(e).expect("mover");
+            waits += u32::from(mover.wants_repath);
+        }
+        let (cells, coarse) = expanded(&app);
+        let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+        println!("ford 300 m off the line, 768 m map: arrived after {ticks} ticks, {walked:.0} m walked, {cells} cell and {coarse} coarse expansions, stood waiting for a leg {waits} times");
+        assert_eq!(status_now, PathStatus::Arrived, "{:?}", app.world().get::<PathState>(e));
+        assert!(trail.iter().any(|q| q.y > 676.0 && q.y < 692.0 && (378.0..390.0).contains(&q.x)), "crossed at the ford");
+        assert!(walked < 760.0, "about the way round ({walked:.0} m; 690 m by the ford)");
+        assert!(cells < 5_000 && coarse < 5_000, "{cells} cell and {coarse} coarse expansions");
+        assert_eq!(waits, 0, "the next leg came before the unit needed it");
+    }
+
+    /// A goal across a river with no ford costs no search: the unit walks
+    /// to the bank facing it and fails there.
+    #[test]
+    fn a_goal_out_of_reach_costs_no_search() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[]);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), foot, Vec2::new(98.5, 128.5), 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(Vec2::new(170.5, 128.5), 0.5));
+        let (s, _, trail) = walk(&mut app, e, 1_200);
+        let end = *trail.last().expect("walked");
+        assert_eq!(s, PathStatus::Failed);
+        assert!(end.x > 119.0 && end.x < 122.5, "on the near bank: {end}");
+        assert_eq!(expanded(&app), (0, 0), "no search");
+    }
+
+    /// Wheels cross only at fords: feet wade a shallow crossing on the
+    /// straight line, a siege engine goes round by the ford instead and
+    /// never sets a wheel in the shallows.
+    #[test]
+    fn wheels_cross_at_the_ford_feet_in_the_shallows() {
+        let data = test_data();
+        let shallow = data.terrain_id("shallow_water").expect("shallow water");
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[(128, "shallow_water"), (220, "ford")]);
+        let (start, goal) = (Vec2::new(98.5, 128.5), Vec2::new(158.5, 128.5));
+        for (locomotion, by_ford) in [(MoveFlag::Foot, false), (MoveFlag::Wheeled, true)] {
+            let kind = unit_of(&data, locomotion);
+            let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), kind, start, 0.0));
+            app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+            let (s, _, trail) = walk(&mut app, e, 12_000);
+            assert_eq!(s, PathStatus::Arrived, "{locomotion:?}");
+            assert_eq!(trail.iter().any(|q| q.y > 200.0), by_ford, "{locomotion:?} by the ford");
+            let nav = app.world().resource::<Nav>();
+            if by_ford {
+                assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != shallow), "wheels in the shallows");
+            }
+            app.world_mut().entity_mut(e).despawn();
+        }
+    }
+
+    /// One player's long queue does not hold up another's request: the
+    /// lines take turns.
+    #[test]
+    fn the_players_lines_take_turns() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 160.0, &[("ironhold", 0), ("ironhold", 1)]);
+        forest(&mut app, &data);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        for i in 0..60 {
+            let at = Vec2::new(10.0 + (i % 6) as f32 * 4.0, 10.0 + (i / 6) as f32 * 14.0);
+            let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), foot, at, 0.0));
+            app.world_mut().entity_mut(e).insert(MoveGoal::point(Vec2::new(95.0 + (i % 6) as f32 * 12.0, 8.0 + (i / 6) as f32 * 16.0), 0.5));
+        }
+        run_ticks(&mut app, 1);
+        assert!(queued(&app) > 30, "a long line ({})", queued(&app));
+        let late = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[1]), foot, Vec2::new(20.0, 80.0), 0.0));
+        app.world_mut().entity_mut(late).insert(MoveGoal::point(Vec2::new(140.0, 80.0), 0.5));
+        run_ticks(&mut app, 3);
+        assert_eq!(status(&app, late), PathStatus::Following, "served within a few ticks with {} waiting ahead", queued(&app));
+    }
+
+    /// Four tree lines across a 160 m map, each with one gap, alternating ends.
+    fn forest(app: &mut App, data: &GameData) {
+        let tree = data.node_ids().filter(|n| data.node(*n).blocking).min_by(|a, b| data.node(*a).size[0].total_cmp(&data.node(*b).size[0])).expect("a tree");
+        for (x, gap) in [(50, 20), (62, 140), (74, 30), (86, 130)] {
+            for y in (0..160).filter(|y| !(gap..gap + 4).contains(y)) {
+                let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                with_commands(app, |c, data, _| spawn_node(c, data, tree, at, 0.0, None));
+            }
+        }
+    }
+
+    /// The path service on a 768 m map with a river across it, crossed at
+    /// two fords far from where most units go, and a mass order of 60
+    /// riders scattered up and down the west bank to spots on the east
+    /// bank: every request gets its first leg within a few dozen ticks, no
+    /// tick of the service runs over its time budget, and the counts stay
+    /// small.
+    #[test]
+    fn path_service_on_a_big_map_with_a_river_stays_within_budget() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 768.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 384, &[(120, "ford"), (650, "ford")]);
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let units: Vec<Entity> = (0..60)
+            .map(|i| {
+                let at = Vec2::new(250.0 + (i % 6) as f32 * 15.0, 200.0 + (i / 6) as f32 * 40.0);
+                let goal = Vec2::new(440.0 + (i % 5) as f32 * 40.0, 650.0 - (i / 5) as f32 * 45.0);
+                let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, at, 0.0));
+                app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+                e
+            })
+            .collect();
+        // The first tick also builds the riders' region map.
+        run_ticks(&mut app, 1);
+        let mut service = Schedule::default();
+        service.add_systems(service_paths);
+        let mut times: Vec<f64> = Vec::new();
+        while queued(&app) > 0 && times.len() < 200 {
+            let t = Instant::now();
+            service.run(app.world_mut());
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        assert_eq!(queued(&app), 0);
+        for &e in &units {
+            assert_eq!(status(&app, e), PathStatus::Following);
+        }
+        let runs = times.len();
+        let mean = times.iter().sum::<f64>() / runs as f64;
+        times.sort_by(f64::total_cmp);
+        let (p90, worst) = (times[runs * 9 / 10], times[runs - 1]);
+        let (cells, coarse) = expanded(&app);
+        println!("path service on a 768 m map with a river: {runs} ticks for 60 riders, {mean:.2} ms per tick, p90 {p90:.2} ms, worst {worst:.2} ms; {cells} cell and {coarse} coarse expansions");
+        assert!(runs <= 40, "{runs} ticks");
+        assert!(mean < 4.0 && p90 < 6.0, "{mean:.2} ms per tick of the path service, p90 {p90:.2} ms");
+    }
+
+    /// Paint `terrain` over every cell `inside` says.
+    fn paint(app: &mut App, terrain: &str, inside: impl Fn(i32, i32) -> bool) {
+        let data = app.world().resource::<Data>().0.clone();
+        let t = data.terrain_id(terrain).unwrap_or_else(|| panic!("no terrain `{terrain}`")).0;
+        let mut nav = app.world_mut().resource_mut::<Nav>();
+        for y in 0..nav.height() as i32 {
+            for x in 0..nav.width() as i32 {
+                if inside(x, y) {
+                    nav.set_terrain(IVec2::new(x, y), t);
+                }
+            }
+        }
+    }
+
+    /// A mountain range across a 512 m map with one 5 m pass 300 m off
+    /// the line: a rider crosses at the pass, and a giant too wide for it
+    /// is told at once that it cannot get there.
+    #[test]
+    fn a_range_is_crossed_at_its_pass() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 512.0, &[("ironhold", 0)]);
+        paint(&mut app, "mountain", |x, y| (250..266).contains(&y) && !(400..405).contains(&x));
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let (start, goal) = (Vec2::new(100.5, 200.5), Vec2::new(100.5, 320.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 12_000);
+        let (cells, coarse) = expanded(&app);
+        println!("a range with one pass 300 m off the line, 512 m map: {ticks} ticks, {cells} cell and {coarse} coarse expansions");
+        assert_eq!(s, PathStatus::Arrived);
+        assert!(trail.iter().any(|q| (399.0..406.0).contains(&q.x) && (250.0..266.0).contains(&q.y)), "through the pass");
+        assert!(cells < 5_000, "{cells} cell expansions");
+        // Wider than the pass: no search, and it fails at the foot of the range.
+        let giant = data
+            .unit_ids()
+            .filter(|u| data.unit(*u).locomotion != MoveFlag::Flying)
+            .max_by(|a, b| data.unit(*a).size[0].total_cmp(&data.unit(*b).size[0]).then(b.cmp(a)))
+            .filter(|u| data.unit(*u).size[0] * 0.5 > 2.5);
+        if let Some(giant) = giant {
+            let before = expanded(&app).0;
+            let g = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), giant, start, 0.0));
+            app.world_mut().entity_mut(g).insert(MoveGoal::point(goal, 0.5));
+            let (s, ..) = walk(&mut app, g, 3_000);
+            assert_eq!(s, PathStatus::Failed);
+            assert_eq!(expanded(&app).0, before, "no search");
+        }
+    }
+
+    /// Two rivers crossing in a plus, one ford on each arm: a rider goes
+    /// from one quadrant to the opposite one through two fords.
+    #[test]
+    fn two_crossing_rivers_are_crossed_at_their_fords() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 512.0, &[("ironhold", 0)]);
+        paint(&mut app, "deep_water", |x, y| (250..262).contains(&x) || (250..262).contains(&y));
+        paint(&mut app, "ford", |x, y| ((250..262).contains(&x) && ((60..67).contains(&y) || (450..457).contains(&y))) || ((250..262).contains(&y) && ((60..67).contains(&x) || (450..457).contains(&x))));
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let (start, goal) = (Vec2::new(200.5, 200.5), Vec2::new(312.5, 312.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 12_000);
+        let (cells, coarse) = expanded(&app);
+        println!("two crossing rivers, 512 m map: {ticks} ticks, {cells} cell and {coarse} coarse expansions");
+        assert_eq!(s, PathStatus::Arrived);
+        let nav = app.world().resource::<Nav>();
+        let deep = data.terrain_id("deep_water").expect("deep water");
+        assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != deep), "never in deep water");
+        assert!(cells < 5_000, "{cells} cell expansions");
     }
 }

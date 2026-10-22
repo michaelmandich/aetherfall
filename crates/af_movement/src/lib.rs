@@ -5,12 +5,13 @@
 //!
 //! | set | system | what it does |
 //! |---|---|---|
-//! | `Pathing` | `attach_movers` | gives each unit af_movement's private state, numbered in the order units appear (who is younger) |
+//! | `Pathing` | `sync_regions` | keeps `NavRegions` (terrain regions and coarse routes per mover class) made for the map's terrain |
+//! | | `attach_movers` | gives each unit af_movement's private state, numbered in the order units appear (who is younger) |
 //! | | `sync_obstacles` | registers added/changed `Obstacle`s in `Nav` (removals: an observer), and closes slots between two obstacles too narrow to pass |
 //! | | `invalidate_blocked_paths` | flags paths cut by obstacles placed this tick |
 //! | | `refresh_follow_targets` | looks up followed entities' positions and boxes |
-//! | | `collect_requests` | new goals and repath wishes: a path at once when no search is needed (flyers, straight lines, a groupmate's search or route), else `Pending` + queue; a unit that got stuck asks for a way round the units near it |
-//! | | `service_paths` | budgeted FIFO A*, each request first offered the routes found before it; a search the tick's budget cuts short goes on next tick |
+//! | | `collect_requests` | new goals and repath wishes: a goal out of the unit's region swapped for the reachable point nearest it; a path at once when no search is needed (flyers, straight lines, a groupmate's search or route), else `Pending` + queue; a unit that got stuck asks for a way round the units near it; one near the end of a leg of a long way asks for the next |
+//! | | `service_paths` | budgeted A*, the players' lines in turn, each request first offered the routes found before it; long ways planned on the coarse route graph and searched leg by leg; a search the tick's budget cuts short goes on next tick |
 //! | `Movement` | `steer` | arrival, waypoints, avoidance, turning (as far as there is room), terrain speed |
 //! | | `resolve_collisions` | SAT push-out vs units, obstacles, terrain, map edge; then the final word on pairs: none ends the tick overlapping past 0.05 m, or deeper than it began, and an overlap a tick began with is parted within a few ticks without big jumps |
 //! | | `track_progress` | `Velocity`, stuck detection |
@@ -30,7 +31,10 @@
 //! the earlier ones stand. Follow goals always arrive by box gap.
 //!
 //! [`af_core::ext::movement::CollisionStats`] counts what the collision
-//! solver's final word did (for tests and reports).
+//! solver's final word did (for tests and reports), and
+//! [`af_core::ext::movement::NavRegions`] tells everyone what ground movers
+//! can reach and how far it is by the way round (made on entering a match,
+//! and again whenever the terrain changes).
 
 mod bodies;
 mod collision;
@@ -40,6 +44,7 @@ mod pathing;
 mod progress;
 mod steering;
 
+use af_core::ext::map::MapSetupSet;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -51,9 +56,12 @@ impl Plugin for MovementPlugin {
             .init_resource::<pathing::PathQueue>()
             .init_resource::<af_core::ext::movement::CollisionStats>()
             .add_observer(obstacles::forget_removed)
+            .add_systems(OnEnter(GameState::Playing), pathing::prepare_regions.after(MapSetupSet))
+            .add_systems(OnExit(GameState::Playing), pathing::drop_regions)
             .add_systems(
                 FixedUpdate,
                 (
+                    pathing::sync_regions,
                     mover::attach_movers,
                     obstacles::sync_obstacles,
                     pathing::invalidate_blocked_paths,

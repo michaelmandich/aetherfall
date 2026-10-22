@@ -6,7 +6,14 @@
 //! worker starting on a full one takes the nearest node of the same kind
 //! with room instead (if there is one close by), so a crowd sent to a single
 //! tree spreads over the grove rather than jamming the paths to it.
+//!
+//! Automatic choices (the next node, a free field, the drop site) only take
+//! what the worker can get to over the terrain (see `reach`): a tree across
+//! the river is never picked, and the drop site is the nearest by the way
+//! round among the nearest few. A source or drop site the terrain keeps out
+//! of reach is remembered so until the regions change.
 
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -16,7 +23,11 @@ use bevy::prelude::*;
 use crate::brain::{Brain, Phase, Unreachable};
 use crate::motion;
 use crate::notice::notify;
+use crate::reach::Reach;
 use crate::tuning::*;
+
+/// Drop sites compared by the way round (the nearest in a straight line first).
+const DEPOT_CHOICES: usize = 3;
 
 /// Below this a node, field or load counts as empty / full.
 const EPSILON: f32 = 1e-4;
@@ -41,6 +52,12 @@ pub(crate) struct Worker {
 impl WorkerItem<'_, '_> {
     fn obb(&self) -> Obb {
         self.footprint.obb(self.pos.0, self.facing.0)
+    }
+
+    /// How near a node's box a worker must get to work it (as af_movement
+    /// walks it up to one).
+    fn node_reach(&self) -> f32 {
+        WORK_ARRIVE + self.mobile.radius + NODE_REACH_SLACK
     }
 }
 
@@ -76,6 +93,7 @@ type Sources<'w, 's> = Query<'w, 's, Source, (Or<(With<ResourceNode>, With<Resou
 
 #[derive(QueryData)]
 pub(crate) struct Depot {
+    entity: Entity,
     drop_site: &'static DropSite,
     owner: &'static Owner,
     pos: &'static Position,
@@ -90,6 +108,7 @@ pub(crate) struct Harvest<'w, 's> {
     players: ResMut<'w, Players>,
     spatial: Res<'w, SpatialIndex>,
     nav: Res<'w, Nav>,
+    regions: Option<Res<'w, NavRegions>>,
     clock: Res<'w, SimClock>,
     notices: ResMut<'w, Notices>,
     died: MessageWriter<'w, EntityDied>,
@@ -196,11 +215,24 @@ impl Harvest<'_, '_> {
             }
             let room = node_room(half, u.footprint.half.x * 2.0);
             let full = self.crowds.get(&target).copied().unwrap_or(0) >= room;
-            if (full || !self.workable(u, &src.obb()))
-                && let Some(other) = self.roomier_node(u, target, kind, pos)
+            let reach = self.reach(u);
+            let in_reach = reach.within(&src.obb(), u.node_reach());
+            if !in_reach {
+                u.brain.unreachable.remember_for_good(target, reach.stamp());
+            }
+            if (full || !in_reach || !self.workable(u, &src.obb()))
+                && let Some(other) = self.roomier_node(u, &reach, target, kind, pos)
             {
                 u.brain.replace_front(&mut u.orders, Order::Gather { target: other });
                 return self.start(u, other);
+            }
+            if !in_reach {
+                // Across the water, and no node like it at hand on this side:
+                // something similar round it that the worker can get to.
+                u.brain.resource = Some(resource);
+                u.gatherer.last_pos = pos;
+                u.gatherer.last_node_kind = Some(kind);
+                return self.move_on(u);
             }
             *self.crowds.entry(target).or_default() += 1;
         } else {
@@ -217,7 +249,8 @@ impl Harvest<'_, '_> {
                 return self.give_up(u);
             }
             if !self.claim_slot(target) {
-                return match self.free_field(u.owner.0, resource, pos, &u.brain.unreachable) {
+                let reach = self.reach(u);
+                return match self.free_field(&reach, u.owner.0, resource, pos, &u.brain.unreachable) {
                     Some(other) => u.brain.replace_front(&mut u.orders, Order::Gather { target: other }),
                     None => self.give_up(u),
                 };
@@ -268,11 +301,32 @@ impl Harvest<'_, '_> {
         if motion::done_with(&u.goal, u.path, target) {
             u.brain.failures += 1;
             if u.brain.failures > MAX_PATH_FAILURES {
-                u.brain.unreachable.remember(target, self.clock.tick);
+                let within = u.node_reach();
+                self.remember_unreachable(u, target, &obb, within);
                 return self.move_on(u);
             }
         }
         motion::approach(&mut self.commands, u.entity, &mut u.goal, u.path, target, pos, WORK_ARRIVE, gap);
+    }
+
+    /// The worker's reach over the terrain, its unreachable memory kept to
+    /// the regions it reads.
+    fn reach(&self, u: &mut WorkerItem) -> Reach {
+        let reach = Reach::of(self.regions.as_deref(), u.pos.0, u.mobile);
+        u.brain.unreachable.sync(reach.stamp());
+        reach
+    }
+
+    /// af_movement could not get the worker to `target` (box `obb`, worked
+    /// within `within`): skipped for a while, or until the regions change
+    /// when the terrain keeps it out of reach.
+    fn remember_unreachable(&self, u: &mut WorkerItem, target: Entity, obb: &Obb, within: f32) {
+        let reach = self.reach(u);
+        if reach.within(obb, within) {
+            u.brain.unreachable.remember(target, self.clock.tick);
+        } else {
+            u.brain.unreachable.remember_for_good(target, reach.stamp());
+        }
     }
 
     /// Take from the source into the worker's load at the worker's rate.
@@ -367,11 +421,13 @@ impl Harvest<'_, '_> {
         let Some(resource) = u.gatherer.carrying.filter(|_| u.gatherer.amount > EPSILON) else {
             return self.after_delivery(u);
         };
-        let site = u
-            .brain
-            .drop_site
-            .filter(|&s| self.depot_ok(s, u.owner.0, resource))
-            .or_else(|| self.nearest_depot(u.pos.0, u.owner.0, resource, &u.brain.unreachable));
+        let site = match u.brain.drop_site.filter(|&s| self.depot_ok(s, u.owner.0, resource)) {
+            Some(s) => Some(s),
+            None => {
+                let reach = self.reach(u);
+                self.nearest_depot(&reach, u.pos.0, u.owner.0, resource, &u.brain.unreachable)
+            }
+        };
         let Some((site, obb, pos)) = site.and_then(|s| self.depots.get(s).ok().map(|d| (s, d.footprint.obb(d.pos.0, d.facing.0), d.pos.0))) else {
             let text = format!("No drop site for {}", self.data.resource(resource).name);
             notify(&mut self.notices, u.owner.0, NoticeKind::Warning, &text, Some(u.pos.0), self.clock.elapsed);
@@ -390,7 +446,7 @@ impl Harvest<'_, '_> {
             u.brain.failures += 1;
             if u.brain.failures > MAX_PATH_FAILURES {
                 // Try the next drop site; give up once none is left.
-                u.brain.unreachable.remember(site, self.clock.tick);
+                self.remember_unreachable(u, site, &obb, WORK_REACH);
                 u.brain.drop_site = None;
                 u.brain.failures = 0;
                 return;
@@ -403,17 +459,28 @@ impl Harvest<'_, '_> {
         self.depots.get(site).is_ok_and(|d| d.owner.0 == owner && d.drop_site.accepts(resource))
     }
 
-    fn nearest_depot(&self, from: Vec2, owner: PlayerId, resource: ResourceId, avoid: &Unreachable) -> Option<Entity> {
+    /// The own drop site taking `resource` that the worker at `from` gets
+    /// to soonest: of the [`DEPOT_CHOICES`] nearest in a straight line that
+    /// it can reach over the terrain, the nearest by the way round (a
+    /// straight line, unless a river lies between).
+    fn nearest_depot(&self, reach: &Reach, from: Vec2, owner: PlayerId, resource: ResourceId, avoid: &Unreachable) -> Option<Entity> {
         let tick = self.clock.tick;
-        self.spatial
-            .nearest_anywhere(from, |e| {
-                e.kind == SpatialKind::Building
-                    && e.owner == Some(owner)
-                    && !e.under_construction
-                    && !avoid.skips(e.entity, tick)
-                    && self.depot_ok(e.entity, owner, resource)
-            })
-            .map(|e| e.entity)
+        let mut near: Vec<(f32, Entity, Vec2)> = self
+            .depots
+            .iter()
+            .filter(|d| d.owner.0 == owner && d.drop_site.accepts(resource) && !avoid.skips(d.entity, tick))
+            .filter(|d| reach.within(&d.footprint.obb(d.pos.0, d.facing.0), WORK_REACH))
+            .map(|d| (d.pos.0.distance(from), d.entity, d.pos.0))
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        near.truncate(DEPOT_CHOICES);
+        if near.len() > 1 {
+            for n in &mut near {
+                n.0 = reach.route_distance(n.2).unwrap_or(f32::MAX);
+            }
+            near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        }
+        near.first().map(|n| n.1)
     }
 
     fn deposit(&mut self, u: &mut WorkerItem, resource: ResourceId) {
@@ -456,7 +523,8 @@ impl Harvest<'_, '_> {
     /// and stop. Sources found unreachable lately are skipped, so a worker
     /// does not bounce between two trees it cannot get to.
     fn move_on(&mut self, u: &mut WorkerItem) {
-        let next = self.replacement(u);
+        let reach = self.reach(u);
+        let next = self.replacement(u, &reach);
         if let Some(field) = u.brain.field.take()
             && let Ok(s) = self.sources.get_mut(field)
             && let Some(mut f) = s.field.filter(|f| f.users > 0)
@@ -478,13 +546,13 @@ impl Harvest<'_, '_> {
         }
     }
 
-    fn replacement(&self, u: &WorkerItem) -> Option<Entity> {
+    fn replacement(&self, u: &WorkerItem, reach: &Reach) -> Option<Entity> {
         let center = u.gatherer.last_pos;
         let avoid = &u.brain.unreachable;
         let tick = self.clock.tick;
         let usable = |e: &SpatialEntry| !avoid.skips(e.entity, tick) && !src_exhausted(&self.sources, e.entity);
         if let Some(kind) = u.gatherer.last_node_kind.filter(|k| Some(self.data.node(*k).resource_id) == u.brain.resource) {
-            let same_kind = self.nearest_workable(u, center, SAME_KIND_RADIUS, |e| {
+            let same_kind = self.nearest_workable(u, reach, center, SAME_KIND_RADIUS, |e| {
                 e.kind == SpatialKind::Node && e.type_index == kind.0 && e.pos.distance(center) <= SAME_KIND_RADIUS && usable(e)
             });
             if same_kind.is_some() {
@@ -492,22 +560,22 @@ impl Harvest<'_, '_> {
             }
         }
         let resource = u.brain.resource?;
-        let node = self.nearest_workable(u, center, SAME_RESOURCE_RADIUS, |e| {
+        let node = self.nearest_workable(u, reach, center, SAME_RESOURCE_RADIUS, |e| {
             e.kind == SpatialKind::Node
                 && e.pos.distance(center) <= SAME_RESOURCE_RADIUS
                 && self.data.node(NodeTypeId(e.type_index)).resource_id == resource
                 && self.data.node(NodeTypeId(e.type_index)).requires_building_id.is_none()
                 && usable(e)
         });
-        node.or_else(|| self.free_field(u.owner.0, resource, center, avoid))
+        node.or_else(|| self.free_field(reach, u.owner.0, resource, center, avoid))
     }
 
     /// Nearest node of `kind` to the full node `full` at `at` that still has
     /// room for this worker, not found unreachable lately.
-    fn roomier_node(&self, u: &WorkerItem, full: Entity, kind: NodeTypeId, at: Vec2) -> Option<Entity> {
+    fn roomier_node(&self, u: &WorkerItem, reach: &Reach, full: Entity, kind: NodeTypeId, at: Vec2) -> Option<Entity> {
         let tick = self.clock.tick;
         let width = u.footprint.half.x * 2.0;
-        self.nearest_workable(u, at, GATHER_SPREAD_RADIUS, |e| {
+        self.nearest_workable(u, reach, at, GATHER_SPREAD_RADIUS, |e| {
             e.kind == SpatialKind::Node
                 && e.type_index == kind.0
                 && e.entity != full
@@ -519,14 +587,15 @@ impl Harvest<'_, '_> {
     }
 
     /// Nearest entry (by box edge distance from `at`, within `radius`)
-    /// passing `wanted` that is [`workable`](Self::workable): the costly
-    /// test runs only on the entries passing `wanted`, nearest first, until
-    /// one passes.
-    fn nearest_workable(&self, u: &WorkerItem, at: Vec2, radius: f32, mut wanted: impl FnMut(&SpatialEntry) -> bool) -> Option<Entity> {
+    /// passing `wanted` that the worker can get to over the terrain and
+    /// that is [`workable`](Self::workable): the costly test runs only on
+    /// the entries passing `wanted`, nearest first, until one passes.
+    fn nearest_workable(&self, u: &WorkerItem, reach: &Reach, at: Vec2, radius: f32, mut wanted: impl FnMut(&SpatialEntry) -> bool) -> Option<Entity> {
         let mut found: Vec<(f32, SpatialEntry)> = Vec::new();
+        let within = u.node_reach();
         self.spatial.for_each_near(at, radius, |e| {
             let d = e.obb.distance_to_point(at);
-            if d <= radius && wanted(e) {
+            if d <= radius && wanted(e) && reach.within(&e.obb, within) {
                 found.push((d, *e));
             }
         });
@@ -548,8 +617,8 @@ impl Harvest<'_, '_> {
     }
 
     /// Nearest own complete field of `resource` with a free slot that was
-    /// not found unreachable lately.
-    fn free_field(&self, owner: PlayerId, resource: ResourceId, center: Vec2, avoid: &Unreachable) -> Option<Entity> {
+    /// not found unreachable lately and that the worker can get to.
+    fn free_field(&self, reach: &Reach, owner: PlayerId, resource: ResourceId, center: Vec2, avoid: &Unreachable) -> Option<Entity> {
         let tick = self.clock.tick;
         self.spatial
             .nearest(center, SAME_RESOURCE_RADIUS, |e| {
@@ -557,6 +626,7 @@ impl Harvest<'_, '_> {
                     && e.owner == Some(owner)
                     && !e.under_construction
                     && !avoid.skips(e.entity, tick)
+                    && reach.within(&e.obb, WORK_REACH)
                     && self.sources.get(e.entity).is_ok_and(|s| {
                         s.field.is_some_and(|f| f.resource == resource && f.users < f.slots && f.remaining > EPSILON) && !s.foundation
                     })

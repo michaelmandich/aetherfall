@@ -26,7 +26,8 @@ pub const BACKOFF_SLACK: f32 = 1.0;
 /// Path failures in a row before an order gives up.
 pub const MAX_PATH_FAILURES: u8 = 3;
 /// Ticks an unreachable hostile, node or drop site is left out of
-/// automatic choices (~5 s).
+/// automatic choices (~5 s). One the terrain itself keeps out of reach
+/// (another region, see `reach`) is left out until the regions change.
 pub const UNREACHABLE_TICKS: u64 = 150;
 /// How many unreachable entities a unit remembers at once.
 pub const UNREACHABLE_MEMORY: usize = 8;
@@ -37,6 +38,11 @@ pub const SCAN_TICKS: u64 = 9;
 pub const STANCE_TICKS: u64 = 15;
 /// An engaged target farther than `vision * LEASH_VISION_MULT` is dropped.
 pub const LEASH_VISION_MULT: f32 = 1.5;
+/// A hostile is not chased on the unit's own initiative when the way to it
+/// is more than this many times the straight distance (round by a ford)...
+pub const CHASE_DETOUR: f32 = 2.0;
+/// ... plus this much (metres).
+pub const CHASE_DETOUR_SLACK: f32 = 20.0;
 /// Defensive units give up a chase this far (centre distance) from their post.
 pub const DEFENSIVE_LEASH: f32 = 12.0;
 /// A defensive unit back within this distance of its post stops returning.

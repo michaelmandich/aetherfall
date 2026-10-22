@@ -3,6 +3,9 @@
 //! resource across thinks.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use af_core::ext::movement::RouteField;
 
 use af_core::prelude::*;
 use bevy::prelude::*;
@@ -170,6 +173,19 @@ pub struct SiteWatch {
     pub since: f32,
 }
 
+/// The way from home to the middle of the map as last worked out (see
+/// `plan::front_from`): for this home and the regions of this terrain
+/// stamp (0 without regions), the front, and which army units can get
+/// there (see `plan::reachable_mix`). Kept while both stay, so the coarse
+/// searches behind them run once, not every think.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HomeWay {
+    pub home: Vec2,
+    pub stamp: u64,
+    pub front: Vec2,
+    pub reach: Vec<(UnitTypeId, bool)>,
+}
+
 /// Everything one AI player remembers between thinks.
 #[derive(Clone, Debug, Default)]
 pub struct AiMemory {
@@ -203,6 +219,14 @@ pub struct AiMemory {
     /// there, as (owner, unit, position), sorted by unit and refreshed every
     /// think (see `update_remnants` in the crate root).
     pub remnants: Vec<(PlayerId, Entity, Vec2)>,
+    /// The way from home to the middle (see [`HomeWay`]).
+    pub home_way: Option<HomeWay>,
+    /// Route distances for workers from home, the home and terrain stamp
+    /// they were measured for (see [`AiMemory::home_field`]).
+    pub home_field: Option<(Vec2, u64, Arc<RouteField>)>,
+    /// Route distances for the army to the attack's goal, and the goal
+    /// (see `Think::way_left`).
+    pub goal_field: Option<(Vec2, u64, Arc<RouteField>)>,
     /// Remnant units a hunt could not close in on: (unit, until); see
     /// `Think::press_attack`.
     pub lost_prey: Vec<(Entity, f32)>,
@@ -271,6 +295,17 @@ pub struct AiMemory {
 impl AiMemory {
     /// Drop what is stale: resolved or expired placements, orders to dead
     /// entities, timed-out cooldowns.
+    /// Route distances for workers from `home` (see `AiView::route_field`):
+    /// one search, kept while home and the regions stay. `None` without
+    /// regions.
+    pub fn home_field(&mut self, view: &AiView, home: Vec2) -> Option<Arc<RouteField>> {
+        let stamp = view.regions.map_or(0, |r| r.stamp());
+        if !self.home_field.as_ref().is_some_and(|(h, s, _)| *h == home && *s == stamp) {
+            self.home_field = view.route_field(view.worker_kind(), home).map(|f| (home, stamp, Arc::new(f)));
+        }
+        self.home_field.as_ref().map(|(_, _, f)| f.clone())
+    }
+
     pub fn prune(&mut self, view: &AiView) {
         let now = view.time;
         let snap = view.snap;
