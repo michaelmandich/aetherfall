@@ -99,14 +99,21 @@ one, and a misspelt one stops the build) and, for a humanoid, `clips/`.
    MARKER = "pennant"  # or "band" (round the body), or None
    # YAW = 180          when it faces -Z;  MARKER_AT = (right, fwd, up) / a height fraction
    # TRIANGLES = 5000   CUT_PLATE = 0.05   TEXTURE = 1024
+   # FIT = ("height", "depth")   also fit the box's depth (a long, low model)
    ```
 
 3. Build, look at the sheet (`<dir>/<id>.png`: the model turned four ways,
-   from the game's camera too) and read where the marker went; set `YAW`,
-   `MARKER_AT`, `CUT_PLATE` as needed.
+   from the game's camera too) and read where the marker went and the
+   `in game` line (its size scaled to the box height, against the box);
+   set `YAW`, `MARKER_AT`, `CUT_PLATE`, `FIT` as needed.
 4. Register it as above. The engine scales it so its height matches the
    unit's box height and plays nothing (bind pose, no animation player);
-   the marker takes the owner's colour.
+   the marker takes the owner's colour. With `FIT` listing the box's
+   `width` or `depth` too, a model that would overrun them at the box
+   height is drawn lower than its box instead, at the largest size that
+   fits every listed dimension (the manifest's `height` is then more than
+   the model's own; the build prints by how much). The Bucentaur, a low
+   galley in a 6 m tall box, fits its 6 m depth this way.
 
 `battering_ram`, `scout_rider` and the other rigid units are configured
 this way. A bob or sway for rigid units can come later as a manifest

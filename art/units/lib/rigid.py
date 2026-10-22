@@ -36,7 +36,7 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-from . import export, props
+from . import export, gamedata, props
 from .rig import at
 from .static import static_lib
 
@@ -92,6 +92,10 @@ def build(unit, src, out_dir, sheets_dir, model_path, writer):
     if height <= 0 or min(hi.x - lo.x, hi.y - lo.y) <= 0:
         raise RigidError(f"{os.path.basename(src)} is flat or empty")
 
+    shown, note = drawn_height(unit, hi - lo)
+    if note:
+        notes.append(note)
+
     objects, marker = [obj], None
     if unit.marker == "pennant":
         marker, note = pennant(obj, lo, hi, unit.marker_at)
@@ -112,7 +116,7 @@ def build(unit, src, out_dir, sheets_dir, model_path, writer):
         total = sum(n["triangles"] for n in s["nodes"].values())
         if total > unit.triangles:
             raise RigidError(f"{glb}: {total} triangles, over the budget of {unit.triangles}")
-        export.write_manifest(os.path.join(out_dir, f"{unit.id}.model.ron"), model_path, height, [], writer)
+        export.write_manifest(os.path.join(out_dir, f"{unit.id}.model.ron"), model_path, shown, [], writer)
         print(f"\nwrote {glb} ({s['bytes'] / 1e3:.0f} kB, {total} triangles)")
         print("  images:", ", ".join(f"{i['name']} {i['size'][0]}x{i['size'][1]} {i['bytes'] / 1e3:.0f} kB"
                                      for i in s["images"]) or "none")
@@ -121,6 +125,30 @@ def build(unit, src, out_dir, sheets_dir, model_path, writer):
         out = os.path.join(sheets_dir, f"{unit.id}.png")
         sheets.render_model(objects, out, tempfile.mkdtemp(prefix="af_tiles_"))  # short: Windows paths stop at 260
         print("sheet", out)
+
+
+def drawn_height(unit, size):
+    """The manifest's `height`, which the engine scales to the unit's box
+    height: the model's own height, or more when FIT lists the box's width
+    or depth and the model, scaled to the box height, would overrun them (it
+    is then drawn lower than its box, at the largest size that fits every
+    listed dimension). `size` is the model's (width, depth, height) in
+    Blender axes. Returns (height, a note on its size in game or None)."""
+    model = {"width": size.x, "depth": size.y, "height": size.z}
+    try:
+        bw, bh, bd = (float(v) for v in gamedata.unit(unit.id)["size"])
+    except (KeyError, TypeError, ValueError):
+        if unit.fit != ("height",):
+            raise RigidError(f"{unit.id}: FIT needs the unit's box, and assets/data has no size for it")
+        return model["height"], None
+    box = {"width": bw, "height": bh, "depth": bd}
+    scale = min(box[d] / model[d] for d in unit.fit)
+    game = " x ".join(f"{model[d] * scale:.2f}" for d in ("width", "height", "depth"))
+    note = f"in game {game} m (w x h x d) in its {bw:g} x {bh:g} x {bd:g} m box"
+    if unit.fit == ("height",):
+        return model["height"], note
+    return bh / scale, (f"{note}: FIT {', '.join(unit.fit)} draws it at {model['height'] * scale / bh:.0%} "
+                        f"of the box height (manifest height {bh / scale:.3f}, the model's {model['height']:.3f})")
 
 
 def _bvh(obj):
