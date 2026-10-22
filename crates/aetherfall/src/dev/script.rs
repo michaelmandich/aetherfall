@@ -6,7 +6,7 @@
 //! |---|---|
 //! | `key <combo>` | taps a key, with modifiers (`key Z`, `key ctrl+1`, `key shift+R`, `key Esc`) |
 //! | `move <x>,<y>` | moves the stand-in mouse (logical window px) |
-//! | `aim <x>,<z>` | moves the stand-in mouse onto that ground point (world metres), where the camera shows it |
+//! | `aim <x>,<z>` | moves the stand-in mouse onto that ground point (world metres), where the camera shows it (skipped if no game camera shows up) |
 //! | `click [left\|right] [shift\|ctrl]` | clicks in the world at the stand-in mouse |
 //! | `down [left\|right]` / `up [left\|right]` | holds / releases a button (drags) |
 //! | `press <label>` | presses the HUD button with that label, as `--press` |
@@ -64,7 +64,13 @@ pub(super) struct Script {
     /// Keys and buttons tapped last frame, released this frame.
     taps: Vec<KeyCode>,
     tap_buttons: Vec<MouseButton>,
+    /// Frames the due `aim` has waited for the RTS camera.
+    aim_waits: u32,
 }
+
+/// Frames an `aim` waits for the RTS camera before it is skipped (so a run
+/// without one, say on the menu, does not hold up every later input).
+const AIM_PATIENCE: u32 = 120;
 
 impl Script {
     pub fn new(steps: Vec<(f32, Step)>) -> Script {
@@ -238,7 +244,11 @@ fn key_code(name: &str) -> Option<KeyCode> {
 /// PreUpdate, after Bevy's input systems: release last frame's taps, then
 /// apply the due input steps (any number of mouse moves, then at most one
 /// key or button) so the frame's `Update` sees them as a real press. An
-/// `aim` waits for the RTS camera and points through last frame's view.
+/// `aim` waits (a little) for the RTS camera and points through last
+/// frame's view at the point on the y = 0 plane, the plane af_input's
+/// picking reads the cursor's ground point from (`cursor::update_cursor`):
+/// so the click lands on exactly that point, whatever terrain is drawn
+/// there.
 pub(super) fn script_input(
     mut script: ResMut<Script>,
     clock: Res<SimClock>,
@@ -264,10 +274,17 @@ pub(super) fn script_input(
             Step::Aim(p) => {
                 let on_screen = cameras.single().ok().and_then(|(camera, view)| camera.world_to_viewport(view, Vec3::new(p.x, 0.0, p.y)).ok());
                 let Some(at) = on_screen else {
+                    s.aim_waits += 1;
+                    if s.aim_waits >= AIM_PATIENCE {
+                        warn!("script: no game camera to aim at {p} through; skipped");
+                        s.aim_waits = 0;
+                        continue;
+                    }
                     // No camera yet: try again next frame.
                     s.next -= 1;
                     break;
                 };
+                s.aim_waits = 0;
                 cursor.0 = Some(at);
                 continue;
             }
@@ -421,5 +438,24 @@ mod tests {
         let keys = app.world().resource::<ButtonInput<KeyCode>>();
         assert!(!keys.pressed(KeyCode::Digit1) && keys.just_released(KeyCode::ControlLeft), "released the next frame");
         assert!(app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Left));
+    }
+
+    #[test]
+    fn an_aim_without_a_camera_is_skipped_in_the_end() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<SimClock>()
+            .insert_resource(VirtualCursor(None))
+            .insert_resource(Script::new(vec![(0.0, Step::Aim(Vec2::new(40.0, 50.0))), (0.0, Step::Key { mods: vec![], key: KeyCode::KeyQ })]))
+            .add_systems(Update, script_input);
+        app.update();
+        assert_eq!(app.world().resource::<Script>().next, 0, "waits for a camera at first");
+        for _ in 1..AIM_PATIENCE {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Script>().next, 2, "then goes on without it");
+        assert!(app.world().resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::KeyQ));
+        assert_eq!(app.world().resource::<VirtualCursor>().0, None);
     }
 }
