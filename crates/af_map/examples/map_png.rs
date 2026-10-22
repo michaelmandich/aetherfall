@@ -338,16 +338,33 @@ fn setup(data: &GameData, players: usize, seed: u64, map_size: f32) -> MatchSetu
     MatchSetup { seed, players, map_size, ..MatchSetup::default() }
 }
 
+/// The share of the land rectangle (the map minus its ocean bands) that is
+/// mountain, in percent.
+fn mountain_share(data: &GameData, map: &GeneratedMap) -> f32 {
+    let Some(mountain) = data.terrain_id("mountain") else { return 0.0 };
+    let f = &map.features;
+    let (lo, hi) = (f.land_min.as_uvec2(), f.land_max.as_uvec2().min(UVec2::new(map.width, map.height)));
+    let (mut rock, mut land) = (0usize, 0usize);
+    for y in lo.y..hi.y {
+        for x in lo.x..hi.x {
+            land += 1;
+            rock += (map.terrain[(y * map.width + x) as usize] == mountain) as usize;
+        }
+    }
+    rock as f32 * 100.0 / land.max(1) as f32
+}
+
 fn generate_logged(data: &GameData, players: usize, seed: u64, map_size: f32, options: &MapOptions) -> GeneratedMap {
     let started = Instant::now();
     let map = generate_with(data, &setup(data, players, seed, map_size), options);
     println!(
-        "{}: {} m, {} nodes, {} river(s) {:?}, mountains {:?}, carved {:?}, cut off {:?} ({:.0} ms)",
+        "{}: {} m, {} nodes, {} river(s) {:?}, mountains {:.1}% {:?}, carved {:?}, cut off {:?} ({:.0} ms)",
         describe(&map, seed, players),
         map.size,
         map.nodes.len(),
         map.features.rivers.len(),
         map.features.rivers.iter().map(|r| (r.points.len() as f32 * 0.75).round() as u32).collect::<Vec<_>>(),
+        mountain_share(data, &map),
         map.features.mountains.iter().map(|m| (m.spine.len().saturating_sub(1) as u32 * 2, m.half_widths.iter().copied().fold(0.0f32, f32::max).round() as u32, m.spine[0].round())).collect::<Vec<_>>(),
         map.carved,
         map.cut_off,
