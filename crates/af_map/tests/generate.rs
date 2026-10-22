@@ -649,6 +649,52 @@ fn rivers_cross_the_land_away_from_the_edges_with_fords_at_most_36_m_apart() {
 }
 
 #[test]
+fn no_wood_thicket_or_marsh_closes_a_ford() {
+    let data = test_data();
+    let (marsh, thicket) = (data.terrain_id("marsh").unwrap(), data.terrain_id("thicket").unwrap());
+    let (wood, palm) = (data.resource_id("wood").unwrap(), data.node_id("palm").unwrap());
+    let mut fords = 0;
+    for case in sample() {
+        let map = &case.map;
+        let trees: Vec<Vec2> = map
+            .nodes
+            .iter()
+            .filter(|n| data.node(n.kind).resource_id == wood && n.kind != palm && map.starts.iter().all(|s| n.pos.distance(*s) > START_AREA_RADIUS))
+            .map(|n| n.pos)
+            .collect();
+        for r in &map.features.rivers {
+            for f in &r.fords {
+                fords += 1;
+                let (p, deep) = (r.points[*f], r.half_widths[*f]);
+                let (a, b) = (r.points[f.saturating_sub(2)], r.points[(f + 2).min(r.points.len() - 1)]);
+                let along = (b - a).normalize_or(Vec2::X);
+                let across = Vec2::new(-along.y, along.x);
+                // Beyond either bank (at most 2.5 m wide), 10 m out, as wide
+                // as the ford (deep + 6 m either side of its centre); a
+                // metre inside that strip.
+                let (length, from, to) = (deep + 5.0, deep + 3.0, deep + 11.5);
+                let in_exit = |q: Vec2| {
+                    let v = q - p;
+                    v.dot(along).abs() <= length && (from..=to).contains(&v.dot(across).abs())
+                };
+                assert!(trees.iter().all(|t| !in_exit(*t)), "a tree in a ford's way out at {p} ({})", case.at());
+                let r = (length + to).ceil() as i32;
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        let q = (p.floor() + Vec2::new(dx as f32, dy as f32)) + Vec2::splat(0.5);
+                        if in_exit(q) {
+                            let t = map.terrain_at(q);
+                            assert!(t != Some(marsh) && t != Some(thicket), "{:?} in a ford's way out at {q} ({})", t.map(|t| &data.terrain_def(t).id), case.at());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(fords > 300, "only {fords} fords in the sample");
+}
+
+#[test]
 fn ocean_lies_beyond_the_land_exactly_at_coast_and_seas() {
     let data = test_data();
     let ocean = data.terrain_id("ocean").unwrap();

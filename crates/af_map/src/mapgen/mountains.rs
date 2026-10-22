@@ -223,8 +223,9 @@ impl Gen<'_> {
 
     /// Cells that trees, thicket and marsh keep off: within
     /// [`ROCK_CLEARING`] of a mountain (so a mountain's foot never closes
-    /// with a wood or a marsh) or [`LANE_CLEARING`] of a lane (so every
-    /// contested spot keeps an open way to its starts and the main site).
+    /// with a wood or a marsh), [`LANE_CLEARING`] of a lane (so every
+    /// contested spot keeps an open way to its starts and the main site)
+    /// and every ford's ways out ([`Gen::mark_ford_exits`]).
     pub(crate) fn keep_open(&self) -> Vec<bool> {
         let mut open: Vec<bool> = self.mountain_field().into_iter().map(|d| d < ROCK_CLEARING).collect();
         for (a, b) in self.lanes() {
@@ -238,6 +239,7 @@ impl Gen<'_> {
                 }
             }
         }
+        self.mark_ford_exits(&mut open);
         open
     }
 

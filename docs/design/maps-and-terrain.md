@@ -129,8 +129,10 @@ Every map has one or two rivers (`MapOptions::rivers`).
   it crosses a start's corridor; a tributary is a ford for its last stretch
   into the river it joins. Each ford is `ford` terrain across the full width
   for `deep + 6` m either side of its centre (at least 12 m of ford where the
-  river is deepest), and its banks are reserved, so no mountain, tree,
-  thicket or marsh closes it.
+  river is deepest); its banks are reserved (4 m beyond the water), and a
+  strip as wide as the ford and 10 m deep beyond each bank is kept free of
+  trees, thicket and marsh, so no mountain, wood or marsh closes its ways
+  out.
 * Marsh grows near rivers and lakes on non-reserved grass (less at `Dry` and
   `Ponds`), never along the sea, by a mountain or on a lane (section 2.4).
 
@@ -473,7 +475,8 @@ found, and the unit stops on the near bank). So:
   test's own flood as well as the generator's report, and carving on at most
   one map in twenty; the requested river count, each river's course away from
   its ends at least 8 m inside the land edges, fords no more than 36 m apart
-  and no deep river stretch over 40 m; starts and start discs on clear
+  and no deep river stretch over 40 m, and no tree, thicket or marsh in a
+  ford's ways out; starts and start discs on clear
   grass; ocean present exactly at `Coast`/`Seas` and never on the land;
   mountains present on Medium and larger, on 3.5-9 % of the land on
   average there (0.5-4.5 % on Small), with a range at least 9 m half-wide
