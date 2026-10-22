@@ -50,7 +50,7 @@ fn meadow(p: vec2<f32>, wet: f32) -> Paint {
     // Grass clumps a few decimetres across, and darker tufts.
     let clump = vnoise(p * 3.1) * 0.55 + vnoise(p * 7.3) * 0.45;
     c *= 0.8 + 0.34 * clump;
-    c *= 1.0 - smoothstep(0.6, 0.78, fbm(p * 0.8 + 17.0)) * 0.24;
+    c *= 1.0 - smoothstep(0.6, 0.78, fbm(mat2x2<f32>(0.8, 0.6, -0.6, 0.8) * p * 0.8 + 17.0)) * 0.24;
     // Richer, darker grass along the water.
     c = mix(c, c * vec3<f32>(0.7, 0.84, 0.68), wet * 0.6);
     c = mix(c, vec3<f32>(luma(c)), 0.16);
@@ -99,8 +99,11 @@ fn marsh(p: vec2<f32>) -> Paint {
     return paint(c, mix(0.85, 0.1, puddle), (1.0 - puddle) * 0.04);
 }
 
-// Forest floor: dark leaf litter and moss under the brambles.
-fn forest_floor(p: vec2<f32>) -> Paint {
+// Forest floor: dark leaf litter and moss under the brambles. Off the map
+// (`off` metres out), where no trees stand, woodland is drawn as the
+// canopy seen from above, its crowns (the relief, `bulge`) lit on top
+// and dark between.
+fn forest_floor(p: vec2<f32>, off: f32, bulge: f32) -> Paint {
     let floor_col = lin(vec3<f32>(0.231, 0.353, 0.165));
     let moss = lin(vec3<f32>(0.306, 0.431, 0.180));
     let litter = lin(vec3<f32>(0.420, 0.329, 0.204));
@@ -108,9 +111,12 @@ fn forest_floor(p: vec2<f32>) -> Paint {
     let leaves = smoothstep(0.55, 0.75, vnoise(p * 2.3)) * 0.5 + smoothstep(0.6, 0.85, fbm(p * 0.5)) * 0.3;
     c = mix(c, litter, leaves);
     c *= 0.82 + 0.28 * vnoise(p * 5.0);
-    return paint(c, 0.95, leaves * 0.05);
+    let leafy = vnoise(p * 2.6) * 0.5 + vnoise(p * 6.1) * 0.5;
+    var canopy = mix(lin(vec3<f32>(0.2, 0.33, 0.13)), lin(vec3<f32>(0.33, 0.48, 0.18)), fbm(p * 0.06));
+    canopy *= (0.55 + 0.7 * smoothstep(0.3, 0.75, bulge)) * (0.85 + 0.3 * leafy);
+    let up = smoothstep(6.0, 9.0, off);
+    return paint(mix(c, canopy, up), 0.95, mix(leaves * 0.05, leafy * 0.12, up));
 }
-
 // Grey rock: broad tones, warmer and cooler; on the faces, streaks running
 // down the fall line and dark joints between blocks; lichen on the flatter
 // parts.
@@ -238,6 +244,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let y = in.world_position.y;
     let wet = in.color.r;
     let n = pbr.N;
+    let off_map = length(max(max(ground.map.xy - p, p - ground.map.zw), vec2<f32>(0.0)));
 
     // Which covers: the class images (one blurred texel a cell) sampled
     // through two layers of warp, then sharpened with noise.
@@ -262,14 +269,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if (wa.x > 0.003) { acc = add(acc, wa.x, meadow(p, wet)); }
     if (wa.y > 0.003) { acc = add(acc, wa.y, sand(p, wet, ra.x)); }
     if (wa.z > 0.003) { acc = add(acc, wa.z, marsh(p)); }
-    if (wa.w > 0.003) { acc = add(acc, wa.w, forest_floor(p)); }
+    if (wa.w > 0.003) { acc = add(acc, wa.w, forest_floor(p, off_map, in.color.b)); }
     if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n)); }
     if (wb.y > 0.003) { acc = add(acc, wb.y, mountain(p, y, n, in.color.b)); }
     if (wb.z > 0.003) { acc = add(acc, wb.z, scar(p)); }
     if (wb.w > 0.003) { acc = add(acc, wb.w, bed(p)); }
 
     // Ground that slopes steeply anywhere but under water shows rock.
-    let steep = (1.0 - smoothstep(0.55, 0.8, n.y)) * (1.0 - wb.w);
+    let steep = (1.0 - smoothstep(0.55, 0.8, n.y)) * (1.0 - wb.w) * (1.0 - wa.w);
     if (steep > 0.01) {
         let r = rock(p, y, n);
         acc = Paint(mix(acc.color, r.color, steep), mix(acc.rough, r.rough, steep), acc.glow, mix(acc.bump, r.bump, steep));

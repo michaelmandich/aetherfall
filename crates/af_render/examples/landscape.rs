@@ -250,7 +250,7 @@ fn populate(app: &mut App, ids: &[PlayerId]) {
                 spawn_unit(c, data, player, *u, base + Vec2::new((i % 5) as f32 * 3.0, (i / 5) as f32 * 3.5), 0.6);
             }
             if let Some(b) = faction.building_ids.iter().find(|b| data.building(**b).requires_node_id.is_none()) {
-                spawn_building(c, data, player, *b, Vec2::new(105.0 + k as f32 * 30.0, 172.0), 0.0, true);
+                spawn_building(c, data, player, *b, Vec2::new(175.0 + k as f32 * 14.0, 150.0), 0.0, true);
             }
         }
         let node = |id: &str| data.node_id(id);

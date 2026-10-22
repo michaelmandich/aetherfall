@@ -65,7 +65,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let side = vec2<f32>(-dir.y, dir.x);
         slope += (dir * s.x + side * s.y) * flowing;
         // Streaks: long downstream, narrow across.
-        let streak = mix(fbm(c1 * vec2<f32>(0.25, 1.4)), fbm(c0 * vec2<f32>(0.25, 1.4)), w0);
+        let streak = mix(fbm(c1 * vec2<f32>(0.3, 2.2)), fbm(c0 * vec2<f32>(0.3, 2.2)), w0);
         pattern += streak * flowing;
     }
     // The sea: a slow swell rolling in, every 6 s.
@@ -91,7 +91,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     // Foam: thin streaks flowing downstream, broken white water over fords,
     // surf rolling onto the sea's beaches.
-    var foam = river * smoothstep(0.68, 0.8, pattern) * smoothstep(0.3, 0.9, speed) * 0.55;
+    var foam = river * smoothstep(0.66, 0.76, pattern) * smoothstep(0.3, 0.9, speed) * 0.6;
     foam += ford * smoothstep(0.5, 0.68, pattern) * 0.8;
     let surf = smoothstep(0.85, 0.98, sin(shore * 1.3 + t * TAU / 5.0) * 0.5 + 0.5) * (1.0 - smoothstep(1.0, 8.0, shore));
     foam += sea * surf * smoothstep(0.4, 0.62, pattern) * 0.8;

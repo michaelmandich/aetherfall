@@ -21,7 +21,7 @@ use af_core::ext::render::{MAX_TERRAIN_HEIGHT, WATER_LEVEL, is_barrier_terrain, 
 use af_core::prelude::*;
 use bevy::math::{IVec2, Vec2, Vec3};
 
-use super::noise::{fbm, ridged, smoothstep, value};
+use super::noise::{crowns, fbm, ridged, smoothstep, value};
 
 /// Width of the off-map skirt around the map, in cells.
 pub const SKIRT: i32 = 64;
@@ -129,6 +129,8 @@ pub struct Field {
     /// greatest `rock` within [`RANGE_REACH`] cells (its crest's distance
     /// from the edge), so the flanks rise all the way to a sharp crest.
     pub depth: Vec<f32>,
+    /// Cells from each off-map woodland cell to the wood's edge (0 elsewhere).
+    pub wood: Vec<f32>,
     /// River flow on water cells, metres per second (zero for still water).
     pub flow: Vec<Vec2>,
     /// Where a flowing cell lies along its river: (metres downstream from
@@ -178,6 +180,7 @@ impl Field {
             shore: Vec::new(),
             rock: Vec::new(),
             depth: Vec::new(),
+            wood: Vec::new(),
             flow: vec![Vec2::ZERO; n],
             course: vec![Vec2::ZERO; n],
             river: vec![0.0; n],
@@ -210,6 +213,7 @@ impl Field {
         let (to_open, to_rock) = (f.distance(|c| c != Cover::Mountain), f.distance(|c| c == Cover::Mountain));
         f.rock = f.cover.iter().enumerate().map(|(i, c)| if *c == Cover::Mountain { to_open[i] } else { to_rock[i] }).collect();
         f.depth = f.range_depth(&to_open);
+        f.wood = f.distance(|c| c != Cover::Woodland).into_iter().zip(&f.cover).map(|(d, c)| if *c == Cover::Woodland { d } else { 0.0 }).collect();
         f.lay_rivers(src.features);
         f.sites = match src.features {
             Some(m) => m.sites.iter().map(|s| (s.center, s.radius)).collect(),
@@ -231,6 +235,13 @@ impl Field {
     pub fn on_map(&self, x: i32, z: i32) -> bool {
         let (mx, mz) = (x - self.skirt, z - self.skirt);
         mx >= 0 && mz >= 0 && mx < self.map_cols && mz < self.map_rows
+    }
+
+    /// How far a world point lies beyond the map's edge (0 on the map).
+    pub fn beyond_map(&self, p: Vec2) -> f32 {
+        let lo = self.world_corner(self.skirt, self.skirt);
+        let hi = self.world_corner(self.skirt + self.map_cols, self.skirt + self.map_rows);
+        (lo - p).max(p - hi).max(Vec2::ZERO).length()
     }
 
     /// The cover of a field cell (clamped into the field).
@@ -502,6 +513,11 @@ impl Field {
             }
         }
         if let Some(g) = land {
+            // Off the map nothing stands: the land rolls and woods rise.
+            if cells.iter().all(|i| !self.on_map((*i as i32) % self.cols, (*i as i32) / self.cols)) {
+                let wood = cells.iter().map(|i| self.wood[*i]).fold(0.0, f32::max) * self.cell;
+                return g + skirt_relief(self.world_corner(x, z), self.beyond_map(self.world_corner(x, z)), wood, self.seed);
+            }
             return g;
         }
         if let Some(b) = bed {
@@ -607,7 +623,7 @@ pub fn off_map_cover(p: Vec2, out: f32, edge: Cover, sea: bool, seed: u32) -> Co
     if out > 6.0 && ridge - 0.42 * (1.0 - smoothstep(10.0, 46.0, out)) > 0.6 {
         return Cover::Mountain;
     }
-    if fbm(p * 0.035, 3, seed ^ 0x0ff3) > 0.56 { Cover::Woodland } else { Cover::Meadow }
+    if out > 7.0 && fbm(p * 0.035, 3, seed ^ 0x0ff3) > 0.56 { Cover::Woodland } else { Cover::Meadow }
 }
 
 /// Height of a water bed `d` metres from the shore.
@@ -636,6 +652,15 @@ pub fn mountain_height(p: Vec2, d: f32, crest_depth: f32, seed: u32) -> f32 {
     let gullies = (1.0 - ridged(p * 0.3 + warp, 2, seed ^ 0x3aa)) * 2.4 * flank;
     let crags = (fbm(p * 0.5, 2, seed ^ 0x3a8) - 0.5) * 1.2 * smoothstep(0.0, 2.0, d);
     (crest - gullies + crags).clamp(0.05, MAX_TERRAIN_HEIGHT)
+}
+
+/// The height of off-map land `out` metres beyond the map, `wood` metres
+/// inside a wood: low rolling hills rising away from the edge, and the
+/// rounded crowns of the woods (2-4 m) on them.
+pub fn skirt_relief(p: Vec2, out: f32, wood: f32, seed: u32) -> f32 {
+    let hills = smoothstep(3.0, 36.0, out) * (fbm(p * 0.025, 3, seed ^ 0x51c1) * 3.5 - 0.6).max(0.0);
+    let canopy = smoothstep(0.0, 5.0, wood) * (1.4 + 1.4 * crowns(p, 3.2, seed ^ 0x51c2) + 0.5 * crowns(p, 1.7, seed ^ 0x51c3));
+    hills + canopy
 }
 
 /// The low rocky mound a crystal spire stands on.

@@ -2,7 +2,7 @@
 //! have their own for colour). Pure functions of position and seed; never
 //! touches `SimRng`.
 
-use bevy::math::Vec2;
+use bevy::math::{IVec2, Vec2};
 
 use crate::look::hash32;
 
@@ -55,6 +55,25 @@ pub fn ridged(p: Vec2, octaves: u32, seed: u32) -> f32 {
     sum / norm
 }
 
+/// Rounded tree crowns seen from above, in 0..1: 1 at the middle of a crown
+/// (one jittered crown per `size`-metre cell, of varied size), 0 between
+/// them.
+pub fn crowns(p: Vec2, size: f32, seed: u32) -> f32 {
+    let g = p / size;
+    let i = g.floor();
+    let mut best: f32 = 0.0;
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let c = IVec2::new(i.x as i32 + dx, i.y as i32 + dz);
+            let centre = Vec2::new(c.x as f32 + 0.15 + 0.7 * lattice(c.x, c.y, seed), c.y as f32 + 0.15 + 0.7 * lattice(c.x, c.y, seed ^ 0x77));
+            let r = 0.55 + 0.35 * lattice(c.x, c.y, seed ^ 0x99);
+            let d = g.distance(centre) / r;
+            best = best.max(1.0 - d * d);
+        }
+    }
+    best
+}
+
 /// A hash of a cell (and a salt) in 0..1, for props and per-cell choices.
 pub fn cell_hash(x: i32, y: i32, salt: u32) -> f32 {
     lattice(x, y, salt ^ 0x5bd1_e995)
@@ -86,5 +105,8 @@ mod tests {
         assert!(lo < 0.15 && hi > 0.85, "{lo}..{hi}");
         assert_ne!(value(Vec2::new(0.5, 0.5), 1), value(Vec2::new(0.5, 0.5), 2), "seeds differ");
         assert_eq!(value(Vec2::new(3.0, 4.0), 7), lattice(3, 4, 7), "lattice points are exact");
+        let tops: Vec<f32> = (0..400).map(|i| crowns(Vec2::new((i % 20) as f32 * 0.7, (i / 20) as f32 * 0.7), 3.0, 1)).collect();
+        assert!(tops.iter().all(|v| (0.0..=1.0).contains(v)));
+        assert!(tops.iter().any(|v| *v > 0.9) && tops.iter().any(|v| *v < 0.2), "crowns and gaps");
     }
 }
