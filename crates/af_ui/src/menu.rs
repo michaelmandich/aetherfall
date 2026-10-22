@@ -18,6 +18,18 @@ use crate::theme::{self, button, rgb, set_text, text, FONT_BODY, FONT_LARGE, FON
 /// Most AI opponents the menu offers.
 pub const MAX_OPPONENTS: usize = 5;
 
+/// The land sides a `MatchSetup::map_size` can give, in metres: af_map
+/// rounds it to the metre and clamps it to this range (the range
+/// `MapSize::land_side` keeps to as well).
+pub const MAP_METRES_RANGE: (f32, f32) = (160.0, 1024.0);
+
+/// The land side af_map builds for a `MatchSetup::map_size` of `metres`;
+/// 0 when it does not set one (0, below 0, or not a number), so the size
+/// option decides.
+pub fn map_metres_used(metres: f32) -> f32 {
+    if metres > 0.0 { metres.round().clamp(MAP_METRES_RANGE.0, MAP_METRES_RANGE.1) } else { 0.0 }
+}
+
 /// How the menu assigns teams.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TeamMode {
@@ -39,8 +51,9 @@ pub struct MenuSettings {
     pub seed: u64,
     /// How the map is generated.
     pub map: MapOptions,
-    /// A map side in metres that overrides `map.size` (`--map-size`); 0 =
-    /// by `map.size`. Stepping the map size clears it.
+    /// A map side in metres that overrides `map.size` (`--map-size`), as
+    /// af_map will build it ([`map_metres_used`]); 0 = by `map.size`.
+    /// Stepping the map size clears it.
     pub map_metres: f32,
     /// The start age and starting-resource multiplier (debug options the
     /// menu does not show, carried through from the command line).
@@ -86,7 +99,8 @@ impl MenuSettings {
             fog: setup.fog,
             seed: setup.seed,
             map,
-            map_metres: setup.map_size,
+            // The side the match will have, which the menu then shows.
+            map_metres: map_metres_used(setup.map_size),
             start_age: setup.start_age,
             res_mult: setup.start_resources_mult,
         }
@@ -397,10 +411,12 @@ fn spawn_map_settings(panel: &mut ChildSpawnerCommands) {
     option(panel, "Meteor site", MenuButton::Site(false), MenuButton::Site(true), MenuLabel::Site, MenuLabel::SiteNote);
 }
 
-/// The map size's value and note: a side set in metres, or the preset.
+/// The map size's value and note: a side set in metres (as af_map will
+/// build it), or the preset.
 fn map_size_text(s: &MenuSettings) -> (String, &'static str) {
-    if s.map_metres > 0.0 {
-        return (format!("{:.0} m", s.map_metres), "set by --map-size");
+    let metres = map_metres_used(s.map_metres);
+    if metres > 0.0 {
+        return (format!("{metres:.0} m"), "set by --map-size");
     }
     let note = match s.map.size {
         MapSize::Small => "0.8x the land",
@@ -754,6 +770,27 @@ mod tests {
         stepped.step_map_size(true);
         assert_eq!((stepped.map.size, stepped.map_metres), (MapSize::Huge, 0.0));
         assert_eq!(stepped.match_setup(&data, false).map_size, 0.0);
+    }
+
+    /// af_map rounds a side set in metres and keeps it to 160-1024 m; the
+    /// menu shows (and starts) that side, not the one asked for.
+    #[test]
+    fn a_side_in_metres_shows_as_the_map_will_have_it() {
+        let shown = |metres: f32| {
+            let s = MenuSettings::from_setup(&MatchSetup { map_size: metres, ..default() }, MapOptions::default());
+            (map_size_text(&s).0, s.match_setup(&test_data(), false).map_size)
+        };
+        assert_eq!(shown(2000.0), ("1024 m".to_string(), 1024.0));
+        assert_eq!(shown(100.0), ("160 m".to_string(), 160.0));
+        assert_eq!(shown(416.5), ("417 m".to_string(), 417.0), "rounded as af_map rounds");
+        assert_eq!(shown(300.0), ("300 m".to_string(), 300.0));
+        // No side set (0, below 0, not a number): the size option.
+        for none in [0.0, -50.0, f32::NAN] {
+            assert_eq!(shown(none), ("Medium".to_string(), 0.0), "{none}");
+        }
+        // Settings made some other way show the side too.
+        let direct = MenuSettings { map_metres: 5000.0, ..default() };
+        assert_eq!(map_size_text(&direct).0, "1024 m");
     }
 
     #[test]
