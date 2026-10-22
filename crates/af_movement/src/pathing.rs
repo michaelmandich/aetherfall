@@ -780,7 +780,8 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
     // goes on with the progress count: the same route again must not reset
     // it.
     let stuck = std::mem::take(&mut mover.stuck_repath);
-    if !std::mem::take(&mut mover.continuing) && !stuck {
+    let continuing = std::mem::take(&mut mover.continuing);
+    if !continuing && !stuck {
         mover.restart_progress();
     }
     let Some(&end) = result.waypoints.last() else {
@@ -794,6 +795,10 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
         path.status = PathStatus::Failed;
         return;
     }
+    // On along the same way, the next leg's path takes the place of what
+    // the route said was left from the end of the last (and of the stretch
+    // that leg fell short by): see `Mover::rebase_progress`.
+    let before = continuing.then(|| mover.way_left(ask.pos, path));
     path.waypoints = result.waypoints;
     path.next = 0;
     path.partial = partial(ask, aim, real, result.complete, end);
@@ -803,11 +808,16 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
     mover.beyond = aim.beyond;
     mover.path_start = ask.pos;
     mover.path_goal = real;
+    if let Some(before) = before {
+        let after = mover.way_left(ask.pos, path);
+        mover.rebase_progress(after - before);
+    }
 }
 
 /// Add the next leg (searched from the end of the path) to the path. A leg
 /// that gets nowhere is dropped: the unit walks to the end of its path and
-/// asks afresh from there.
+/// asks afresh from there. The leg's path takes the place of the route's
+/// stretch it covers in the way left (see `Mover::rebase_progress`).
 fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, path: &mut PathState, mover: &mut Mover) {
     mover.extend = false;
     let Some(&end) = result.waypoints.last() else {
@@ -818,7 +828,17 @@ fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pa
         mover.on_leg = false;
         return;
     }
+    let joined = path.waypoints.len();
     path.waypoints.extend(result.waypoints.iter().copied().filter(|w| w.distance(ask.pos) > 1e-3));
+    let added: f32 = path.waypoints[joined..]
+        .iter()
+        .scan(ask.pos, |at, &w| {
+            let step = at.distance(w);
+            *at = w;
+            Some(step)
+        })
+        .sum();
+    mover.rebase_progress(added + aim.beyond - mover.beyond);
     path.partial = partial(ask, aim, real, result.complete, end);
     mover.truncated = result.truncated || !aim.last;
     mover.on_leg = !aim.last;
@@ -1578,6 +1598,85 @@ mod tests {
         let deep = data.terrain_id("deep_water").expect("deep water");
         assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != deep), "never in deep water");
         assert!(cells < 5_000, "{cells} cell expansions");
+    }
+
+    /// The slowest wheels on a long way whose second leg runs into a wall
+    /// the coarse route does not see (it leaves obstacles out): the leg's
+    /// search goes round by the wall's far end, some 130 m longer than the
+    /// route's stretch, a minute and a half of driving. The engine drives
+    /// round, crosses at the ford and arrives; the longer way is no lack of
+    /// progress.
+    #[test]
+    fn a_leg_round_a_wall_the_route_does_not_see_is_progress() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[(220, "ford")]);
+        // Across the way up the west bank to the ford, from 80 m west of
+        // the river to the river itself.
+        let wall = data.building_ids().find(|b| data.building(*b).wall && !data.building(*b).gate).expect("a wall");
+        for i in 0..28 {
+            let at = Vec2::new(40.0 + i as f32 * 3.0, 196.0);
+            with_commands(&mut app, |c, data, players| spawn_building(c, data, players.get(p[0]), wall, at, 0.0, true));
+        }
+        let engine = data
+            .unit_ids()
+            .filter(|u| data.unit(*u).locomotion == MoveFlag::Wheeled)
+            .min_by(|a, b| data.unit(*a).speed.total_cmp(&data.unit(*b).speed).then(a.cmp(b)))
+            .expect("an engine");
+        assert!(data.unit(engine).speed < 2.0, "a slow engine");
+        let (start, goal) = (Vec2::new(98.5, 128.5), Vec2::new(158.5, 128.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), engine, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 20_000);
+        let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+        println!("wheels round a wall across a leg: {s:?} after {ticks} ticks, {walked:.0} m walked");
+        assert_eq!(s, PathStatus::Arrived, "{:?} at {:?}", app.world().get::<PathState>(e), trail.last());
+        assert!(trail.iter().any(|q| q.x < 40.0 && q.y > 190.0 && q.y < 202.0), "round the wall's far end");
+    }
+
+    /// At the end of a leg, the path to the next one replaces what the
+    /// route said was left (the route's straight stretch): a way round
+    /// obstacles longer than the stretch moves the best mark of the
+    /// progress count up by what it adds, so the unit does not have to
+    /// walk that much before anything counts as progress again. So does a
+    /// leg added to the path while the unit walks on.
+    #[test]
+    fn the_next_leg_moves_the_progress_mark_by_what_it_adds() {
+        let mob = walker();
+        let (pos, goal) = (Vec2::new(10.0, 10.0), Vec2::new(200.0, 10.0));
+        let order = MoveGoal::point(goal, 0.5);
+        // The last leg ended here: 100 m of route left beyond it.
+        let mut path = PathState { waypoints: vec![pos], next: 1, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let mut mover = Mover { on_leg: true, truncated: true, beyond: 100.0, progress_best: 100.0, wants_repath: true, continuing: true, ..Mover::default() };
+        assert_eq!(mover.way_left(pos, &path), 100.0);
+        // The next leg ends 20 m down the route (80 m beyond it), but its
+        // path goes 10 m aside and back: 2 x sqrt(10^2 + 10^2) = 28.3 m.
+        let aim = Aim { goal: pos + Vec2::new(20.0, 0.0), reach: false, last: false, unreachable: false, beyond: 80.0, extends: false };
+        let ask = Ask { goal: &order, mob: &mob, pos, team: 0, target: aim.goal, follow: None };
+        let result = af_geom::PathResult { waypoints: vec![pos + Vec2::new(10.0, 10.0), aim.goal], complete: true, truncated: false, expansions: 50 };
+        apply_path(&ask, &aim, goal, result, &mut path, &mut mover);
+        assert_eq!(path.status, PathStatus::Following);
+        let left = mover.way_left(pos, &path);
+        assert!((left - 108.28).abs() < 0.01, "{left}");
+        assert!(left <= mover.progress_best + 1e-3, "{left} m left, best mark {}", mover.progress_best);
+        assert!(mover.progress_best < 108.29, "no more than the leg added: {}", mover.progress_best);
+
+        // A leg added to the path while the unit, 15 m short of its end,
+        // walks on.
+        let end = pos + Vec2::new(20.0, 0.0);
+        let unit = pos + Vec2::new(5.0, 0.0);
+        let mut mover = Mover { on_leg: true, truncated: true, beyond: 80.0, progress_best: 95.0, extend: true, ..Mover::default() };
+        let mut path = PathState { waypoints: vec![end], next: 0, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let before = mover.way_left(unit, &path);
+        let aim = Aim { goal: end + Vec2::new(20.0, 0.0), extends: true, beyond: 60.0, ..aim };
+        let ask = Ask { pos: end, target: aim.goal, ..ask };
+        let result = af_geom::PathResult { waypoints: vec![end + Vec2::new(10.0, 10.0), aim.goal], complete: true, truncated: false, expansions: 50 };
+        apply_path(&ask, &aim, goal, result, &mut path, &mut mover);
+        let after = mover.way_left(unit, &path);
+        assert!((after - before - 8.28).abs() < 0.01, "{before} -> {after}");
+        assert!((mover.progress_best - 103.28).abs() < 0.01, "the mark moved by what the leg added: {}", mover.progress_best);
     }
 
     /// The forest map for `players`; each of `orders` (owner, start, goal)

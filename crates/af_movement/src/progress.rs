@@ -14,7 +14,10 @@
 //!   at the end of a leg (see `pathing`), so a long detour is progress all
 //!   the way. The count restarts with every new goal or path, except a
 //!   path asked for because the unit was stuck, and the next leg of the
-//!   same way.
+//!   same way. The next leg's path takes the place of the route's stretch
+//!   it covers, and is often longer (the route leaves obstacles out): the
+//!   best mark moves up by what it adds (`Mover::rebase_progress`), so a
+//!   way round a wood or a wall is progress too.
 //!
 //! Time spent waiting for the path service does not count.
 
