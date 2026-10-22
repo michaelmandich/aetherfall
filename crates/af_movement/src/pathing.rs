@@ -15,7 +15,9 @@
 //!   `af_core::ext::movement::NavRegions`) is swapped for the reachable
 //!   point nearest it, with no search to find that out; the path leads
 //!   there and is partial, so the unit walks to the bank facing the goal
-//!   and af_behavior hears that it failed.
+//!   and af_behavior hears that it failed. A point on ground the mover
+//!   cannot use (a spot in the water) counts as out of its region when the
+//!   open ground nearest it is another region's.
 //! * Long ways: a goal farther than [`LONG_WAY`] that no straight line
 //!   reaches is planned on the coarse route graph of the mover's class
 //!   first. A route that bends round the terrain (a river crossed at a
@@ -464,7 +466,13 @@ fn class_map(regions: Option<&NavRegions>, mob: &Mobile) -> Option<Arc<RegionMap
 
 /// Where the way to `ask`'s goal ends for the unit (at `ask.pos`): the goal
 /// itself, unless the regions say it is out of the unit's reach; then the
-/// reachable point nearest it, found without a search.
+/// reachable point nearest it, found without a search. A goal on ground
+/// the unit's class cannot use is in reach when the search could end by
+/// it on the unit's ground: an entity's box when some of that ground comes
+/// within reach of it; a point when the open ground nearest it is the
+/// unit's (the search heads for that ground, so ground of another region
+/// nearer the point, the far bank of a narrow river, puts it out of reach
+/// however near the unit's own comes).
 fn way_end(map: Option<&RegionMap>, ask: &Ask) -> Aim {
     let to_goal = Aim { goal: ask.target, reach: ask.follow.is_some(), last: true, unreachable: false, beyond: 0.0, extends: false };
     let Some(map) = map else { return to_goal };
@@ -474,7 +482,8 @@ fn way_end(map: Option<&RegionMap>, ask: &Ask) -> Aim {
         return to_goal;
     }
     let reachable = match map.region_at(ask.target) {
-        0 => map.touches(from, ask.target, ask.near()),
+        0 if ask.follow.is_some() => map.touches(from, ask.target, ask.near()),
+        0 => map.region_near(ask.target, ask.near()) == from,
         r => r == from,
     };
     if reachable {
@@ -508,9 +517,10 @@ fn leg_aim(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2
 
 /// The coarse route from `from` to `to`: the unit's own while it still
 /// leads there and the unit is near it, else a groupmate's planned lately,
-/// else a new one (its coarse search charged to `spent`). `None` when the
-/// ends have no open ground about or lie apart (`way_end` keeps the latter
-/// from happening).
+/// else a new one (its coarse search charged to `spent`), ending on the
+/// unit's ground nearest `to` when `to` is closed ground nearer another
+/// region's (an entity on the far bank of a narrow river, within reach of
+/// the near one). `None` when the ends have no open ground about.
 fn route_for(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2, to: Vec2, spent: &mut u32) -> Option<Arc<CoarseRoute>> {
     if let Some(route) = mover.route.as_ref().filter(|r| mover.route_stamp == map.stamp() && r.end().distance(to) <= COARSE_SHARE_GOAL)
         && route.locate(from, mover.route_segment).2 <= OFF_ROUTE
@@ -520,7 +530,12 @@ fn route_for(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Ve
     let route = match queue.shared_route(map, from, to) {
         Some(r) => r,
         None => {
-            let (a, b) = (map.open_near(from, START_SEARCH_RADIUS)?, map.open_near(to, GOAL_SEARCH_RADIUS)?);
+            let a = map.open_near(from, START_SEARCH_RADIUS)?;
+            let region = map.region_at(a);
+            let b = match map.open_near(to, GOAL_SEARCH_RADIUS) {
+                Some(b) if map.region_at(b) == region => b,
+                _ => map.nearest_in(region, to)?,
+            };
             let planned = map.route(a, b)?;
             *spent += planned.expansions * COARSE_EXPANSION_COST;
             queue.coarse_expanded += u64::from(planned.expansions);
@@ -1678,6 +1693,30 @@ mod tests {
         let after = mover.way_left(unit, &path);
         assert!((after - before - 8.28).abs() < 0.01, "{before} -> {after}");
         assert!((mover.progress_best - 103.28).abs() < 0.01, "the mark moved by what the leg added: {}", mover.progress_best);
+    }
+
+    /// A rally point in a narrow river with no ford, nearer the far bank
+    /// than the near one: the near bank comes within the goal's reach, but
+    /// a search for a point in the water heads for the open ground nearest
+    /// it, which is across. So it is out of reach, answered without a
+    /// search: the unit walks to the near bank facing it and fails there.
+    #[test]
+    fn a_goal_in_the_water_nearer_the_far_bank_costs_no_search() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[]);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), foot, Vec2::new(98.5, 128.5), 0.0));
+        // 8 m from the near bank's cells, 5 m from the far bank's.
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(Vec2::new(129.5, 128.5), 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 1_200);
+        let end = *trail.last().expect("walked");
+        println!("a goal in the water nearer the far bank: {s:?} after {ticks} ticks at {end}, {:?} expansions", expanded(&app));
+        assert_eq!(s, PathStatus::Failed);
+        assert!(end.x > 119.0 && end.x < 122.5 && (end.y - 128.5).abs() < 2.0, "on the near bank facing it: {end}");
+        assert_eq!(expanded(&app), (0, 0), "no search");
     }
 
     /// Paint mountain along y = 120..128 over a 256 m map, but for a pass

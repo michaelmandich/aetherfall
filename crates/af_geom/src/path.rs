@@ -528,13 +528,21 @@ impl NavGrid {
         let Some(start) = map.open_near(req.start, START_SEARCH_RADIUS) else { return self.find_path(req) };
         let region = map.region_at(start);
         let near = req.reach.map_or(GOAL_SEARCH_RADIUS, |(b, r)| GOAL_SEARCH_RADIUS.max(b.bounding_radius() + r));
-        let reachable = map.touches(region, req.goal, near);
+        // A goal on closed ground: an entity is in reach when the region
+        // comes within reach of its box; a point when the open ground
+        // nearest it is the region's, where the search heads for it.
+        let reachable = match map.region_at(req.goal) {
+            0 if req.reach.is_some() => map.touches(region, req.goal, near),
+            0 => map.region_near(req.goal, near) == region,
+            r => r == region,
+        };
         let goal = if reachable { req.goal } else { map.nearest_in(region, req.goal).unwrap_or(start) };
         let plain = PathRequest { goal, reach: if reachable { req.reach } else { None }, ..*req };
         if let Some(quick) = self.quick_path(&plain, &[]) {
             return PathResult { complete: quick.complete && reachable, ..quick };
         }
-        let route = map.open_near(goal, GOAL_SEARCH_RADIUS).and_then(|end| map.route(start, end));
+        let end = map.open_near(goal, GOAL_SEARCH_RADIUS).filter(|e| map.region_at(*e) == region).or_else(|| map.nearest_in(region, goal));
+        let route = end.and_then(|end| map.route(start, end));
         // A straight route leaves the way to the obstacles: one search.
         let Some(route) = route.filter(|r| r.points.len() > 2 && r.length() > leg * 1.5) else {
             let found = self.find_path(&plain);
@@ -1522,6 +1530,21 @@ mod tests {
         assert!(!r.complete && r.expansions == 0, "{r:?}");
         let end = *r.waypoints.last().expect("to the bank");
         assert!(end.distance(Vec2::new(377.5, 384.5)) < 1.0, "the near bank: {end}");
+    }
+
+    /// A point in a river with no ford, nearer the far bank than the near
+    /// one (which is within its search radius), costs no search either: a
+    /// search for a point in the water heads for the open ground nearest
+    /// it, across, and would flood the near side for nothing.
+    #[test]
+    fn a_goal_in_the_water_nearer_the_far_bank_costs_no_search() {
+        let mut g = big(256);
+        river_x(&mut g, 128, &[]);
+        let (start, goal) = (Vec2::new(98.5, 128.5), Vec2::new(129.5, 128.5));
+        let r = routed(&mut g, start, goal, 1, 0.4);
+        assert!(!r.complete && r.expansions == 0, "{r:?}");
+        let end = *r.waypoints.last().expect("to the bank");
+        assert!(end.distance(Vec2::new(121.5, 128.5)) < 1.0, "the near bank: {end}");
     }
 
     /// A mountain range across the map with one 8 m pass far from the line.
