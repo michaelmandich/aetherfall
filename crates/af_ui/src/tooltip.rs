@@ -265,7 +265,7 @@ fn command(action: CardAction) -> Tooltip {
         CardAction::Move => ("Move", "Click a destination. Right-clicking the ground does the same."),
         CardAction::Stop => ("Stop", "Drop every order and stand still."),
         CardAction::Hold => ("Hold position", "Stay put and shoot what comes in range; never chase."),
-        CardAction::Patrol => ("Patrol", "Walk back and forth to a point, engaging enemies met on the way."),
+        CardAction::Patrol => ("Patrol", "Walk back and forth to a point, engaging enemies met on the way. Shift-click more points to walk them round in a loop."),
         CardAction::AttackMove => ("Attack-move", "Move to a point, fighting anything met on the way. Click an enemy to attack it."),
         CardAction::Gather => ("Gather", "Click a resource or a farm to work it."),
         CardAction::Repair => ("Repair", "Click a damaged friendly building or machine to mend it."),

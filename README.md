@@ -61,6 +61,7 @@ cannot go.
 | Fixed buttons on every building | C the next age-up, V upgrade the building, B rally point (what it trains and researches fills the card from Q) |
 | Worker build pages | Z Economy, X Military, C Defence; B or Esc goes back |
 | Targeted command (Move, Attack, Patrol, Gather, Repair, Rally) | its button, then left click the target (Move, Attack, Patrol and Rally also on the minimap); Shift keeps the command armed; right click or Esc cancels |
+| Patrol route | Patrol (R), then click the far end: the unit walks there and back; Shift+click more points to make one loop it walks round and round (orders queued after a patrol are never reached) |
 | Place a building | its button, then left click (Shift keeps placing); R rotates 45°, Shift+R 15°; right click or Esc cancels |
 | Place a wall | its button, click the start, click the end (Shift chains the next line from there); segments that do not fit are skipped |
 | Cancel a queued item | click it in the selection panel's queue |

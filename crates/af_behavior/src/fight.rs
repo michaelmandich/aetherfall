@@ -1,5 +1,6 @@
 //! Attack, AttackMove, Patrol and Hold orders.
 
+use af_core::ext::behavior::patrol_points;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
@@ -77,10 +78,15 @@ pub(crate) fn run_fight_orders(
                     u.orders.queue.pop_front();
                 }
             }
-            Some(Order::Patrol { a, b }) => {
-                let leg_end = if u.brain.patrol_back { a } else { b };
+            Some(Order::Patrol { b, .. }) => {
+                // The route: this patrol and the ones queued straight behind
+                // it, as a loop (two points: back and forth).
+                let points = patrol_points(&u.orders.queue).count();
+                let leg = u.brain.patrol_leg % points;
+                let next = (leg + 1) % points;
+                let leg_end = patrol_points(&u.orders.queue).nth(next).unwrap_or(b);
                 if advance(&ctx, &mut commands, &mut u, leg_end) {
-                    u.brain.patrol_back = !u.brain.patrol_back;
+                    u.brain.patrol_leg = next;
                 }
             }
             Some(Order::Hold) => hold(&ctx, &mut commands, &mut u),

@@ -45,6 +45,15 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   economy, UI and AI.
 * Deterministic RNG: `SimRng`. Deaths: insert `Dead` + write `EntityDied`;
   af_core despawns in `Cleanup`.
+* Patrols: consecutive `Order::Patrol` entries at the front of the queue
+  (shift-clicked patrol points, each queued from the last one's `b`) are
+  one route, `[front.a, front.b, q1.b, ...]`
+  (`af_core::ext::behavior::patrol_points`), walked in order and from the
+  last point back to the first, forever; a single patrol is the a <-> b
+  beat. The leg is af_behavior's `Brain::patrol_leg`, reset with the task
+  when the front order changes; points shift-queued onto a running patrol
+  join the loop in turn. A patrol never pops, so orders queued after the
+  patrols are never reached.
 * What a unit is busy with: `Activity` (af_core `components.rs`), written
   only by af_behavior at the end of `SimSet::Orders`: `Gather(WorkStyle)`
   (at the node or field), `Build`, `Repair` (at the target), `Heal`,

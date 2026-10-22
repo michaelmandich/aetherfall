@@ -54,8 +54,12 @@ pub struct Brain {
     pub(crate) heal_target: Option<Entity>,
     /// The healer mended `heal_target` this tick (it is in reach).
     pub(crate) mending: bool,
-    /// Patrolling from `b` back to `a`.
-    pub(crate) patrol_back: bool,
+    /// The patrol leg being walked: from point `patrol_leg` of the route
+    /// (`af_core::ext::behavior::patrol_points`) to the next, the last
+    /// leading back to the first. 0 (a to b) when the order starts; it goes
+    /// with the task when the front order changes, and points shift-queued
+    /// onto the route leave it be (the loop takes them in turn).
+    pub(crate) patrol_leg: usize,
     /// Path failures in a row for the current order.
     pub(crate) failures: u8,
     /// Per-unit tick offset so periodic scans spread over ticks.
