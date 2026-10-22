@@ -66,17 +66,65 @@ pub(crate) fn setup_scene(mut commands: Commands) {
     ));
 }
 
+/// The haze for a camera `distance` metres from what it looks at: (where it
+/// starts, where it would be full, how thick it gets at most), all scaled
+/// with the zoom. The game's view (pitched about 54 degrees, a 32 degree
+/// field of view) sees the ground from about 0.85 to 1.5 times its distance,
+/// so the haze starts just beyond the focus and only softens the top of the
+/// view, the far horizon and the off-map skirt by the same amount at every
+/// play zoom (25-210 m); a view from kilometres away (the dev overview)
+/// thins it out, so the whole map stays clear and saturated.
+pub fn haze(distance: f32) -> (f32, f32, f32) {
+    let d = distance.max(1.0);
+    let start = d * 1.12;
+    let end = start + d * 3.6;
+    let thickness = 1.0 - 0.8 * smoothstep(220.0, 900.0, d);
+    (start, end, thickness)
+}
+
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How far the camera is from what it looks at: along its view to the
+/// ground plane (the RTS rig's distance from its focus), else from the
+/// map's centre height.
+pub fn focus_distance(t: &Transform) -> f32 {
+    let (eye, fwd) = (t.translation, t.forward());
+    if fwd.y < -0.05 && eye.y > 0.0 { eye.y / -fwd.y } else { eye.y.abs().max(50.0) }
+}
+
+/// Fit the haze to the zoom (see [`haze`]) whenever the camera moves (the
+/// RTS camera is a root entity, so its `Transform` is where it is).
+pub(crate) fn fit_haze(mut cameras: Query<(&Transform, &mut DistanceFog), (With<RtsCamera>, Changed<Transform>)>) {
+    for (t, mut fog) in &mut cameras {
+        let (start, end, thickness) = haze(focus_distance(t));
+        let same = match fog.falloff {
+            FogFalloff::Linear { start: s, end: e } => (s - start).abs() < 0.5 && (e - end).abs() < 0.5,
+            _ => false,
+        };
+        if !same || (fog.color.alpha() - thickness).abs() > 0.005 {
+            fog.falloff = FogFalloff::Linear { start, end };
+            fog.color = SKY.with_alpha(thickness);
+        }
+    }
+}
+
 /// The look of the game's camera: tonemapping, a light haze toward the
-/// horizon in the sky's colour, livelier colour and a soft bloom over
-/// bright glows only (aether, the Starspire).
+/// horizon in the sky's colour (fitted to the zoom by [`fit_haze`]),
+/// livelier colour and a soft bloom over bright glows only (aether, the
+/// Starspire).
 pub fn camera_look() -> impl Bundle {
+    // Until the camera first moves: the game's starting zoom.
+    let (start, end, thickness) = haze(66.0);
     (
         Tonemapping::TonyMcMapface,
         DistanceFog {
-            color: SKY,
+            color: SKY.with_alpha(thickness),
             directional_light_color: Color::srgba(1.0, 0.92, 0.75, 0.35),
             directional_light_exponent: 24.0,
-            falloff: FogFalloff::Linear { start: 170.0, end: 900.0 },
+            falloff: FogFalloff::Linear { start, end },
         },
         ColorGrading {
             global: ColorGradingGlobal { post_saturation: 1.04, ..default() },
@@ -121,4 +169,49 @@ pub(crate) fn teardown_scene(
     remnants.reset();
     commands.remove_resource::<FogTexture>();
     commands.remove_resource::<TerrainSurface>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How much haze lies over ground `at` metres from the camera.
+    fn haze_at(distance: f32, at: f32) -> f32 {
+        let (start, end, thickness) = haze(distance);
+        thickness * ((at - start) / (end - start)).clamp(0.0, 1.0)
+    }
+
+    #[test]
+    fn the_haze_follows_the_zoom() {
+        // Every play zoom: what the camera looks at is clear, the top of
+        // the view (about 1.3-1.5 times as far) only softened.
+        for d in [25.0, 66.0, 150.0, 210.0] {
+            assert_eq!(haze_at(d, d), 0.0, "{d} m: the focus is clear");
+            let top = haze_at(d, 1.5 * d);
+            assert!(top > 0.0 && top < 0.15, "{d} m: the far edge of the view is softened, not washed out: {top}");
+        }
+        // The dev overview, kilometres away, stays clear across the map.
+        for d in [900.0, 1600.0, 2500.0] {
+            assert!(haze_at(d, 1.6 * d) < 0.06, "{d} m: {}", haze_at(d, 1.6 * d));
+        }
+    }
+
+    #[test]
+    fn the_camera_hazes_by_its_distance_from_its_focus() {
+        let mut app = App::new();
+        app.add_systems(Update, fit_haze);
+        let eye = Vec3::new(30.0, 120.0, 90.0);
+        let focus = Vec3::new(10.0, 0.0, 20.0);
+        let cam = app.world_mut().spawn((RtsCamera, Transform::from_translation(eye).looking_at(focus, Vec3::Y), camera_look())).id();
+        app.update();
+        let t = *app.world().get::<Transform>(cam).unwrap();
+        assert!((focus_distance(&t) - eye.distance(focus)).abs() < 1e-3);
+        let (start, end, thickness) = haze(eye.distance(focus));
+        let fog = app.world().get::<DistanceFog>(cam).unwrap();
+        match fog.falloff {
+            FogFalloff::Linear { start: s, end: e } => assert!((s - start).abs() < 0.5 && (e - end).abs() < 0.5, "{s}..{e}"),
+            _ => panic!("linear haze"),
+        }
+        assert!((fog.color.alpha() - thickness).abs() < 0.01);
+    }
 }

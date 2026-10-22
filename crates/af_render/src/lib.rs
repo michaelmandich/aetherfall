@@ -139,6 +139,7 @@ impl Plugin for BoxRenderPlugin {
                 (
                     (overlay::update_bars, overlay::update_outlines, overlay::update_rally).run_if(resource_exists::<Players>),
                     ghost::update_ghosts.run_if(resource_exists::<PlacementPreview>),
+                    scene::fit_haze,
                 )
                     .in_set(RenderStep::Overlay),
             )
