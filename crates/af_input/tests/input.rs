@@ -197,11 +197,16 @@ impl Match {
 
     /// Where a ground-level world point appears on screen right now.
     fn screen_of(&mut self, ground: Vec2) -> Vec2 {
+        self.screen_of_point(Vec3::new(ground.x, 0.5, ground.y))
+    }
+
+    /// Where a world point appears on screen right now.
+    fn screen_of_point(&mut self, point: Vec3) -> Vec2 {
         let view = GlobalTransform::from(rig_transform(&self.rig()));
         let world = self.app.world_mut();
         let mut cameras = world.query_filtered::<&Camera, With<RtsCamera>>();
         let camera = cameras.single(world).unwrap();
-        camera.world_to_viewport(&view, Vec3::new(ground.x, 0.5, ground.y)).expect("on screen")
+        camera.world_to_viewport(&view, point).expect("on screen")
     }
 
     fn fog_hides_everything(&mut self) {
@@ -428,6 +433,53 @@ fn cursor_picks_ground_and_visible_entities() {
     m.step();
     let cursor = *m.app.world().resource::<CursorWorld>();
     assert_eq!((cursor.ground, cursor.hovered), (None, None));
+}
+
+/// With the drawn terrain published, the cursor points at what is drawn: a
+/// click on a mountain lands on its rock, not on the y = 0 plane behind
+/// it, and a unit hidden behind the rock is not hovered through it.
+#[test]
+fn cursor_picks_on_the_drawn_mountains() {
+    use af_core::ext::render::TerrainSurface;
+    let mut m = Match::new(false);
+    m.with_view();
+    let focus = m.rig().focus;
+    let (forward, right) = view_axes(m.rig().yaw);
+    // A pillar of rock 8 m high and 3 m round, beside the focus.
+    let peak = focus + right * 12.0;
+    let corner = |i: u32| Vec2::new((i % 129) as f32, (i / 129) as f32);
+    let top = (0..129 * 129).map(|i| if corner(i).distance(peak) <= 3.0 { 8.0 } else { 0.0 }).collect();
+    m.app.world_mut().insert_resource(TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 129, height: 129, top });
+    // The ray through the pillar's top meets the y = 0 plane well behind
+    // it: a unit stands there.
+    let summit = Vec3::new(peak.x, 8.0, peak.y);
+    let eye = rig_transform(&m.rig()).translation;
+    let dir = (summit - eye).normalize();
+    let behind = (eye + dir * (-eye.y / dir.y)).xz();
+    assert!((behind - peak).dot(forward) > 5.0, "{behind}");
+    let soldier = m.soldier_kind(m.me);
+    let hidden = m.unit(m.me, soldier, behind);
+    m.settle();
+    let at = m.screen_of_point(summit);
+    m.move_cursor(at);
+    m.step();
+    let cursor = *m.app.world().resource::<CursorWorld>();
+    assert!(cursor.ground.is_some_and(|g| g.distance(peak) < 0.1), "on the rock: {:?}", cursor.ground);
+    assert_eq!(cursor.hovered, None, "the unit behind the rock is hidden");
+
+    // Flat ground is where it always was.
+    m.move_cursor(SCREEN * 0.5);
+    m.step();
+    let ground = m.app.world().resource::<CursorWorld>().ground;
+    assert!(ground.is_some_and(|g| g.distance(focus) < 0.05), "{ground:?}");
+
+    // Without the drawn terrain (headless, before the map is drawn): the plane.
+    m.app.world_mut().remove_resource::<TerrainSurface>();
+    m.move_cursor(at);
+    m.step();
+    let cursor = *m.app.world().resource::<CursorWorld>();
+    assert!(cursor.ground.is_some_and(|g| g.distance(behind) < 0.1), "{:?}", cursor.ground);
+    assert_eq!(cursor.hovered, Some(hidden));
 }
 
 #[test]

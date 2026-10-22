@@ -10,7 +10,10 @@
 //!    [`RtsCamera`](af_core::ext::input::RtsCamera) transform from it;
 //! 2. cursor: ray through the mouse (or its stand-in,
 //!    [`CursorOverride`](af_core::ext::input::CursorOverride)) ->
-//!    `CursorWorld` (ground point, hovered entity the local team can see);
+//!    `CursorWorld` (ground point, hovered entity the local team can see):
+//!    the ground point is where the ray meets the drawn terrain
+//!    (`TerrainSurface`, mountains included), or the y = 0 plane while
+//!    there is none (headless), and rock hides the boxes behind it;
 //! 3. hotkeys: Esc, R, control groups, idle worker, main hall (H), army (F2), centre,
 //!    Delete, pause, speed;
 //! 4. selection: click / shift / ctrl / double-click / drag-box (`DragSelect`);
