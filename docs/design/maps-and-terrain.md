@@ -386,7 +386,8 @@ never placed on top of one:
 * the Starspire for `Spire`: a giant dormant crystal, long six-sided
   prisms with pointed tips leaning out from a common base (three tall
   ones at its heart, up to 10.2 m, a ring of shorter ones and slimmer ones
-  fanning out low), pale smoky white-violet with darker facets; only
+  fanning out low, and smaller clusters breaking through toward the edge
+  of its impassable footing), pale smoky white-violet with darker facets; only
   their feet glow a soft violet, well under a twentieth of the surface. It
   casts its shadow. (A modelled spire may replace it later.)
 

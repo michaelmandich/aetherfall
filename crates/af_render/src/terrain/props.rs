@@ -420,6 +420,21 @@ pub fn spire(m: &mut PropMesh, at: Vec3, radius: f32, seed: u32) {
         let axis = lean(out, dice.range(0.62, 0.92));
         m.prism(foot, axis, thick * dice.range(0.24, 0.34), top * dice.range(0.3, 0.5), dice.range(0.0, TAU), &facets, tip, glow);
     }
+    // Out toward the edge of its footing (all of it impassable), the
+    // crystal breaks through the ground again in smaller clusters of
+    // columns, leaning out like the heart.
+    let sprays = 7;
+    for i in 0..sprays {
+        let a = turn + (i as f32 + 0.5) / sprays as f32 * TAU + dice.range(-0.25, 0.25);
+        let centre = at + Vec3::new(a.cos(), 0.0, a.sin()) * radius * dice.range(0.45, 0.66);
+        for k in 0..3 {
+            let b = a + dice.range(-0.6, 0.6);
+            let out = Vec3::new(b.cos(), 0.0, b.sin());
+            let foot = centre + out * dice.range(0.0, 0.5) + Vec3::Y * 0.05;
+            let axis = lean(out, dice.range(0.2, 0.55) + 0.12 * k as f32);
+            m.prism(foot, axis, thick * dice.range(0.19, 0.27), top * dice.range(0.32, 0.5) * (1.0 - 0.15 * k as f32), dice.range(0.0, TAU), &facets, tip, glow);
+        }
+    }
     for i in 0..10 {
         let a = i as f32 / 10.0 * std::f32::consts::TAU + dice.range(-0.3, 0.3);
         let foot = at + Vec3::new(a.cos(), 0.0, a.sin()) * radius * dice.range(0.55, 0.9);
