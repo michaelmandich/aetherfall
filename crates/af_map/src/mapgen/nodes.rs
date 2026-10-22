@@ -246,17 +246,20 @@ impl Gen<'_> {
         }
 
         let shape = Noise::new(rng, self.size, 7.0);
+        let open = self.keep_open();
         let mut thickets = Vec::new();
         for (n, cluster) in clusters.iter().enumerate() {
-            self.grow_forest(*cluster, &shape, rng);
+            self.grow_forest(*cluster, &shape, &open, rng);
             if n >= framing && rng.chance(0.5) {
                 thickets.push(*cluster);
             }
         }
-        self.paint_thickets(&thickets, rng);
+        self.paint_thickets(&thickets, &open, rng);
     }
 
-    fn grow_forest(&mut self, cluster: Blob, shape: &Noise, rng: &mut SimRng) {
+    /// The trees of one cluster, off the cells kept `open`
+    /// ([`Gen::keep_open`]).
+    fn grow_forest(&mut self, cluster: Blob, shape: &Noise, open: &[bool], rng: &mut SimRng) {
         let oak_share = rng.range(0.2, 0.8);
         let right = polar(rng.range(0.0, FRAC_PI_2));
         let forward = perp(right);
@@ -266,7 +269,7 @@ impl Gen<'_> {
                 let jitter = Vec2::new(rng.range(-0.25, 0.25), rng.range(-0.25, 0.25));
                 let p = cluster.center + (right * i as f32 + forward * j as f32) * TREE_SPACING + jitter;
                 let edge = cluster.radius * (0.7 + 0.6 * shape.at(p));
-                if p.distance(cluster.center) > edge {
+                if p.distance(cluster.center) > edge || self.idx_at(p).is_some_and(|i| open[i]) {
                     continue;
                 }
                 let kind = if rng.chance(oak_share) { self.ids.oak } else { self.ids.pine };
@@ -276,8 +279,9 @@ impl Gen<'_> {
     }
 
     /// Bramble thicket on open grass among the trees of `clusters` (never
-    /// under a node: nodes only stand on buildable ground).
-    fn paint_thickets(&mut self, clusters: &[Blob], rng: &mut SimRng) {
+    /// under a node: nodes only stand on buildable ground), off the cells
+    /// kept `open` ([`Gen::keep_open`]).
+    fn paint_thickets(&mut self, clusters: &[Blob], open: &[bool], rng: &mut SimRng) {
         let mut covered = vec![false; self.terrain.len()];
         for n in &self.nodes {
             let obb = Obb::from_size(n.pos, self.data.node(n.kind).size, n.yaw);
@@ -287,7 +291,7 @@ impl Gen<'_> {
         let (grass, thicket) = (self.ids.grass, self.ids.thicket);
         for c in clusters {
             self.paint_disc(c.center, c.radius + 2.0, |cell| {
-                (!cell.reserved && cell.terrain == grass && !covered[cell.index] && noise.at(cell.center) > 0.55).then_some(thicket)
+                (!cell.reserved && cell.terrain == grass && !covered[cell.index] && !open[cell.index] && noise.at(cell.center) > 0.55).then_some(thicket)
             });
         }
     }

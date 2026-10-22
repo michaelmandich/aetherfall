@@ -644,6 +644,125 @@ fn every_map_has_its_terrain_features_in_the_wilds() {
     }
 }
 
+/// Approximate distance (3-4 chamfer, in cells) from every cell to the
+/// nearest cell where `mask` is true.
+fn chamfer(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
+    let mut d: Vec<f32> = mask.iter().map(|m| if *m { 0.0 } else { f32::INFINITY }).collect();
+    let (a, b) = (1.0, std::f32::consts::SQRT_2);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let mut v = d[i];
+            if x > 0 {
+                v = v.min(d[i - 1] + a);
+            }
+            if y > 0 {
+                v = v.min(d[i - w] + a);
+                if x > 0 {
+                    v = v.min(d[i - w - 1] + b);
+                }
+                if x + 1 < w {
+                    v = v.min(d[i - w + 1] + b);
+                }
+            }
+            d[i] = v;
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let i = y * w + x;
+            let mut v = d[i];
+            if x + 1 < w {
+                v = v.min(d[i + 1] + a);
+            }
+            if y + 1 < h {
+                v = v.min(d[i + w] + a);
+                if x + 1 < w {
+                    v = v.min(d[i + w + 1] + b);
+                }
+                if x > 0 {
+                    v = v.min(d[i + w - 1] + b);
+                }
+            }
+            d[i] = v;
+        }
+    }
+    d
+}
+
+#[test]
+fn mountains_are_broad_ranges_that_keep_the_play_open() {
+    let data = test_data();
+    let (mountain, marsh, thicket) = (data.terrain_id("mountain").unwrap(), data.terrain_id("marsh").unwrap(), data.terrain_id("thicket").unwrap());
+    let vent = data.node_id("aether_vent").unwrap();
+    let wood = data.resource_id("wood").unwrap();
+    let mut shares: Vec<(MapSize, f32)> = Vec::new();
+    for case in sample() {
+        let map = &case.map;
+        let f = &map.features;
+        let at = case.at();
+        let w = map.width as usize;
+        let on_land = |p: Vec2| p.cmpge(f.land_min).all() && p.cmple(f.land_max).all();
+        let land = cells(map).filter(|(p, _)| on_land(*p)).count();
+        let rock = cells(map).filter(|(p, t)| *t == mountain && on_land(*p)).count();
+        let share = rock as f32 * 100.0 / land as f32;
+        shares.push((f.options.size, share));
+        if f.options.size != MapSize::Small {
+            assert!((1.0..=14.0).contains(&share), "{share:.1}% mountain ({at})");
+            // Broad enough somewhere for the renderer's real peaks.
+            assert!(f.mountains.iter().any(|m| m.spine.len() > 1 && m.half_widths.iter().any(|h| *h >= 9.0)), "no broad range ({at})");
+        }
+        // The contested spots (at the Shattered Fall, its spot craters) and
+        // the main site, which keep their lanes open.
+        let main = f.sites[0];
+        let spots: Vec<Vec2> = if f.options.site == SiteKind::Shattered {
+            f.sites[1..].iter().map(|s| s.center).collect()
+        } else {
+            map.nodes.iter().filter(|n| n.kind == vent && f.sites.iter().all(|s| n.pos.distance(s.center) >= s.radius)).map(|n| n.pos).collect()
+        };
+        let mut lanes: Vec<(Vec2, Vec2)> = Vec::new();
+        for s in &spots {
+            lanes.push((*s, main.center));
+            let mut near: Vec<Vec2> = map.starts.clone();
+            near.sort_by(|a, b| a.distance(*s).total_cmp(&b.distance(*s)));
+            lanes.extend(near.iter().take(2).map(|st| (*st, *s)));
+        }
+        for (p, t) in cells(map) {
+            if t != mountain || (f.options.site == SiteKind::Spire && p.distance(main.center) < main.radius) {
+                continue;
+            }
+            for s in &map.starts {
+                assert!(p.distance(*s) > START_AREA_RADIUS, "mountain at {p} in the start area of {s} ({at})");
+                assert!(af_geom::point_segment_distance(p, *s, main.center) > CORRIDOR_HALF_WIDTH + 1.0, "mountain at {p} in a corridor ({at})");
+            }
+            assert!(spots.iter().all(|s| p.distance(*s) > 20.0), "mountain at {p} by a contested spot ({at})");
+            // Lanes are kept 6 m either side (the spot found by its vent,
+            // which may sit a little off).
+            assert!(lanes.iter().all(|(a, b)| af_geom::point_segment_distance(p, *a, *b) > 3.5), "mountain at {p} across a lane ({at})");
+        }
+        // Woods, thicket and marsh keep off the mountains' feet, so they
+        // never close what the mountains leave open.
+        let near_rock = chamfer(&map.terrain.iter().map(|t| *t == mountain).collect::<Vec<_>>(), w, map.height as usize);
+        let rock_at = |p: Vec2| near_rock[p.y as usize * w + p.x as usize];
+        for (p, t) in cells(map) {
+            if t == marsh || t == thicket {
+                assert!(rock_at(p) >= 8.0, "{} at {p}, {:.1} m from a mountain ({at})", data.terrain_def(t).id, rock_at(p));
+            }
+        }
+        for n in map.nodes.iter().filter(|n| data.node(n.kind).resource_id == wood && n.kind != data.node_id("palm").unwrap()) {
+            assert!(rock_at(n.pos) >= 7.5, "a tree at {} by a mountain ({at})", n.pos);
+        }
+    }
+    // A sensible amount of mountain: a few percent of the land on Small,
+    // about 4-8 % on Medium and larger.
+    for size in MapSize::ALL {
+        let of: Vec<f32> = shares.iter().filter(|(s, _)| *s == size).map(|(_, v)| *v).collect();
+        let mean = of.iter().sum::<f32>() / of.len() as f32;
+        let band = if size == MapSize::Small { 0.5..=4.5 } else { 3.5..=9.0 };
+        assert!(band.contains(&mean), "{} maps average {mean:.1}% mountain", size.name());
+    }
+}
+
 #[test]
 fn mountains_are_impassable_to_every_ground_unit() {
     let data = test_data();

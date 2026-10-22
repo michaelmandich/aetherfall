@@ -154,7 +154,8 @@ impl Gen<'_> {
     }
 
     /// Marsh patches on grass within [`MARSH_REACH`] cells of a river or a
-    /// lake (never of the sea); fewer the drier the map.
+    /// lake (never of the sea, nor on the cells kept open by
+    /// [`Gen::keep_open`]); fewer the drier the map.
     pub(super) fn paint_marsh_near_water(&mut self, rng: &mut SimRng) {
         let noise = Noise::new(rng, self.size, 8.0);
         let threshold = match self.layout.options.water {
@@ -162,6 +163,7 @@ impl Gen<'_> {
             WaterLevel::Ponds => 0.59,
             _ => 0.55,
         };
+        let open = self.keep_open();
         let cells = self.terrain.len();
         let mut dist = vec![u8::MAX; cells];
         let mut queue = VecDeque::new();
@@ -187,7 +189,7 @@ impl Gen<'_> {
         }
         for (i, d) in dist.into_iter().enumerate() {
             let center = cell_center((i % w) as i32, (i / w) as i32);
-            if (1..=MARSH_REACH).contains(&d) && !self.reserved(i) && !self.coast[i] && self.terrain[i] == self.ids.grass && noise.at(center) > threshold {
+            if (1..=MARSH_REACH).contains(&d) && !self.reserved(i) && !self.coast[i] && self.terrain[i] == self.ids.grass && !open[i] && noise.at(center) > threshold {
                 self.terrain[i] = self.ids.marsh;
             }
         }

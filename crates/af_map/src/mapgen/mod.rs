@@ -16,8 +16,8 @@
 //!    the shared start-resource template, and the reserved zones (start
 //!    areas, corridors, spots, sites) that random features must not touch.
 //! 2. Terrain (`terrain.rs`): coasts (`water.rs`), site rims and floors,
-//!    rivers with fords (`rivers.rs`), highlands and ridges, dunes,
-//!    mountains (`mountains.rs`), lakes and marsh (`water.rs`), the main
+//!    rivers with fords (`rivers.rs`), dunes, mountains (`mountains.rs`),
+//!    highlands and ridges, lakes and marsh (`water.rs`), the main
 //!    site's surroundings, start-area sand patches and clear start discs.
 //! 3. Start halls, start resources (one template rotated per start, so every
 //!    player gets the same distances), extra start buildings, start units.
@@ -313,13 +313,14 @@ pub(crate) enum Hold {
 }
 
 /// Distance from every 2 m cell to the nearest reserved cell, the nearest
-/// painted (non-grass) cell and the nearest water, rock or sand, so
-/// [`Gen::room`] costs O(1).
+/// painted (non-grass) cell, the nearest water, rock or sand and the
+/// nearest mountain, so [`Gen::room`] costs O(1).
 pub(crate) struct RoomField {
     w: usize,
     reserved: Vec<f32>,
     painted: Vec<f32>,
     blocking: Vec<f32>,
+    mountain: Vec<f32>,
 }
 
 impl RoomField {
@@ -328,6 +329,7 @@ impl RoomField {
         let mut reserved = vec![false; w * w];
         let mut painted = vec![false; w * w];
         let mut blocking = vec![false; w * w];
+        let mut mountain = vec![false; w * w];
         let ids = &g.ids;
         let per = ROOM_CELL as usize;
         for y in 0..g.w as usize {
@@ -338,22 +340,22 @@ impl RoomField {
                 reserved[c] |= g.hold[i] != Hold::Free;
                 painted[c] |= t != ids.grass;
                 blocking[c] |= [ids.deep, ids.shallow, ids.ford, ids.ocean, ids.mountain, ids.cliff, ids.sand].contains(&t);
+                mountain[c] |= t == ids.mountain;
             }
         }
         // Distances between 2 m cell centres; a blocked 2 m cell may reach
         // a metre closer than its centre.
         let metres = |mask: &[bool]| field::distance_field(mask, w, w).into_iter().map(|d| d * ROOM_CELL - 1.0).collect();
-        RoomField { w, reserved: metres(&reserved), painted: metres(&painted), blocking: metres(&blocking) }
+        RoomField { w, reserved: metres(&reserved), painted: metres(&painted), blocking: metres(&blocking), mountain: metres(&mountain) }
     }
 
     /// (distance to reserved ground, to painted ground, to water, rock or
-    /// sand)
-    /// at `p`.
-    fn at(&self, p: Vec2) -> (f32, f32, f32) {
+    /// sand, to mountains) at `p`.
+    fn at(&self, p: Vec2) -> (f32, f32, f32, f32) {
         let cx = ((p.x / ROOM_CELL).floor() as i32).clamp(0, self.w as i32 - 1) as usize;
         let cy = ((p.y / ROOM_CELL).floor() as i32).clamp(0, self.w as i32 - 1) as usize;
         let i = cy * self.w + cx;
-        (self.reserved[i], self.painted[i], self.blocking[i])
+        (self.reserved[i], self.painted[i], self.blocking[i], self.mountain[i])
     }
 }
 
@@ -594,11 +596,13 @@ impl<'a> Gen<'a> {
     }
 
     /// How far `p` is from everything big that random features must avoid
-    /// (negative: inside something): the map edge, reserved ground, and
-    /// (by [`FEATURE_SPACING`]) every painted feature, water and coast.
+    /// (negative: inside something): the map edge, reserved ground,
+    /// (by [`FEATURE_SPACING`]) every painted feature, water and coast, and
+    /// (by [`mountains::WALK_GAP`], room for the widest ground unit) every
+    /// mountain.
     pub fn room(&self, p: Vec2) -> f32 {
         let (edge, reserved, painted, _) = self.room_parts(p);
-        let mut room = (edge - 2.0).min(reserved).min(painted - FEATURE_SPACING);
+        let mut room = (edge - 2.0).min(reserved).min(painted - FEATURE_SPACING).min(self.mountain_distance(p) - mountains::WALK_GAP);
         for f in &self.features {
             room = room.min(p.distance(f.center) - f.radius - FEATURE_SPACING);
         }
@@ -611,8 +615,21 @@ impl<'a> Gen<'a> {
     pub fn room_parts(&self, p: Vec2) -> (f32, f32, f32, f32) {
         let edge = p.x.min(p.y).min(self.size - p.x).min(self.size - p.y);
         let mut cache = self.room_field.borrow_mut();
-        let (reserved, painted, blocking) = cache.get_or_insert_with(|| RoomField::new(self)).at(p);
+        let (reserved, painted, blocking, _) = cache.get_or_insert_with(|| RoomField::new(self)).at(p);
         (edge, reserved, painted, blocking)
+    }
+
+    /// Distance (metres between cell centres) from every cell to the
+    /// nearest mountain cell.
+    pub(crate) fn mountain_field(&self) -> Vec<f32> {
+        let mask: Vec<bool> = self.terrain.iter().map(|t| *t == self.ids.mountain).collect();
+        field::distance_field(&mask, self.w as usize, self.w as usize)
+    }
+
+    /// Distance from `p` to the nearest mountain cell, to within a metre.
+    pub(crate) fn mountain_distance(&self, p: Vec2) -> f32 {
+        let mut cache = self.room_field.borrow_mut();
+        cache.get_or_insert_with(|| RoomField::new(self)).at(p).3
     }
 
     /// Where a disc feature of `radius` goes, between `r_min` and `r_max`

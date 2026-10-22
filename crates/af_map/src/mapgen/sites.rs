@@ -476,9 +476,10 @@ impl Gen<'_> {
         let spots: Vec<(Vec2, f32)> = self.layout.spots.iter().zip(&self.layout.spot_radius).map(|(s, r)| (*s, r + SPOT_APRON)).collect();
         // A band 12 m wide beyond the site's reserved ground.
         let band = main.reserve_margin() + SURROUNDINGS;
+        let open = self.keep_open();
         self.paint_disc(main.center, main.outer() + band, |cell| {
             let by_spot = spots.iter().any(|(s, r)| cell.center.distance_squared(*s) < r * r);
-            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band || by_spot {
+            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band || by_spot || open[cell.index] {
                 None
             } else if thicket_noise.at(cell.center) > 0.66 {
                 Some(thicket)

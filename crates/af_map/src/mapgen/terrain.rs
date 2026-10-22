@@ -2,7 +2,7 @@
 //! plateaus, dune regions and the start areas (coasts, lakes and marsh are
 //! in `water.rs`, rivers in `rivers.rs`, mountains in `mountains.rs`, the
 //! meteor sites in `sites.rs`). Random features only paint cells outside
-//! reserved zones.
+//! reserved zones, and keep room for the widest ground unit from mountains.
 
 use std::f32::consts::PI;
 
@@ -105,9 +105,13 @@ impl Gen<'_> {
         self.paint_coasts(&mut rng.fork());
         self.paint_sites(&mut rng.fork());
         self.paint_rivers(&mut rng.fork());
-        self.paint_cliffs(&mut rng.fork());
-        self.paint_sand_regions(&mut rng.fork());
+        // The dunes (small, and on every map) go first, then the mountains
+        // (the big obstacle) take the room, and the highlands and ridges
+        // what is left; each keeps its own random stream.
+        let (mut cliffs, mut dunes) = (rng.fork(), rng.fork());
+        self.paint_sand_regions(&mut dunes);
         self.paint_mountains(&mut rng.fork());
+        self.paint_cliffs(&mut cliffs);
         self.paint_lakes(&mut rng.fork());
         self.paint_marsh_near_water(&mut rng.fork());
         self.paint_site_surroundings(&mut rng.fork());
