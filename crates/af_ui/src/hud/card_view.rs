@@ -157,6 +157,8 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                     b.spawn((text("", FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(COUNT_PLAQUE, 1), SlotCount(i)));
                     b.spawn((
                         text("", FONT_SMALL, TEXT),
+                        // Crisp on the lighter woods (golden oak, pale ash).
+                        theme::text_shadow(),
                         TextLayout::justify(Justify::Center),
                         // Three lines fit under the hotkey row. The lines are
                         // broken by `rebuild_card` (see `theme::fit_label`).
@@ -446,7 +448,9 @@ fn refresh_card(
             Err(r) if r.is_soft() => Usable::Soon,
             Err(_) => Usable::No,
         };
-        skin_look.set_if_neq(SkinLook { usable, active: look.active, accent: None });
+        // The selection's stance glows steadily; an armed button pulses.
+        let accent = matches!(action, CardAction::Stance(_)).then_some(theme::HIGHLIGHT);
+        skin_look.set_if_neq(SkinLook { usable, active: look.active, accent });
         if skinned {
             // The skin draws it (`skin::skin_looks`).
             continue;

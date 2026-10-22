@@ -35,9 +35,11 @@ use crate::theme::HIGHLIGHT;
 /// The skin's folder under the asset root.
 pub const SKIN_FOLDER: &str = "ui";
 
-/// Draw order of a panel's frame among the panel's children: above its
-/// content, so the metal holds the planks and its shadow falls on them.
-const FRAME_Z: i32 = 10;
+/// Draw order of a panel's frame among the panel's children: under its
+/// content (and over the panel's own planks). The frame's band fits in the
+/// panels' padding, but its corner plates reach past it, and drawn on top
+/// they would cover the first letter of a title or a corner button.
+const FRAME_Z: i32 = -2;
 
 /// The family a button belongs to: each has its own metal and wood.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -169,8 +171,10 @@ pub struct SkinLook {
     /// Armed or chosen: the mode this button started, the selection's
     /// stance, the chosen faction.
     pub active: bool,
-    /// Colour of a lasting choice (the chosen faction): a steady glow in
-    /// it. Without one, an active button is armed: a pulsing gold glow.
+    /// Colour of a lasting choice (the chosen faction, the selection's
+    /// stance): a steady glow in it. Without one, an active button is
+    /// armed (a targeted order or a building waiting for its click): a
+    /// pulsing gold glow.
     pub accent: Option<Color>,
 }
 
@@ -352,8 +356,9 @@ type Unskinned<'w, 's> = Query<
     (Or<(With<SkinPanel>, With<SkinButton>)>, Without<Skinned>),
 >;
 
-/// Dresses every marked node not dressed yet: its image, a frame over a
-/// panel, a glow over a button, the shine of a button with press bursts.
+/// Dresses every marked node not dressed yet: its image, a panel's frame
+/// (under its content), a button's glow, the shine of a button with press
+/// bursts.
 pub(crate) fn apply_skin(mut commands: Commands, skin: Res<UiSkin>, mut nodes: Unskinned) {
     for (e, mut node, panel, button, glows, press, bg, border) in &mut nodes {
         // The decorations cover the border box: clip only outside it.

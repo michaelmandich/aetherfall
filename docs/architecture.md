@@ -77,6 +77,51 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 `CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
 
+### UI skin and press feedback
+
+The menu and HUD are Bevy UI nodes dressed in a painted, worn-ornate
+medieval skin (`af_ui::skin`); one look serves every age for now.
+
+* **Textures** (`assets/ui/`, painted at 2x: corners are drawn at half
+  size): `panel_wood.png` (tiled planks behind every panel),
+  `panel_frame.png` / `bar_frame.png` (9-sliced metal frames for boxes and
+  for strips under about 80 px tall), `button_<family>.png` for the ten
+  button families (`ButtonSkin`: command, stance, economy, military,
+  defence, train, research, upgrade, nav, plain), `glow.png` (hover, armed
+  and press light), and the press effects' `burst_ring.png`, `spark.png`
+  and `shine.png`. `UiSkin::load` reads a folder of the asset root, so a
+  per-age skin later is another folder with the same file names.
+* **Applying it:** spawn functions only add markers (`SkinPanel::Panel` /
+  `Bar`, `SkinButton(family)`, `SkinGlow` for the faction cards). The
+  textures load in the plugin's `build` (the first state's `OnEnter`
+  runs before `Startup`); once all are in, `apply_skin` gives each marked
+  node its image and decoration children (a frame under the panel's
+  content, a glow over a button's wood and under its label, the shine of
+  a command card slot), all `Pickable::IGNORE`, and clears the node's flat
+  colours. Until then, or for good when a texture is missing (the headless
+  tests have no PNG loader), the flat `theme` colours stay.
+* **Command card:** a slot wears its action's family (a build page button
+  and its buildings the page's colours, else the action group's), with
+  its hotkey and queued count on the frame's two corner plaques.
+  `refresh_card` writes `SkinLook` (usable / soon / not, armed) every
+  frame; `skin_looks` turns look, hover and press into the button's tint
+  and glow (an armed button pulses gold; the selection's stance glows
+  steadily, the chosen faction in its colour). `theme::shade_buttons` and the card's flat colours leave
+  skinned nodes alone.
+* **Presses** (`af_ui::fx`, real time, so they play while paused): the
+  command card records each press, by mouse or hotkey, in `card_input`.
+  Build, train, research and upgrade presses squash the button to 0.9 and
+  spring it back past full size (a damped spring, still by 0.35 s), flash
+  it gold, sweep a shine across it and throw a ring and sparks from its
+  centre (on a root node over the HUD, at most 64 particles alive); other
+  orders get a lighter squash and flash; a refused press shakes and
+  flashes red. Plain buttons squash when clicked. Scale and shake are
+  `UiTransform`s, so nothing is laid out again, and nothing runs for a
+  button at rest.
+* **Checking it:** `cargo run -p af_ui --example ui_preview [-- hud ...]
+  --screenshot shot.png`, or the game with `--script` to catch a press
+  part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`).
+
 ## Visual models
 
 Units listed in the visual registry are drawn with animated glTF models,

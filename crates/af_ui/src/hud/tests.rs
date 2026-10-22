@@ -939,8 +939,7 @@ fn the_skin_dresses_panels_and_buttons_by_family() {
     assert!(panels.len() >= 6, "{}", panels.len());
     for (panel, children) in panels {
         assert!(world.get::<ImageNode>(panel).is_some());
-        let frame = children.iter().find(|c| world.get::<ZIndex>(**c).is_some_and(|z| z.0 > 0)).copied().unwrap();
-        assert!(world.get::<ImageNode>(frame).is_some() && world.get::<Pickable>(frame) == Some(&Pickable::IGNORE));
+        assert!(children.iter().any(|c| world.get::<ImageNode>(*c).is_some() && world.get::<Pickable>(*c) == Some(&Pickable::IGNORE)), "{panel:?} has no frame");
         assert_eq!(world.get::<BackgroundColor>(panel).map(|b| b.0), Some(Color::NONE), "the flat fill is gone");
     }
     // Buttons wear their family; the build page buttons each their own.

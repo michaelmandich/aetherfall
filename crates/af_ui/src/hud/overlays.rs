@@ -112,10 +112,8 @@ const STATS_NAME_CHARS: usize = 30;
 /// Which columns hold numbers (right-aligned); the rest are words.
 const STATS_NUMERIC: [bool; 10] = [false, false, true, false, true, true, true, true, true, true];
 const STATS_COLUMN_GAP: f32 = 18.0;
-/// Padding of the game-over panel: the table keeps clear of its border
-/// and the skin's frame (Bevy lays the table out a little wider than the
-/// panel measures it, so it spills a few px into this padding).
-const GAME_OVER_PADDING: f32 = 32.0;
+/// Padding of the game-over panel (the table keeps clear of its border).
+const GAME_OVER_PADDING: f32 = 24.0;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<GameOverState>()
