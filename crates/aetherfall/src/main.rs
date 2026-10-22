@@ -27,8 +27,9 @@
 //!   --rivers N              rivers: 1 | 2 | random (default: one or two)
 //!   --site KIND             meteor site: crater | shattered | lake | scar | spire
 //!                           | random (default)
-//!   --map-size M            map side in metres instead of --map (default: by
-//!                           player count and --map)
+//!   --map-size M            land side in metres instead of --map (sea bands
+//!                           are added beyond it; default: by player count
+//!                           and --map)
 //!   --no-fog / --reveal     fog of war off / map revealed
 //!   --start-age N           start every player in age N (debug)
 //!   --res-mult X            multiply starting resources (debug)

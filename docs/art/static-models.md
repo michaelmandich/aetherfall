@@ -153,13 +153,12 @@ Engine details (`af_render::registry`, `af_render::statics`):
 - Fitting uses the manifest's `min`/`max`. The engine warns when the
   meshes (the `Team_banner` node left out, as the bounds leave it out)
   stray from them by more than 5 cm plus 5 % of the model's size.
-- A model stands on the highest drawn flat terrain that its type's box
-  footprint overlaps (`Ground::model_lift`; a cell counts once the
-  footprint reaches 2 cm into it). The entity itself stays on the ground
-  units walk on (y = 0 on grass and sand), so picking and aiming are
-  unchanged. Fog memory and felled trees stand on the same spot.
-- Construction buries the whole model at 0 %, the banner and the lift onto
-  sand included, so the flag rises first; the foundation's pad and
+- A model stands where its entity does: buildings and nodes only stand on
+  buildable ground, which the terrain draws flat at the ground units walk
+  on (sand and dunes are paint, not a raised top), so picking and aiming
+  are unchanged. Fog memory and felled trees stand on the same spot.
+- Construction buries the whole model at 0 %, the banner included, so the
+  flag rises first; the foundation's pad and
   scaffold stay. A foundation drawn from fog memory rises as far as it was
   seen.
 - Weapon boxes and shield shells stay boxes on a modelled building, and

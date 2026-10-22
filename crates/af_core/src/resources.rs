@@ -250,7 +250,8 @@ pub struct PlayerSetup {
 #[derive(Resource, Clone, Debug)]
 pub struct MatchSetup {
     pub seed: u64,
-    /// Square map side in metres; 0 = pick from player count.
+    /// Side of the land square in metres (Coast and Seas add ocean bands
+    /// beyond it); 0 = from `MapOptions::size` and the player count.
     pub map_size: f32,
     pub players: Vec<PlayerSetup>,
     /// Index into `players` of the local human, or None to spectate.

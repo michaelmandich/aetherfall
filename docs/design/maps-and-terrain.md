@@ -61,7 +61,7 @@ playable land is the same size at every water level.
 
 ## 2. Terrain types
 
-Three new terrain types are appended to `assets/data/core/terrain.ron`
+Four new terrain types are appended to `assets/data/core/terrain.ron`
 (append only: the numeric ids are list positions):
 
 | terrain | name | height m | build | Foot | Mounted | Wheeled | Tracked | Hover | Amphibious | Climber |
@@ -301,7 +301,7 @@ simulation is still 2D and nothing in it reads heights.
 ### 6.1 Ground
 
 * A **height field** with a vertex every metre (cell corners), built once per
-  match into chunks of 32 x 32 m, each one mesh with one terrain material.
+  match into chunks of 64 x 64 cells (1 m each), each one mesh with one terrain material.
   Every walkable cell is drawn at exactly `ground_height` (units, buildings
   and markers stand where they always did); banks, beds and slopes happen
   inside unwalkable cells:
