@@ -74,5 +74,51 @@
             speed_by: [],
             buildable: false,
         ),
+        // Appended for the map overhaul (docs/design/maps-and-terrain.md):
+        // the ids above keep their positions.
+        (
+            id: "mountain",
+            name: "Mountains",
+            color: (0.56, 0.56, 0.6),
+            height: 9.0,
+            // Only flyers (always allowed) cross mountains; speed is unused.
+            passable: [],
+            speed: 1.0,
+            speed_by: [],
+            buildable: false,
+        ),
+        (
+            id: "ford",
+            name: "Ford",
+            color: (0.42, 0.72, 0.84),
+            height: -0.2,
+            passable: [Foot, Mounted, Wheeled, Tracked, Hover, Amphibious],
+            speed: 0.7,
+            speed_by: [(Wheeled, 0.6), (Hover, 0.9), (Amphibious, 0.9)],
+            buildable: false,
+        ),
+        (
+            id: "scorched",
+            name: "Starfall Scar",
+            color: (0.3, 0.27, 0.3),
+            height: 0.0,
+            passable: [Foot, Mounted, Wheeled, Tracked, Hover],
+            speed: 1.0,
+            speed_by: [],
+            buildable: true,
+        ),
+        // Open sea beyond the coast: deep water at the map's edge. Kept apart
+        // from deep_water so lakes and rivers stay small bodies and marsh
+        // never lines a coast.
+        (
+            id: "ocean",
+            name: "Open Sea",
+            color: (0.09, 0.22, 0.45),
+            height: -0.6,
+            passable: [Hover, Amphibious],
+            speed: 0.7,
+            speed_by: [(Amphibious, 0.7), (Hover, 0.8)],
+            buildable: false,
+        ),
     ],
 )
