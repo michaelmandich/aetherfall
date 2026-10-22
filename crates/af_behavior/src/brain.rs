@@ -57,9 +57,13 @@ pub struct Brain {
     /// The patrol leg being walked: from point `patrol_leg` of the route
     /// (`af_core::ext::behavior::patrol_points`) to the next, the last
     /// leading back to the first. 0 (a to b) when the order starts; it goes
-    /// with the task when the front order changes, and points shift-queued
-    /// onto the route leave it be (the loop takes them in turn).
+    /// with the task when the front order changes.
     pub(crate) patrol_leg: usize,
+    /// The point that leg leads to. Points shift-queued onto a running
+    /// patrol join the loop and move the legs after them along; the unit
+    /// then takes the leg that still ends here, so it walks on to the same
+    /// point rather than turning round.
+    pub(crate) patrol_to: Option<Vec2>,
     /// Path failures in a row for the current order.
     pub(crate) failures: u8,
     /// Per-unit tick offset so periodic scans spread over ticks.
