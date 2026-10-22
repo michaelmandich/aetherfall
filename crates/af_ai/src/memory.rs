@@ -293,8 +293,6 @@ pub struct AiMemory {
 }
 
 impl AiMemory {
-    /// Drop what is stale: resolved or expired placements, orders to dead
-    /// entities, timed-out cooldowns.
     /// Route distances for workers from `home` (see `AiView::route_field`):
     /// one search, kept while home and the regions stay. `None` without
     /// regions.
@@ -306,6 +304,8 @@ impl AiMemory {
         self.home_field.as_ref().map(|(_, _, f)| f.clone())
     }
 
+    /// Drop what is stale: resolved or expired placements, orders to dead
+    /// entities, timed-out cooldowns.
     pub fn prune(&mut self, view: &AiView) {
         let now = view.time;
         let snap = view.snap;
