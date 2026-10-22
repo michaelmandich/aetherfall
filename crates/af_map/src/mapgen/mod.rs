@@ -16,8 +16,8 @@
 //!    the shared start-resource template, and the reserved zones (start
 //!    areas, corridors, spots, sites) that random features must not touch.
 //! 2. Terrain (`terrain.rs`): coasts (`water.rs`), site rims and floors,
-//!    rivers with fords (`rivers.rs`), highlands and ridges, dunes,
-//!    mountains (`mountains.rs`), lakes and marsh (`water.rs`), the main
+//!    rivers with fords (`rivers.rs`), dunes, mountains (`mountains.rs`),
+//!    highlands and ridges, lakes and marsh (`water.rs`), the main
 //!    site's surroundings, start-area sand patches and clear start discs.
 //! 3. Start halls, start resources (one template rotated per start, so every
 //!    player gets the same distances), extra start buildings, start units.
@@ -41,7 +41,7 @@ mod water;
 
 use std::cell::RefCell;
 
-use af_core::ext::map::{MapFeatures, MapOptions, MapSize, MountainRange, RiverLine};
+use af_core::ext::map::{MapFeatures, MapOptions, MapSize, MountainRange, ResolvedMapOptions, RiverLine};
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -183,6 +183,17 @@ fn land_side_of(setup: &MatchSetup, size: MapSize) -> f32 {
     }
 }
 
+/// The size whose land side for `players` is nearest `side` (by ratio):
+/// what a `MatchSetup::map_size` override plays and is published as, so
+/// feature counts and the HUD follow the land actually generated.
+pub fn size_for_side(side: f32, players: usize) -> MapSize {
+    let off = |s: MapSize| {
+        let r = side / s.land_side(players);
+        r.max(1.0 / r)
+    };
+    MapSize::ALL.into_iter().min_by(|a, b| off(*a).total_cmp(&off(*b))).expect("four sizes")
+}
+
 /// A nav grid of `width` x `height` 1 m cells with every terrain type's
 /// passability and buildability registered from `data`.
 pub(crate) fn terrain_nav(data: &GameData, width: u32, height: u32, terrain: &[TerrainId]) -> NavGrid {
@@ -313,13 +324,14 @@ pub(crate) enum Hold {
 }
 
 /// Distance from every 2 m cell to the nearest reserved cell, the nearest
-/// painted (non-grass) cell and the nearest water, rock or sand, so
-/// [`Gen::room`] costs O(1).
+/// painted (non-grass) cell, the nearest water, rock or sand and the
+/// nearest mountain, so [`Gen::room`] costs O(1).
 pub(crate) struct RoomField {
     w: usize,
     reserved: Vec<f32>,
     painted: Vec<f32>,
     blocking: Vec<f32>,
+    mountain: Vec<f32>,
 }
 
 impl RoomField {
@@ -328,6 +340,7 @@ impl RoomField {
         let mut reserved = vec![false; w * w];
         let mut painted = vec![false; w * w];
         let mut blocking = vec![false; w * w];
+        let mut mountain = vec![false; w * w];
         let ids = &g.ids;
         let per = ROOM_CELL as usize;
         for y in 0..g.w as usize {
@@ -338,22 +351,22 @@ impl RoomField {
                 reserved[c] |= g.hold[i] != Hold::Free;
                 painted[c] |= t != ids.grass;
                 blocking[c] |= [ids.deep, ids.shallow, ids.ford, ids.ocean, ids.mountain, ids.cliff, ids.sand].contains(&t);
+                mountain[c] |= t == ids.mountain;
             }
         }
         // Distances between 2 m cell centres; a blocked 2 m cell may reach
         // a metre closer than its centre.
         let metres = |mask: &[bool]| field::distance_field(mask, w, w).into_iter().map(|d| d * ROOM_CELL - 1.0).collect();
-        RoomField { w, reserved: metres(&reserved), painted: metres(&painted), blocking: metres(&blocking) }
+        RoomField { w, reserved: metres(&reserved), painted: metres(&painted), blocking: metres(&blocking), mountain: metres(&mountain) }
     }
 
     /// (distance to reserved ground, to painted ground, to water, rock or
-    /// sand)
-    /// at `p`.
-    fn at(&self, p: Vec2) -> (f32, f32, f32) {
+    /// sand, to mountains) at `p`.
+    fn at(&self, p: Vec2) -> (f32, f32, f32, f32) {
         let cx = ((p.x / ROOM_CELL).floor() as i32).clamp(0, self.w as i32 - 1) as usize;
         let cy = ((p.y / ROOM_CELL).floor() as i32).clamp(0, self.w as i32 - 1) as usize;
         let i = cy * self.w + cx;
-        (self.reserved[i], self.painted[i], self.blocking[i])
+        (self.reserved[i], self.painted[i], self.blocking[i], self.mountain[i])
     }
 }
 
@@ -402,10 +415,16 @@ pub(crate) struct Gen<'a> {
 impl<'a> Gen<'a> {
     /// Every generation phase in order (see the module docs).
     fn run(data: &'a GameData, setup: &MatchSetup, options: &MapOptions) -> Gen<'a> {
-        let options = resolve_map_options(options, setup.seed);
+        let mut options = resolve_map_options(options, setup.seed);
+        let side = land_side_of(setup, options.size);
+        if setup.map_size > 0.0 {
+            // The override sizes the land; the size nearest it decides the
+            // feature counts and is what the map is published as.
+            options.size = size_for_side(side, setup.players.len());
+        }
         let mut rng = SimRng::new(setup.seed ^ MAP_SEED_SALT);
         let ids = Ids::new(data);
-        let land = Land::plan(land_side_of(setup, options.size), options.water, &mut rng.fork());
+        let land = Land::plan(side, options.water, &mut rng.fork());
         let layout = Layout::new(data, &ids, setup.players.len(), land, options, &mut rng.fork());
         let mut g = Gen::new(data, ids, layout);
         g.paint_terrain(&mut rng.fork());
@@ -594,11 +613,13 @@ impl<'a> Gen<'a> {
     }
 
     /// How far `p` is from everything big that random features must avoid
-    /// (negative: inside something): the map edge, reserved ground, and
-    /// (by [`FEATURE_SPACING`]) every painted feature, water and coast.
+    /// (negative: inside something): the map edge, reserved ground,
+    /// (by [`FEATURE_SPACING`]) every painted feature, water and coast, and
+    /// (by [`mountains::WALK_GAP`], room for the widest ground unit) every
+    /// mountain.
     pub fn room(&self, p: Vec2) -> f32 {
         let (edge, reserved, painted, _) = self.room_parts(p);
-        let mut room = (edge - 2.0).min(reserved).min(painted - FEATURE_SPACING);
+        let mut room = (edge - 2.0).min(reserved).min(painted - FEATURE_SPACING).min(self.mountain_distance(p) - mountains::WALK_GAP);
         for f in &self.features {
             room = room.min(p.distance(f.center) - f.radius - FEATURE_SPACING);
         }
@@ -611,8 +632,21 @@ impl<'a> Gen<'a> {
     pub fn room_parts(&self, p: Vec2) -> (f32, f32, f32, f32) {
         let edge = p.x.min(p.y).min(self.size - p.x).min(self.size - p.y);
         let mut cache = self.room_field.borrow_mut();
-        let (reserved, painted, blocking) = cache.get_or_insert_with(|| RoomField::new(self)).at(p);
+        let (reserved, painted, blocking, _) = cache.get_or_insert_with(|| RoomField::new(self)).at(p);
         (edge, reserved, painted, blocking)
+    }
+
+    /// Distance (metres between cell centres) from every cell to the
+    /// nearest mountain cell.
+    pub(crate) fn mountain_field(&self) -> Vec<f32> {
+        let mask: Vec<bool> = self.terrain.iter().map(|t| *t == self.ids.mountain).collect();
+        field::distance_field(&mask, self.w as usize, self.w as usize)
+    }
+
+    /// Distance from `p` to the nearest mountain cell, to within a metre.
+    pub(crate) fn mountain_distance(&self, p: Vec2) -> f32 {
+        let mut cache = self.room_field.borrow_mut();
+        cache.get_or_insert_with(|| RoomField::new(self)).at(p).3
     }
 
     /// Where a disc feature of `radius` goes, between `r_min` and `r_max`
@@ -671,11 +705,13 @@ impl<'a> Gen<'a> {
         Gen::new(data, ids, layout)
     }
 
-    /// What af_map publishes about the map besides its grid.
+    /// What af_map publishes about the map besides its grid: the options as
+    /// played (the size a `map_size` override plays as, and the rivers
+    /// actually laid, should one find no course).
     fn features(&self) -> MapFeatures {
         let land = &self.layout.land;
         MapFeatures {
-            options: self.layout.options,
+            options: ResolvedMapOptions { rivers: self.rivers.len() as u8, ..self.layout.options },
             land_min: land.min,
             land_max: land.max,
             ocean_edges: land.ocean.clone(),

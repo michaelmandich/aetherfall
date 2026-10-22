@@ -93,6 +93,8 @@ pub(crate) struct Basin {
 enum Area {
     /// The floor inside the rim (or the Starspire's open ring).
     Floor,
+    /// The part of the floor nearer this basin's centre than any other's.
+    Basin(usize),
     /// The crater lake's island.
     Island,
     /// The crater lake's dry inner shore.
@@ -214,13 +216,18 @@ impl Site {
 
     /// The Skyfall Scar: a main basin at the centre and two smaller ones on
     /// a line through it, the line between the starts (across the axis for
-    /// two players). The side basins shrink toward the centre until they
-    /// keep out of every start area (or, on crowded maps, every start's
-    /// clear disc) and clear of every start's aether cluster, trying every
-    /// line the starts allow; when none fits, the scar is a single basin as
-    /// big as the Starfall Crater.
+    /// two players, along a bisector for four, so every start lies as near
+    /// a side basin as every other). The side basins shrink toward the
+    /// centre until they keep out of every start area (or, on crowded maps,
+    /// every start's clear disc) and clear of every start's aether cluster,
+    /// trying every line the starts allow. With three or five to eight
+    /// starts no line is fair (the side basins would lie by only some
+    /// starts), and when none fits, the scar is a single basin as big as
+    /// the Starfall Crater.
     fn scar(side: f32, center: Vec2, start_angles: &[f32], bisectors: &[f32], start_ring: f32, rim_half: f32, rng: &mut SimRng) -> Site {
         let n = start_angles.len();
+        // Side basins only where every start lies as near one as every other.
+        let keep_outs: &[f32] = if matches!(n, 0 | 1 | 2 | 4) { &[START_AREA_RADIUS, START_CLEAR_RADIUS + 4.0] } else { &[] };
         let mut lines: Vec<f32> = match n {
             0 => vec![rng.range(0.0, PI)],
             1 | 2 => vec![start_angles[0] + FRAC_PI_2],
@@ -247,7 +254,7 @@ impl Site {
                 [*s + x * ahead + perp(x) * AETHER_LATERAL, *s + x * ahead - perp(x) * AETHER_LATERAL]
             }).collect()
         };
-        'fit: for keep_out in [START_AREA_RADIUS, START_CLEAR_RADIUS + 4.0] {
+        'fit: for keep_out in keep_outs.iter().copied() {
             for line in &lines {
                 let dir = polar(*line);
                 for step in 0..5 {
@@ -292,6 +299,11 @@ impl Site {
         site.hub_clear = 0.0;
         site.spoke_from = 2.5;
         site
+    }
+
+    /// Index of the basin whose centre is nearest `p`.
+    pub fn nearest_basin(&self, p: Vec2) -> usize {
+        (0..self.basins.len()).min_by(|a, b| p.distance_squared(self.basins[*a].center).total_cmp(&p.distance_squared(self.basins[*b].center))).unwrap_or(0)
     }
 
     /// Signed distance from `p` to the edge of the floor's union of discs
@@ -476,9 +488,10 @@ impl Gen<'_> {
         let spots: Vec<(Vec2, f32)> = self.layout.spots.iter().zip(&self.layout.spot_radius).map(|(s, r)| (*s, r + SPOT_APRON)).collect();
         // A band 12 m wide beyond the site's reserved ground.
         let band = main.reserve_margin() + SURROUNDINGS;
+        let open = self.keep_open();
         self.paint_disc(main.center, main.outer() + band, |cell| {
             let by_spot = spots.iter().any(|(s, r)| cell.center.distance_squared(*s) < r * r);
-            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band || by_spot {
+            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band || by_spot || open[cell.index] {
                 None
             } else if thicket_noise.at(cell.center) > 0.66 {
                 Some(thicket)
@@ -510,6 +523,15 @@ impl Gen<'_> {
             let on_shore = self.scatter_in_site(&main, Area::Shore, crystal, crystals - crystals / 3, 3, rng);
             let on_island = self.scatter_in_site(&main, Area::Island, crystal, crystals - on_shore, 2, rng);
             self.scatter_in_site(&main, Area::Shore, crystal, crystals - on_shore - on_island, 2, rng);
+        } else if main.basins.len() == 3 {
+            // The Scar's side basins each lie by their own starts: the
+            // same share in each (a third of each kind, rounded down), the
+            // main basin the rest.
+            for (kind, total, cluster) in [(vent, vents, 1), (meteor, meteors, 1), (crystal, crystals, 4)] {
+                let one = self.scatter_in_site(&main, Area::Basin(1), kind, total / 3, cluster, rng);
+                let other = self.scatter_in_site(&main, Area::Basin(2), kind, one, cluster, rng);
+                self.scatter_in_site(&main, Area::Basin(0), kind, total - one - other, cluster, rng);
+            }
         } else {
             self.scatter_in_site(&main, Area::Floor, vent, vents, 1, rng);
             self.scatter_in_site(&main, Area::Floor, meteor, meteors, 1, rng);
@@ -568,6 +590,7 @@ fn site_area_holds(site: &Site, area: Area, spokes: &[(Vec2, Vec2)], way: f32, p
     let inside = match area {
         Area::Floor if site.kind == SiteKind::Spire => d >= site.inner + 2.0 + half && d <= site.radius - half,
         Area::Floor => site.signed(p) < -(site.rim_half + 1.0 + half),
+        Area::Basin(k) => site.signed(p) < -(site.rim_half + 1.0 + half) && site.nearest_basin(p) == k,
         Area::Island => d <= site.inner - 1.0 - half,
         Area::Shore => {
             let (_, _, _, shore) = site.lake_rings();
@@ -594,8 +617,12 @@ fn sample_area(site: &Site, area: Area, rng: &mut SimRng) -> Vec2 {
             (shore, site.radius - site.rim_half, site.center)
         }
         Area::Floor if site.kind == SiteKind::Spire => (site.inner, site.radius, site.center),
-        Area::Floor => {
-            let b = site.basins[rng.below(site.basins.len() as u32) as usize];
+        Area::Floor | Area::Basin(_) => {
+            let k = match area {
+                Area::Basin(k) => k,
+                _ => rng.below(site.basins.len() as u32) as usize,
+            };
+            let b = site.basins[k];
             let lo = if b.center == site.hub { site.hub_clear } else { 0.0 };
             (lo, b.radius - site.rim_half, b.center)
         }

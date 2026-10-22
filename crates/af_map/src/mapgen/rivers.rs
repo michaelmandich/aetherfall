@@ -37,6 +37,11 @@ pub(crate) const FORD_SPACING: (f32, f32) = (28.0, 36.0);
 /// A ford runs `deep + FORD_EXTRA` either side of its centre along the river,
 /// leaving at least 12 m of ford where the river is deepest.
 const FORD_EXTRA: f32 = 6.0;
+/// Shallow banks are at most this wide (see [`Gen::paint_rivers`]).
+const MAX_BANK: f32 = 2.5;
+/// Trees, thicket and marsh keep off a strip this deep beyond both banks
+/// of every ford, as wide as the ford ([`Gen::mark_ford_exits`]).
+pub(crate) const FORD_EXIT: f32 = 10.0;
 /// Land this close to a land edge (fraction of the land side) costs extra,
 /// the more the nearer the edge...
 const EDGE_BAND: f32 = 0.2;
@@ -785,6 +790,32 @@ pub(crate) fn resample(points: &[Vec2], spacing: f32) -> Vec<Vec2> {
         out[n - 1] = last;
     }
     out
+}
+
+impl Gen<'_> {
+    /// Mark in `open` every ford's ways out: beyond both banks, a strip as
+    /// wide as the ford and [`FORD_EXIT`] m deep, which trees, thicket and
+    /// marsh keep off (the banks themselves are reserved), so no wood or
+    /// marsh closes a ford.
+    pub(crate) fn mark_ford_exits(&self, open: &mut [bool]) {
+        for r in &self.rivers {
+            for f in &r.fords {
+                let (p, deep) = (r.points[*f], r.half_widths[*f]);
+                let across = normal_at(&r.points, *f);
+                let along = perp(across);
+                let (length, depth) = (deep + FORD_EXTRA, deep + MAX_BANK + FORD_EXIT);
+                let (x0, y0, x1, y1) = self.cell_rect(p, length + depth);
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let v = cell_center(x, y) - p;
+                        if v.dot(along).abs() <= length && v.dot(across).abs() <= depth {
+                            open[self.idx(x, y)] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Unit normal (left of the direction of travel) of the line at point `i`.

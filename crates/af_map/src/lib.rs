@@ -31,7 +31,7 @@ use af_core::prelude::*;
 use bevy::prelude::*;
 
 pub use mapgen::{
-    generate, generate_with, map_size_for, resolve_map_options, BuildingPlacement, GeneratedMap, NodePlacement, UnitPlacement,
+    generate, generate_with, map_size_for, resolve_map_options, size_for_side, BuildingPlacement, GeneratedMap, NodePlacement, UnitPlacement,
     CORRIDOR_HALF_WIDTH, START_AREA_RADIUS, START_CLEAR_RADIUS,
 };
 pub use setup::{build_players, default_setup, new_fog, resolve_setup, FOG_CELL, MAX_PLAYERS, MIN_COLOR_DISTANCE};

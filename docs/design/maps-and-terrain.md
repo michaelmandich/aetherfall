@@ -33,7 +33,9 @@ match seed, and the resolved options are published in `MapFeatures` (section
 | site | `Random`, `Crater`, `Shattered`, `Lake`, `Scar`, `Spire` | Meteor site | `--site <name>` |
 
 `MatchSetup::map_size` (metres) still overrides the size when it is not 0: it
-is then the land side, rounded to whole metres and clamped to 160-1024 m.
+is then the land side, rounded to whole metres and clamped to 160-1024 m,
+and the map plays as (feature counts) and is published as the size whose
+land side for the player count is nearest (`af_map::size_for_side`).
 
 The random choices (river count, site kind) come from a stream of their own
 (`af_map::resolve_map_options(options, seed)`), so they never depend on
@@ -127,10 +129,12 @@ Every map has one or two rivers (`MapOptions::rivers`).
   it crosses a start's corridor; a tributary is a ford for its last stretch
   into the river it joins. Each ford is `ford` terrain across the full width
   for `deep + 6` m either side of its centre (at least 12 m of ford where the
-  river is deepest), and its banks are reserved, so no mountain, tree,
-  thicket or marsh closes it.
+  river is deepest); its banks are reserved (4 m beyond the water), and a
+  strip as wide as the ford and 10 m deep beyond each bank is kept free of
+  trees, thicket and marsh, so no mountain, wood or marsh closes its ways
+  out.
 * Marsh grows near rivers and lakes on non-reserved grass (less at `Dry` and
-  `Ponds`), never along the sea.
+  `Ponds`), never along the sea, by a mountain or on a lane (section 2.4).
 
 ### 2.2 Lakes
 
@@ -146,7 +150,7 @@ Lands bigger than Medium for their player count get more lakes (the count
 times the square root of the area ratio) and bigger ones (the radius times
 its fourth root). Lakes are noisy blobs (deep middle, shallow shore), placed
 with `Gen::feature_spot` so they keep clear of everything reserved, of
-rivers and of mountains.
+rivers and (by 10 m) of mountains.
 
 ### 2.3 Coasts
 
@@ -168,43 +172,74 @@ starts have the sea at their back and some do not.
 
 ### 2.4 Mountains
 
-Mountain ranges are spines grown from the roomiest of a few random spots
-between the main site and the land edge: from the heading with the longest
-straight run of open ground, both ways, 2 m at a time, turning gently (a
-slow random drift, steered away from whatever is in the way), for 30-90 m in
-all (times 0.8-1.6 with the land side, 1 for a 300 m land). They are painted
-as `mountain` out to a half-width of 5-10 m that swells and dips along the
-spine (peaks and saddles), tapers at the ends and narrows wherever the open
-ground does, with a ragged outline and 0-2 short spurs, so ranges read
-naturally and thread between the other features.
+Mountains are the map's big obstacle: long grey ranges that read as ranges,
+big massifs, and massifs framing the edges and filling the dead corners.
+They take about 2-3 % of the land on Small maps, about 5 % on Medium, 5.5 %
+on Large and 7 % on Huge.
 
-| size | ranges | single massifs | edge massifs |
+| size | ranges | big single massifs | edge and corner massifs |
 |---|---|---|---|
-| Small | 1 | 0-1 | 0-1 |
-| Medium | 1-2 | 1 | 1-2 |
-| Large | 2-3 | 1-2 | 1-2 |
-| Huge | 3-4 | 1-2 | 2-3 |
+| Small | 1 | 0-1 (one map in three) | 1-2 |
+| Medium | 2-3 | 0-1 | 2-3 |
+| Large | 2-3 | 1 | 2-3 |
+| Huge | 3-4 | 1-2 | 3-4 |
 
-* Ranges and massifs go where there is room (shrinking before giving up),
-  never on reserved cells, and keep 10 m (room for the widest ground unit)
-  from water, other rock, dunes and, except edge massifs, the map edge.
-  Long ranges (over 60 m) keep one 10-12 m pass, narrowing to a saddle
-  toward it; the pass and its approaches are reserved.
-* Edge massifs sit against a land edge or in a corner (partly off the map),
-  framing the map and using its dead corners. Massifs are 8-14 m and edge
-  massifs 14-26 m in radius (times the square root of the range scale).
+* **Ranges.** A range is a spine of rock 30-56 % of the land side long
+  (22-40 % on Small): about 85-160 m on a Medium land for four, 115-210 m
+  on Large and 140-260 m on Huge (up to 345 m on Huge for eight). Of eight
+  candidate spines, each grown from the roomiest of six random spots
+  between the main site and the land edge, the one with the most rock is
+  painted, a third more welcome when it stands between neighbouring starts;
+  a crowded map gets it shorter and thinner, round by round (down to 24 m),
+  before leaving it out. A spine starts along the heading with the longest
+  straight run of room (most ranges prefer to run outward from the middle,
+  so between neighbours they make flanks and lanes) and grows both ways
+  2 m at a time along a gentle bend (up to about 60 degrees end to end) and
+  a slow wave, steering round whatever is in the way.
+* **Shape.** The half-width is 8.5-10.5 m (7-9 m on Small), swelling to
+  peaks of about 14 m and dipping to saddles of about 6 m along the spine
+  (two waves, 28-46 m and 10-16 m long), tapering over the last 20 m of each
+  end and never wider than the room. The outline is ragged (a fine wobble
+  and coarse lumps, 0.8-1.2 of the half-width). One to three spurs (one more
+  on ranges over 120 m), 14-30 m long, branch off away from the passes, and
+  two to five foothill knobs bulge from the flanks. Half-widths of 9 m and
+  more let the renderer raise real peaks (section 6.1).
+* **Passes.** Ranges of 64 m and more keep a pass 12-16 m wide, two passes
+  from 200 m. A pass goes where it makes the most useful lane: where the
+  range stands between neighbouring starts, at a saddle, with open ground on
+  both sides (within the middle 40 % of the range, or 20-42 % and 58-80 %
+  for two). The rock narrows to 70 % over 8 m toward it, and the pass and
+  4 m beyond the rock either side are reserved, so nothing closes it.
+* **Massifs.** A big single massif is a main peak of 13-19 m radius (times
+  the square root of the land side over 300 m, 0.8-1.6) with two to four
+  lesser peaks round its flanks. An edge massif goes in a corner where two
+  land edges meet (three times in five, each corner once; a main peak of
+  7-10 % of the land side round the corner and one or two lesser peaks
+  along each edge) or against a land edge (a main peak of 14-24 m, times the
+  same root, with up to two lesser peaks along the edge either side), partly
+  off the map, which the renderer's skirt carries on.
+* **Keeping the play open.** Mountains never take reserved cells (start
+  areas, corridors, spots, sites, fords, passes) and keep a metre from them;
+  they keep 7 m from the lanes from every start to its two contested spots
+  and from every spot to the main site (so no range favours one neighbour's
+  way to a spot), 10 m beyond every spot's reserved ground, and 10 m (room
+  for the widest ground unit) from water, other rock, dunes and, except edge
+  massifs, the map edge. Highlands, ridges and lakes placed after them keep
+  the same 10 m, and trees, thicket and marsh keep 9 m from mountains and
+  4.5 m from the lanes' axes, so a wood or a marsh never closes what the
+  mountains leave open and every spot keeps an open way in.
 * Highland ridges (`cliff`) and dunes still appear: 1-2 cliff features (one
   more on Large, two more on Huge; a map with no room for any gets one small
   highland closer to the main site) and 1-2 dune regions (one more on Large
   and Huge), as do forests with thickets (about half the scattered forest
-  clusters grow beside another, so they gather into woods). They are placed
-  before the mountains and lakes, which take the room that is left. A
-  highland's ramp opens roughly toward the centre, onto the most open ground
-  of a few such directions, with a 5 m apron below its foot kept free of
-  trees and thicket.
-* The painting order: coasts, meteor sites, rivers, highlands and ridges,
-  dunes, mountains, lakes, marsh, the main site's surroundings, the start
-  areas.
+  clusters grow beside another, so they gather into woods). The dunes are
+  placed before the mountains, the highlands and ridges after them, in the
+  room that is left. A highland's ramp opens roughly toward the centre,
+  onto the most open ground of a few such directions, with a 5 m apron below
+  its foot kept free of trees and thicket.
+* The painting order: coasts, meteor sites, rivers, dunes, mountains,
+  highlands and ridges, lakes, marsh, the main site's surroundings, the
+  start areas.
 
 ## 3. Meteor sites
 
@@ -219,7 +254,7 @@ site(s), plus the contested spots between neighbours. Site floors are
 | `Crater` | The Starfall Crater | a cliff rim (11 % of `L`) with a ramp gap toward every start and 1-2 extra, everything on the floor |
 | `Shattered` | The Shattered Fall | a smaller central crater (7 % of `L`, at least 18 m and 2.5 m per start plus 7) with a gap toward every start and half the nodes (1-2 vents, 1-2 meteors, 4-6 crystals); the rest fell at the contested spots, each now a small rimmed crater (4.5 %, at least 12 m) with a gap toward each of its two neighbouring starts, holding its usual vent (at its centre), meteor and veins plus 2 crystals |
 | `Lake` | The Crater Lake | the crater (12 %, at least 24 m) is flooded: from the rim in, a 6 m dry shore of scar, shallows, deep water, shallows and a central island of scar (42 % of the rim radius); the vents and meteors stand on the island (on the shore when it is full), the crystals on the shore and the island, and a ford causeway 11 m wide runs from every rim gap to the island; hover and amphibious units cross anywhere |
-| `Scar` | The Skyfall Scar | the star skidded: three overlapping basins in a line through the centre (main 8 %, at least 19 m; two 6 %, at least 14 m, at 13 % of `L` or far enough to overlap the main basin), walled by cliff with a gap toward every start and at both ends; for two players the line runs across the axis between them, for more it lies along a bisector (an even count) or a quarter of the start spacing off a start (an odd count). The side basins shrink toward the centre until they keep out of the start areas (on crowded maps, the clear discs) and the starts' aether clusters; when no line allows them, the scar is a single basin the size of the Starfall Crater |
+| `Scar` | The Skyfall Scar | the star skidded: three overlapping basins in a line through the centre (main 8 %, at least 19 m; two 6 %, at least 14 m, at 13 % of `L` or far enough to overlap the main basin), walled by cliff with a gap toward every start and at both ends; for two players the line runs across the axis between them, for four along a bisector, so every start lies as near a side basin as every other, and each side basin holds the same share of the nodes (a third of each kind, rounded down), the main basin the rest. The side basins shrink toward the centre until they keep out of the start areas (on crowded maps, the clear discs) and the starts' aether clusters. With three or five to eight players (where side basins would lie by only some starts), and when no line allows them, the scar is a single basin the size of the Starfall Crater with its extra gaps at the line's ends |
 | `Spire` | The Starspire | no rim: an impassable crystal spire (a `mountain` massif of radius 4 %, at least 6 m, drawn as a giant aether crystal) at the centre, with the nodes on an open ring of scar round it (10 %, at least 12 m wide); armies meet from every side |
 
 Rim gaps are 11 m wide and causeways 11 m: a 7 x 7 cell clearance square
@@ -244,6 +279,11 @@ centre is the spire itself at the Starspire); every site is in
 * The start corridors (start to main site, 5 m half-width, reserved to 6 m)
   stay reserved: no river except as a ford (and none at all within the start
   area), no lake, mountain, thicket, marsh or tree.
+* The lanes from every start to its two contested spots and from every spot
+  to the main site are kept open too, though not reserved: mountains keep
+  7 m from their axes, and trees, thicket and marsh 4.5 m. Mountains also
+  keep 10 m beyond every spot's reserved ground, and trees, thicket and
+  marsh 9 m from every mountain (section 2.4).
 * After generation, `connect.rs` checks that every start front (within 4 m),
   every contested spot (within 9 m of its vent: its open ground inside its
   ring of veins), every other meteor site (the Scar's side basins, within
@@ -259,9 +299,10 @@ centre is the spire itself at the Starspire); every site is in
   thicket, marsh and rock become grass, water a ford; ocean is never carved
   and no layout node (start resources, spots, sites, highland ore) is ever
   deleted, only scattered trees and dune nodes. Carved routes are listed in
-  `GeneratedMap::carved` (rare: about one map in eighty needs one, nearly
-  always for a contested spot hemmed in by woods and water); what stays
-  cut off is listed in `GeneratedMap::cut_off`, which tests assert is empty.
+  `GeneratedMap::carved` (rare: 12 maps of the full sweep's 4200 need one,
+  for a highland ramp or a contested spot hemmed in by woods); what stays
+  cut off is listed in `GeneratedMap::cut_off`, which tests assert is
+  empty.
 * Every player gets the same start template (rotated), as today; each
   template node goes in at every start or at none, so a coast, the map edge
   or a crowded neighbour never leaves one start short. Rivers, lakes, coasts
@@ -273,7 +314,9 @@ centre is the spire itself at the Starspire); every site is in
 Besides today's resources, af_map inserts `af_core::ext::map::MapFeatures`
 in `OnEnter(Playing)` (and removes it on exit):
 
-* `options`: the resolved `MapOptions` (no `Random` left);
+* `options`: the resolved `MapOptions` as played (no `Random` left; the
+  size a `map_size` override plays as, and the number of rivers actually
+  laid, should one find no course);
 * `land_min`, `land_max`: the land rectangle (the map minus ocean bands;
   every coast lies outside it);
 * `ocean_edges`: which map edges are ocean (west, east, south, north);
@@ -285,9 +328,10 @@ in `OnEnter(Playing)` (and removes it on exit):
   or on the river it joins), deep half-width per point and its ford centres
   (indices into the points), source first;
 * `mountains`: each range's spine and half-widths (for drawing): a range is
-  listed as its spine on either side of its pass plus each spur, a massif as
-  one point and its radius. The Starspire's spire is not listed (it is the
-  main site's).
+  listed as its spine between its passes plus each spur, then each foothill
+  knob as one point and its radius; a massif as each of its peaks (one point
+  and its radius). The Starspire's spire is not listed (it is the main
+  site's).
 
 `GeneratedMap` carries the same `MapFeatures`, so tests and the headless
 harness see it. `cargo run -p af_map --example map_png -- --help` draws maps
@@ -457,11 +501,16 @@ found, and the unit stops on the near bank). So:
   water level x site kind, with 2-8 players and one or two rivers cycling
   through it: the reachability above for every ground class, checked by the
   test's own flood as well as the generator's report, and carving on at most
-  one map in twenty; the requested river count, each river's course away from
+  one map in fifty; the requested river count, each river's course away from
   its ends at least 8 m inside the land edges, fords no more than 36 m apart
-  and no deep river stretch over 40 m; starts and start discs on clear
+  and no deep river stretch over 40 m, and no tree, thicket or marsh in a
+  ford's ways out; starts and start discs on clear
   grass; ocean present exactly at `Coast`/`Seas` and never on the land;
-  mountains present on Medium and larger; dunes, a ridge or highland,
+  mountains present on Medium and larger, on 3.5-9 % of the land on
+  average there (0.5-4.5 % on Small), with a range at least 9 m half-wide
+  on every such map, never in a start area, a corridor, by a contested spot
+  or across a lane, and no tree, thicket or marsh at their feet; a pass
+  stays open and reserved right through its range; dunes, a ridge or highland,
   marsh, thicket and mostly grass on every map; node budgets per site kind;
   mirrored start resources; no overlaps; determinism; a 384 m map for 8
   under 1 s and a Huge one with seas under 4 s. `--ignored` runs the full
