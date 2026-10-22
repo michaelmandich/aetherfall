@@ -265,15 +265,19 @@ impl Gen<'_> {
 
     /// Carve the cheapest route for `class` from target `t` (through its
     /// lead points first) to ground `seen` already reaches. The route keeps
-    /// the class's radius from buildings and layout nodes (which carving
-    /// never removes), so the class fits along it once it is carved.
+    /// the class's clearance square clear of buildings and layout nodes
+    /// (which carving never removes), so the class fits along it once it is
+    /// carved.
     fn carve_to(&mut self, nav: &NavGrid, seen: &[bool], t: &Target, class: Class) {
         let mobility = Mobility::of(class.flag);
         let blocks = self.blocks();
         let w = self.w as usize;
         let fixed: Vec<bool> = blocks.iter().map(|b| *b == Block::Fixed).collect();
         let room = field::distance_field(&fixed, w, w);
-        let fits = |i: usize| room[i] >= class.radius + 0.5;
+        // The class's clearance square (k cells each way) must hold no fixed
+        // cell: one at least k * sqrt(2) away never is in it.
+        let k = nav.clearance_cells(class.radius) as f32;
+        let fits = |i: usize| room[i] > k * std::f32::consts::SQRT_2 + 0.01;
         let half = class.radius + CARVE_MARGIN;
         for leg in t.lead.windows(2) {
             self.carve_segment(leg[0], leg[1], half, mobility);

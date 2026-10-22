@@ -196,8 +196,12 @@ naturally and thread between the other features.
 * Highland ridges (`cliff`) and dunes still appear: 1-2 cliff features (one
   more on Large, two more on Huge; a map with no room for any gets one small
   highland closer to the main site) and 1-2 dune regions (one more on Large
-  and Huge), as do forests with thickets. They are placed before the
-  mountains and lakes, which take the room that is left.
+  and Huge), as do forests with thickets (about half the scattered forest
+  clusters grow beside another, so they gather into woods). They are placed
+  before the mountains and lakes, which take the room that is left. A
+  highland's ramp opens roughly toward the centre, onto the most open ground
+  of a few such directions, with a 5 m apron below its foot kept free of
+  trees and thicket.
 * The painting order: coasts, meteor sites, rivers, highlands and ridges,
   dunes, mountains, lakes, marsh, the main site's surroundings, the start
   areas.
@@ -222,8 +226,11 @@ Rim gaps are 11 m wide and causeways 11 m: a 7 x 7 cell clearance square
 (the titan) needs about 10 m across a diagonal way. The way from each start
 gap (and, at the Scar with up to four players, from both ends, down the
 furrow) to the site's open hub is kept free of nodes 5 m either side, as are
-the start corridors; every other gap keeps its mouth clear. Nodes that units
-walk over (vents) only keep off a way's axis. A start's aether cluster
+the start corridors; every other gap keeps its mouth clear, and every gap
+has an 8 m apron outside it kept free of trees, thicket and marsh. Nodes
+that units walk over (vents) only keep off a way's axis. The main site's
+band of marsh and bramble keeps 10 m beyond every contested spot's reserved
+ground. A start's aether cluster
 stops 5 m short of the main site along its corridor (the shared template
 uses the site's widest reach toward any start), and the contested spots are
 pushed out along their bisectors to keep 3 m outside the main site.
@@ -252,7 +259,8 @@ centre is the spire itself at the Starspire); every site is in
   thicket, marsh and rock become grass, water a ford; ocean is never carved
   and no layout node (start resources, spots, sites, highland ore) is ever
   deleted, only scattered trees and dune nodes. Carved routes are listed in
-  `GeneratedMap::carved` (rare: under one map in ten needs one); what stays
+  `GeneratedMap::carved` (rare: about one map in eighty needs one, nearly
+  always for a contested spot hemmed in by woods and water); what stays
   cut off is listed in `GeneratedMap::cut_off`, which tests assert is empty.
 * Every player gets the same start template (rotated), as today; each
   template node goes in at every start or at none, so a coast, the map edge
@@ -420,8 +428,8 @@ found, and the unit stops on the near bank). So:
 * af_map (`crates/af_map/tests/generate.rs`): a sample of every size x
   water level x site kind, with 2-8 players and one or two rivers cycling
   through it: the reachability above for every ground class, checked by the
-  test's own flood as well as the generator's report, and carving on under
-  one map in ten; the requested river count, each river's course away from
+  test's own flood as well as the generator's report, and carving on at most
+  one map in twenty; the requested river count, each river's course away from
   its ends at least 8 m inside the land edges, fords no more than 36 m apart
   and no deep river stretch over 40 m; starts and start discs on clear
   grass; ocean present exactly at `Coast`/`Seas` and never on the land;
@@ -429,7 +437,8 @@ found, and the unit stops on the near bank). So:
   marsh, thicket and mostly grass on every map; node budgets per site kind;
   mirrored start resources; no overlaps; determinism; a 384 m map for 8
   under 1 s and a Huge one with seas under 4 s. `--ignored` runs the full
-  sweep (every combination, three seeds) and a diagnostic listing every
+  sweep (every combination, three seeds, 4200 maps: everything reachable,
+  the rivers asked for, carving tallied by cause) and a diagnostic listing every
   problem over a wide sample.
 * af_render: walkable cells drawn at `ground_height`; mountains under 10.5 m;
   every water bed below the water surface; chunks cover the map once.

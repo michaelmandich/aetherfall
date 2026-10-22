@@ -5,9 +5,10 @@
 //!
 //! A rimmed site's floor is a union of discs ([`Basin`]s); its rim runs
 //! round that union, open in a gap wherever a gap's ray from the site
-//! centre crosses it. A gap's *spoke* (the ray from the open hub out
-//! through the gap) is kept free of nodes, so every gap leads to the heart
-//! of the site.
+//! centre crosses it. A gap's *spoke* (along its ray) is kept free of
+//! nodes: from the open hub out through the gap for the gaps toward the
+//! starts (and the Scar's ends), across the gap's mouth for the others, so
+//! every start's way leads to the heart of the site and no gap is blocked.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -66,6 +67,8 @@ pub(crate) const SPOT_RIM_HALF: f32 = 1.5;
 pub(crate) const GAP_HALF_WIDTH: f32 = 5.5;
 /// Width of the marsh and bramble band round the main site.
 const SURROUNDINGS: f32 = 12.0;
+/// ...which keeps this far beyond a contested spot's reserved ground.
+const SPOT_APRON: f32 = 10.0;
 /// Reserved margin outside a site's rim.
 pub(crate) const SITE_MARGIN: f32 = 2.0;
 /// The mouth of a gap without a full spoke: this far in from the rim's
@@ -462,16 +465,20 @@ impl Gen<'_> {
     }
 
     /// Marsh and bramble patches in a band just outside the main site, so
-    /// terrain traits decide who reaches it first. Corridors stay clear.
+    /// terrain traits decide who reaches it first. Corridors stay clear, and
+    /// so does the ground round the contested spots (everyone reaches
+    /// those).
     pub(super) fn paint_site_surroundings(&mut self, rng: &mut SimRng) {
         let marsh_noise = Noise::new(rng, self.size, 7.0);
         let thicket_noise = Noise::new(rng, self.size, 6.0);
         let (grass, marsh, thicket) = (self.ids.grass, self.ids.marsh, self.ids.thicket);
         let main = self.layout.main().clone();
+        let spots: Vec<(Vec2, f32)> = self.layout.spots.iter().zip(&self.layout.spot_radius).map(|(s, r)| (*s, r + SPOT_APRON)).collect();
         // A band 12 m wide beyond the site's reserved ground.
         let band = main.reserve_margin() + SURROUNDINGS;
         self.paint_disc(main.center, main.outer() + band, |cell| {
-            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band {
+            let by_spot = spots.iter().any(|(s, r)| cell.center.distance_squared(*s) < r * r);
+            if cell.reserved || cell.terrain != grass || main.signed(cell.center) > band || by_spot {
                 None
             } else if thicket_noise.at(cell.center) > 0.66 {
                 Some(thicket)
@@ -509,15 +516,15 @@ impl Gen<'_> {
             self.scatter_in_site(&main, Area::Floor, crystal, crystals, 4, rng);
         }
         if main.kind == SiteKind::Shattered {
-            for (k, site) in self.layout.sites.clone().iter().enumerate().skip(1) {
-                // The spot's usual vent, meteor and veins, plus 2 crystals.
+            // The spot craters: each spot's usual vent, meteor and veins,
+            // plus 2 crystals.
+            for site in self.layout.sites.clone().iter().skip(1) {
                 let yaw = af_geom::yaw_of(site.center - self.layout.center);
                 self.place_node_near(vent, site.center, yaw, Zone::Any);
                 self.scatter_in_site(site, Area::Floor, meteor, 1, 1, rng);
                 self.scatter_in_site(site, Area::Floor, self.ids.iron, 2, 2, rng);
                 self.scatter_in_site(site, Area::Floor, self.ids.copper, 1 + rng.below(2), 2, rng);
                 self.scatter_in_site(site, Area::Floor, crystal, 2, 2, rng);
-                debug_assert_eq!(site.center, self.layout.spots[k - 1]);
             }
         }
     }

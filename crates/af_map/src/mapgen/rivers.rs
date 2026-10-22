@@ -2,15 +2,18 @@
 //!
 //! A river runs from a source on a land edge to a mouth on another land
 //! edge, in the sea, or (a tributary) on the first river. Its course is
-//! found with A* on a 4 m grid over the map: everything reserved is closed
-//! (start areas too, unless a crowded map leaves no other way, and then only
-//! their outskirts are opened, at a price), start corridors are open (the
-//! river crosses them as a ford), land near a land edge costs extra except
-//! near the river's own ends, value noise makes it wander, and a second
-//! river keeps its distance from the first. The course is smoothed,
-//! resampled every 0.75 m and given a gentle meander wherever that keeps it
-//! clear; then it is painted deep with shallow banks, with fords across its
-//! whole width at most 36 m apart and wherever it crosses a corridor.
+//! found with A* on a 4 m grid over the map: everything reserved is closed,
+//! start areas included, start corridors beyond the start areas are open
+//! (the river crosses them as a ford), land near a land edge costs extra and
+//! its outermost strip is closed except near the river's own ends, value
+//! noise makes it wander, and a second river keeps its distance from the
+//! first and never crosses it. A crowded map whose starts, spots and site
+//! close off the interior gets a course from a laxer [`Tier`]: start-area
+//! outskirts open at a price, smaller margins, then a narrower river that
+//! may cut a corner. The course is smoothed, resampled every 0.75 m and
+//! given a gentle meander wherever that keeps it clear; then it is painted
+//! deep with shallow banks, with fords across its whole width at most 36 m
+//! apart and wherever it crosses a corridor.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -35,14 +38,15 @@ pub(crate) const FORD_SPACING: (f32, f32) = (28.0, 36.0);
 /// leaving at least 12 m of ford where the river is deepest.
 const FORD_EXTRA: f32 = 6.0;
 /// Land this close to a land edge (fraction of the land side) costs extra,
-/// the more the nearer the edge.
+/// the more the nearer the edge...
 const EDGE_BAND: f32 = 0.2;
-/// A course may keep only a share of its middle this close to a land edge
-/// (fraction of the land side; see [`Tier::near_edge_share`]).
-const NEAR_EDGE: f32 = 0.12;
 /// ...except this close (fraction of the land side) to the river's own
 /// source and mouth.
 const END_FREE: f32 = 0.2;
+/// A course may keep only a share of its middle (beyond [`END_FREE`] from
+/// its ends) this close to a land edge (fraction of the land side; see
+/// [`Tier::near_edge_share`]).
+const NEAR_EDGE: f32 = 0.12;
 /// Chance that a second river is a tributary of the first.
 const TRIBUTARY_CHANCE: f32 = 0.4;
 /// Courses tried per strictness tier.
@@ -104,7 +108,7 @@ const TIERS: [Tier; 4] = [
 /// How far every cell is from what a river must keep clear of, for one
 /// river at one tier.
 struct Clearance {
-    /// For a river that ends on land or in another river (the sea closed).
+    /// For a river that ends on land (the sea and the other rivers closed).
     land: Vec<f32>,
     /// For a river that ends in the sea (the coast open).
     sea: Vec<f32>,

@@ -17,6 +17,8 @@ use super::{grown, perp, polar, Blob, Gen, NodePlacement, MAP_MARGIN};
 pub(crate) const NODE_PAD: f32 = 0.15;
 /// One forest cluster per this many square metres of map.
 const AREA_PER_FOREST: f32 = 4000.0;
+/// Chance that a scattered forest cluster grows beside another.
+const WOOD_CHANCE: f32 = 0.5;
 /// Tree spacing inside a forest cluster.
 const TREE_SPACING: f32 = 1.9;
 
@@ -208,8 +210,9 @@ impl Gen<'_> {
     }
 
     /// Oak/pine clusters: two framing each start area, the rest scattered as
-    /// soft walls. Every tree is its own node. Half the scattered clusters
-    /// grow bramble thicket between their trees.
+    /// soft walls, about half of them beside another so they gather into
+    /// woods. Every tree is its own node. Half the scattered clusters grow
+    /// bramble thicket between their trees.
     pub(super) fn place_forests(&mut self, rng: &mut SimRng) {
         let mut clusters: Vec<Blob> = Vec::new();
         for i in 0..self.layout.starts.len() {
@@ -227,8 +230,15 @@ impl Gen<'_> {
             if clusters.len() >= target {
                 break;
             }
-            let p = Vec2::new(rng.range(4.0, self.size - 4.0), rng.range(4.0, self.size - 4.0));
             let radius = rng.range(6.0, 12.0);
+            // Some clusters grow beside one already there, so the scatter
+            // gathers into woods with glades between.
+            let p = if clusters.len() > framing && rng.chance(WOOD_CHANCE) {
+                let c = clusters[framing + rng.below((clusters.len() - framing) as u32) as usize];
+                c.center + polar(rng.range(0.0, TAU)) * (c.radius + radius + rng.range(1.0, 5.0))
+            } else {
+                Vec2::new(rng.range(4.0, self.size - 4.0), rng.range(4.0, self.size - 4.0))
+            };
             let open = self.idx_at(p).is_some_and(|i| !self.reserved(i) && self.terrain[i] == self.ids.grass);
             if open && clusters.iter().all(|c| c.center.distance(p) > c.radius + radius) {
                 clusters.push(Blob { center: p, radius });

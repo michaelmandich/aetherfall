@@ -15,6 +15,8 @@ use super::{angle_of, cell_center, perp, polar, Blob, Gen, Hold, START_CLEAR_RAD
 
 /// Half-width of the ramp into a cliff highland.
 const RAMP_HALF_WIDTH: f32 = 3.5;
+/// Radius of the open apron kept just below a highland ramp's foot.
+const RAMP_APRON: f32 = 5.0;
 /// How far beyond a cliff the way through it (a highland ramp, a ridge
 /// opening) is kept free of trees and thicket.
 pub(crate) const APPROACH: f32 = 4.0;
@@ -185,8 +187,22 @@ impl Gen<'_> {
             let wanted = rng.range(MIN_HIGHLAND_RING, 11.0) + thick;
             let Some((center, radius)) = self.feature_spot(rng, wanted, MIN_HIGHLAND_RING * small + thick, r_min, r_max) else { return false };
             // The ramp opens roughly toward the middle of the map, never
-            // toward the map edge.
-            let ramp = polar(angle_of(self.layout.center - center) + rng.range(-1.0, 1.0));
+            // toward the map edge: of a few such directions, the one with
+            // the most open ground below its foot (away from water and rock).
+            let inward = angle_of(self.layout.center - center);
+            let first = rng.range(-1.0, 1.0);
+            let open = |a: f32| {
+                let below = center + polar(a) * (radius + APPROACH + 6.0);
+                let (edge, _, _, blocking) = self.room_parts(below);
+                blocking.min(edge)
+            };
+            let angle = [first, first + 0.7, first - 0.7, first + 1.4, first - 1.4]
+                .into_iter()
+                .filter(|o| o.abs() <= 1.2)
+                .map(|o| inward + o)
+                .fold((f32::NEG_INFINITY, inward + first), |best, a| if open(a) > best.0 + 2.0 { (open(a), a) } else { best })
+                .1;
+            let ramp = polar(angle);
             let highland = Highland { center, ring: radius - thick, thick, ramp };
             self.paint_highland(&highland);
             self.features.push(Blob { center, radius });
@@ -213,8 +229,9 @@ impl Gen<'_> {
         self.reserve(gap, along + across, Hold::Hard, |p| (p - gap).dot(dir).abs() < along && (p - gap).dot(side).abs() <= across);
     }
 
-    /// Paint `highland`'s cliff ring and reserve its top and its ramp (out
-    /// to [`Highland::ramp_foot`]), so trees and thicket never seal the ore.
+    /// Paint `highland`'s cliff ring and reserve its top, its ramp (out to
+    /// [`Highland::ramp_foot`]) and an apron below the ramp's foot, so trees
+    /// and thicket never seal the ore.
     fn paint_highland(&mut self, h: &Highland) {
         let (grass, sand, cliff) = (self.ids.grass, self.ids.sand, self.ids.cliff);
         self.paint_disc(h.center, h.ring + h.thick, |cell| {
@@ -226,6 +243,8 @@ impl Gen<'_> {
         });
         let reach = h.ring + h.thick + APPROACH;
         self.reserve(h.center, reach, Hold::Hard, |p| p.distance(h.center) <= h.top() || h.on_ramp(p, RAMP_HALF_WIDTH + 1.0));
+        let apron = h.ramp_foot() + h.ramp * RAMP_APRON;
+        self.reserve(apron, RAMP_APRON + 0.5, Hold::Hard, |p| p.distance(apron) <= RAMP_APRON);
     }
 
     /// One or two dune regions (one more on Large and Huge maps; palms and
@@ -342,7 +361,9 @@ mod tests {
         for p in [center, h.ramp_top(), center + Vec2::X * 9.0, h.ramp_foot() - Vec2::X * 0.5, center + Vec2::new(12.0, 3.5)] {
             assert_eq!(cell(&g, p), (grass, true), "the top, the ramp and its foot at {p}");
         }
-        assert!(!cell(&g, center + Vec2::Y * 13.0).1 && !cell(&g, h.ramp_foot() + Vec2::X * 2.0).1, "nothing else is reserved");
+        // An apron below the foot stays open too, and nothing beyond.
+        assert!(cell(&g, h.ramp_foot() + Vec2::X * 2.0).1, "the apron below the ramp");
+        assert!(!cell(&g, center + Vec2::Y * 13.0).1 && !cell(&g, h.ramp_foot() + Vec2::X * (2.0 * RAMP_APRON + 1.0)).1, "nothing else is reserved");
         assert!(!g.place_node(g.ids.oak, center + Vec2::Y * 3.0, 0.0, Zone::Free), "no tree on the top");
         assert!(g.place_node(g.ids.iron, center + Vec2::Y * 3.0, 0.0, Zone::Any), "ore goes up there");
     }

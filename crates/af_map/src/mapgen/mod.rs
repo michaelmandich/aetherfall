@@ -15,10 +15,10 @@
 //!    their rim gaps (`sites.rs`), the contested spots between neighbours,
 //!    the shared start-resource template, and the reserved zones (start
 //!    areas, corridors, spots, sites) that random features must not touch.
-//! 2. Terrain (`terrain.rs`): coasts, site rims and floors, rivers with
-//!    fords (`rivers.rs`), lakes and marsh (`water.rs`), mountains
-//!    (`mountains.rs`), highlands and ridges, dunes, the main site's
-//!    surroundings, start-area sand patches and clear start discs.
+//! 2. Terrain (`terrain.rs`): coasts (`water.rs`), site rims and floors,
+//!    rivers with fords (`rivers.rs`), highlands and ridges, dunes,
+//!    mountains (`mountains.rs`), lakes and marsh (`water.rs`), the main
+//!    site's surroundings, start-area sand patches and clear start discs.
 //! 3. Start halls, start resources (one template rotated per start, so every
 //!    player gets the same distances), extra start buildings, start units.
 //! 4. Contested spots, site nodes, highland ore, dune nodes, forests and the
@@ -61,6 +61,8 @@ pub const CORRIDOR_HALF_WIDTH: f32 = 5.0;
 
 /// Reserved radius around each start's aether crystal cluster.
 pub(crate) const AETHER_SPOT_RADIUS: f32 = 8.0;
+/// The open apron kept outside every rim gap reaches this far out.
+const GAP_APRON: f32 = 8.0;
 /// Minimum spacing between big terrain features (mountains, cliffs, lakes,
 /// sand, water).
 const FEATURE_SPACING: f32 = 6.0;
@@ -479,6 +481,15 @@ impl<'a> Gen<'a> {
         for site in sites {
             let margin = site.reserve_margin();
             self.reserve(site.center, site.outer() + margin + 4.0, Hold::Hard, |p| site.signed(p) <= margin);
+            // An apron outside every rim gap, so no tree, thicket or marsh
+            // closes the way in.
+            for g in &site.gaps {
+                let dir = polar(*g);
+                let a = site.center + dir * site.reach_toward(*g);
+                let b = a + dir * GAP_APRON;
+                let r = sites::GAP_HALF_WIDTH;
+                self.reserve((a + b) * 0.5, GAP_APRON * 0.5 + r, Hold::Hard, |p| af_geom::point_segment_distance(p, a, b) <= r);
+            }
         }
         let r = CORRIDOR_HALF_WIDTH + 1.0;
         for (a, b) in corridors {
