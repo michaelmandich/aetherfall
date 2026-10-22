@@ -4,8 +4,8 @@
 //! from, a building held in placement mode, a held hover and a one-off
 //! press of a UI button, a stand-in mouse, a staged battle, an AI-played
 //! local slot, a pause, frame-time statistics, boxes instead of models, an
-//! extra folder of visual registry files, uncapped frames, and a [`script`]
-//! of keys, clicks and presses).
+//! extra folder of visual registry files, uncapped frames, a hidden HUD,
+//! and a [`script`] of keys, clicks and presses).
 //! Each piece is registered only when its flag is given, so a normal run
 //! adds nothing. Binary-only: the library (`aetherfall::*`) knows nothing
 //! of it.
@@ -15,7 +15,8 @@ mod script;
 use std::path::{Path, PathBuf};
 
 use af_core::ext::input::CursorOverride;
-use af_core::ext::map::MapSetupSet;
+use af_core::ext::map::{MapFeatures, MapSetupSet};
+use af_core::ext::ui::HudHidden;
 use af_core::prelude::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -30,6 +31,18 @@ const MAX_BATTLE_COUNT: u32 = 40;
 /// `--camera` may frame closer than the mouse wheel can zoom, for close-ups
 /// of single units (metres from the focus).
 const CLOSE_UP_DISTANCE: f32 = 5.0;
+/// ... and much farther out, to see a whole map: the largest (1024 m of
+/// land between two sea bands, 1372 m) needs about 3.5 km in a 16:9 window
+/// at the game's pitch. The camera draws out to `af_input::FAR_PLANE`.
+const MAX_DEV_DISTANCE: f32 = 6000.0;
+/// `--camera` pitch limits, degrees above the horizon (straight down would
+/// leave the camera without an up direction).
+const MIN_PITCH_DEG: f32 = 10.0;
+const MAX_PITCH_DEG: f32 = 85.0;
+/// Framed points stay inside this fraction of the half-frame.
+const FIT_MARGIN: f32 = 0.94;
+/// A framed meteor site shows this many times its radius round its centre.
+const SITE_FRAME: f32 = 1.6;
 /// A placed wall line starts this far left of the cursor (metres).
 const WALL_PREVIEW_LENGTH: f32 = 14.0;
 
@@ -62,6 +75,7 @@ pub struct DevArgs {
     no_models: bool,
     visuals: Option<PathBuf>,
     no_vsync: bool,
+    no_hud: bool,
 }
 
 impl DevArgs {
@@ -96,6 +110,7 @@ impl DevArgs {
             "--no-models" => self.no_models = true,
             "--visuals" => self.visuals = Some(PathBuf::from(value()?)),
             "--no-vsync" => self.no_vsync = true,
+            "--no-hud" => self.no_hud = true,
             "--script" => self.script = Some(value()?),
             _ => return Ok(false),
         }
@@ -121,6 +136,7 @@ impl DevArgs {
             || self.no_models
             || self.visuals.is_some()
             || self.no_vsync
+            || self.no_hud
             || self.script.is_some()
     }
 
@@ -199,6 +215,7 @@ impl DevArgs {
             no_models: self.no_models,
             visuals: self.visuals,
             no_vsync: self.no_vsync,
+            no_hud: self.no_hud,
             script: script.map(script::Script::new),
         })
     }
@@ -252,6 +269,8 @@ pub struct DevPlan {
     visuals: Option<PathBuf>,
     /// Present frames as fast as they are made.
     no_vsync: bool,
+    /// Hide the HUD (screenshots of the world alone).
+    no_hud: bool,
     script: Option<script::Script>,
 }
 
@@ -324,6 +343,9 @@ pub fn install(app: &mut App, plan: DevPlan) {
     }
     if let Some(dir) = plan.visuals {
         app.insert_resource(af_render::registry::ExtraVisuals(dir));
+    }
+    if plan.no_hud {
+        app.insert_resource(HudHidden(true));
     }
 }
 
@@ -520,9 +542,14 @@ enum Spot {
     Centre,
     /// A player's start; `None` = the viewer's (else player 0's).
     Start(Option<u8>),
+    /// A meteor site by index, the main one (0) first
+    /// (`MapFeatures::sites`); the crater on a map without them.
+    Site(usize),
+    /// The map's centre, with the whole map in view.
+    Overview,
 }
 
-/// `--camera <spot>[,distance[,turn]]`.
+/// `--camera <spot>[,distance[,turn[,pitch]]]`.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 struct CameraArg {
     spot: Spot,
@@ -530,66 +557,157 @@ struct CameraArg {
     /// Degrees to turn the view from the game's fixed angle (clockwise
     /// seen from above), to look at the spot from another side.
     turn: Option<f32>,
+    /// Degrees above the horizon to look down from (the game's is about 54).
+    pitch: Option<f32>,
+}
+
+/// What `--camera` spots are found in and framed for.
+struct CameraView<'a> {
+    map: &'a MapInfo,
+    features: Option<&'a MapFeatures>,
+    players: &'a Players,
+    viewer: Option<PlayerId>,
+    /// Window width over height.
+    aspect: f32,
+}
+
+/// Window width over height, 16:9 without a window.
+fn window_aspect(windows: &Query<&Window, With<PrimaryWindow>>) -> f32 {
+    windows.single().ok().map(|w| w.width() / w.height().max(1.0)).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(16.0 / 9.0)
 }
 
 impl CameraArg {
+    const SPOTS: &str = "crater|centre|start|p<N>|site|site<N>|overview";
+
     fn parse(s: &str) -> Result<CameraArg, String> {
         const FLAG: &str = "--camera";
         let parts: Vec<&str> = s.split(',').map(str::trim).collect();
-        let named = match parts[0] {
-            "crater" => Some(Spot::Crater),
-            "centre" | "center" => Some(Spot::Centre),
-            "start" => Some(Spot::Start(None)),
-            p if p.starts_with('p') && p.len() > 1 => Some(Spot::Start(Some(number(FLAG, &p[1..])?))),
-            _ => None,
+        // `p<N>` and `site<N>` only with a number after them, so other
+        // names that start so are not taken for them.
+        let numbered = |prefix: &str| parts[0].strip_prefix(prefix).filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        let named = if let Some(n) = numbered("site") {
+            Some(Spot::Site(number(FLAG, n)?))
+        } else if let Some(n) = numbered("p") {
+            Some(Spot::Start(Some(number(FLAG, n)?)))
+        } else {
+            match parts[0] {
+                "crater" => Some(Spot::Crater),
+                "centre" | "center" => Some(Spot::Centre),
+                "start" => Some(Spot::Start(None)),
+                "site" => Some(Spot::Site(0)),
+                "overview" => Some(Spot::Overview),
+                _ => None,
+            }
         };
         let (spot, rest) = match named {
             Some(spot) => (spot, &parts[1..]),
             None if parts.len() >= 2 => (Spot::Point(Vec2::new(number(FLAG, parts[0])?, number(FLAG, parts[1])?)), &parts[2..]),
-            None => return Err(format!("{FLAG} wants `x,z[,distance[,turn]]` or crater|centre|start|p<N>[,distance[,turn]], got `{s}`")),
+            None => return Err(format!("{FLAG} wants `x,z[,distance[,turn[,pitch]]]` or {}[,distance[,turn[,pitch]]], got `{s}`", Self::SPOTS)),
         };
-        let (distance, turn) = match rest {
-            [] => (None, None),
-            [d] => (Some(number(FLAG, d)?), None),
-            [d, t] => (Some(number(FLAG, d)?), Some(number(FLAG, t)?)),
-            _ => return Err(format!("{FLAG}: too many values in `{s}`")),
-        };
-        Ok(CameraArg { spot, distance, turn })
+        if rest.len() > 3 {
+            return Err(format!("{FLAG}: too many values in `{s}`"));
+        }
+        // An empty value keeps its default (`overview,,45`).
+        let value = |i: usize| rest.get(i).filter(|v| !v.is_empty()).map(|v| number::<f32>(FLAG, v)).transpose();
+        Ok(CameraArg { spot, distance: value(0)?, turn: value(1)?, pitch: value(2)? })
     }
 
     /// The ground point the camera should look at.
-    fn focus(&self, map: &MapInfo, players: &Players, viewer: Option<PlayerId>) -> Vec2 {
+    fn focus(&self, view: &CameraView) -> Vec2 {
+        let map = view.map;
         match self.spot {
             Spot::Point(p) => p,
             Spot::Crater => map.crater_center,
-            Spot::Centre => map.size * 0.5,
+            Spot::Centre | Spot::Overview => map.size * 0.5,
             Spot::Start(slot) => {
-                let id = slot.map(PlayerId).or(viewer).unwrap_or(PlayerId(0));
-                players.try_get(id).map_or(map.size * 0.5, |p| p.start_pos)
+                let id = slot.map(PlayerId).or(view.viewer).unwrap_or(PlayerId(0));
+                view.players.try_get(id).map_or(map.size * 0.5, |p| p.start_pos)
             }
+            Spot::Site(i) => site(view, i).0,
         }
     }
 
-    /// Point the camera rig at the spot (and zoom to the distance and turn
-    /// the view, if given).
-    fn apply(&self, map: &MapInfo, players: &Players, viewer: Option<PlayerId>, rig: &mut CameraRig) {
-        rig.focus = self.focus(map, players, viewer).clamp(Vec2::ZERO, map.size);
-        if let Some(d) = self.distance {
-            rig.distance = d.clamp(CLOSE_UP_DISTANCE, af_input::MAX_DISTANCE);
-        }
+    /// Point the camera rig at the spot, turn and tilt the view if asked,
+    /// and zoom to the distance given; without one, an overview frames the
+    /// whole map and a site its rim.
+    fn apply(&self, view: &CameraView, rig: &mut CameraRig) {
+        rig.focus = self.focus(view).clamp(Vec2::ZERO, view.map.size);
         if let Some(t) = self.turn {
             rig.yaw = af_geom::wrap_angle(af_input::VIEW_YAW - t.to_radians());
         }
+        if let Some(p) = self.pitch {
+            rig.pitch = p.clamp(MIN_PITCH_DEG, MAX_PITCH_DEG).to_radians();
+        }
+        rig.distance = match (self.distance, self.spot) {
+            (Some(d), _) => d.clamp(CLOSE_UP_DISTANCE, MAX_DEV_DISTANCE),
+            (None, Spot::Overview) => {
+                let size = view.map.size;
+                fit_distance(&[Vec2::ZERO, Vec2::new(size.x, 0.0), size, Vec2::new(0.0, size.y)], rig, view.aspect)
+            }
+            (None, Spot::Site(i)) => {
+                let (centre, radius) = site(view, i);
+                let r = radius.max(10.0) * SITE_FRAME;
+                let around = [centre - Vec2::splat(r), centre + Vec2::new(r, -r), centre + Vec2::splat(r), centre + Vec2::new(-r, r)];
+                fit_distance(&around, rig, view.aspect).max(af_input::MIN_DISTANCE)
+            }
+            (None, _) => rig.distance,
+        };
     }
 }
 
+/// Centre and radius of meteor site `i` (`MapFeatures::sites`, the main
+/// one first), or of the crater on a map without them.
+fn site(view: &CameraView, i: usize) -> (Vec2, f32) {
+    match view.features.and_then(|f| f.sites.get(i)) {
+        Some(s) => (s.center, s.radius),
+        None => (view.map.crater_center, view.map.crater_radius),
+    }
+}
+
+/// The camera distance at which every ground point in `points` is in view
+/// (inside [`FIT_MARGIN`] of the frame) from the rig's focus, yaw and pitch,
+/// in a window of `aspect`; at most [`MAX_DEV_DISTANCE`].
+fn fit_distance(points: &[Vec2], rig: &CameraRig, aspect: f32) -> f32 {
+    let tan = (af_input::FOV_DEG.to_radians() * 0.5).tan() * FIT_MARGIN;
+    let fits = |distance: f32| {
+        let from_world = af_input::rig_transform(&CameraRig { distance, ..*rig }).compute_affine().inverse();
+        points.iter().all(|p| {
+            let v = from_world.transform_point3(Vec3::new(p.x, 0.0, p.y));
+            // The camera looks down its -Z axis.
+            let depth = -v.z;
+            depth > 0.0 && v.x.abs() <= depth * tan * aspect && v.y.abs() <= depth * tan
+        })
+    };
+    // Backing away along the view only ever brings points further into it.
+    let (mut near, mut far) = (CLOSE_UP_DISTANCE, MAX_DEV_DISTANCE);
+    if !fits(far) {
+        return far;
+    }
+    while far - near > 0.5 {
+        let mid = (near + far) * 0.5;
+        if fits(mid) { far = mid } else { near = mid }
+    }
+    far
+}
+
 /// Once, after af_input has centred the camera on the match start.
-fn frame_camera(arg: Res<CameraArg>, map: Res<MapInfo>, players: Res<Players>, local: Res<LocalPlayer>, mut rig: ResMut<CameraRig>, mut done: Local<bool>) {
+#[allow(clippy::too_many_arguments)]
+fn frame_camera(
+    arg: Res<CameraArg>,
+    map: Res<MapInfo>,
+    features: Option<Res<MapFeatures>>,
+    players: Res<Players>,
+    local: Res<LocalPlayer>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut rig: ResMut<CameraRig>,
+    mut done: Local<bool>,
+) {
     if *done {
         return;
     }
     *done = true;
-    arg.apply(&map, &players, local.0, &mut rig);
+    let view = CameraView { map: &map, features: features.as_deref(), players: &players, viewer: local.0, aspect: window_aspect(&windows) };
+    arg.apply(&view, &mut rig);
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,16 +1195,122 @@ mod tests {
 
     #[test]
     fn camera_spots_parse() {
-        assert_eq!(CameraArg::parse("120,80").unwrap(), CameraArg { spot: Spot::Point(Vec2::new(120.0, 80.0)), distance: None, turn: None });
-        assert_eq!(CameraArg::parse("start,12,90").unwrap(), CameraArg { spot: Spot::Start(None), distance: Some(12.0), turn: Some(90.0) });
+        let at = |spot, distance, turn| CameraArg { spot, distance, turn, pitch: None };
+        assert_eq!(CameraArg::parse("120,80").unwrap(), at(Spot::Point(Vec2::new(120.0, 80.0)), None, None));
+        assert_eq!(CameraArg::parse("start,12,90").unwrap(), at(Spot::Start(None), Some(12.0), Some(90.0)));
         assert_eq!(CameraArg::parse("1,2,30,-45").unwrap().turn, Some(-45.0));
         assert_eq!(CameraArg::parse("10, 20, 90").unwrap().distance, Some(90.0));
-        assert_eq!(CameraArg::parse("crater,70").unwrap(), CameraArg { spot: Spot::Crater, distance: Some(70.0), turn: None });
+        assert_eq!(CameraArg::parse("crater,70").unwrap(), at(Spot::Crater, Some(70.0), None));
         assert_eq!(CameraArg::parse("p3").unwrap().spot, Spot::Start(Some(3)));
         assert_eq!(CameraArg::parse("start").unwrap().spot, Spot::Start(None));
         assert!(CameraArg::parse("12").is_err());
-        assert!(CameraArg::parse("crater,1,2,3").is_err());
+        assert!(CameraArg::parse("crater,1,2,3,4").is_err());
         assert!(CameraArg::parse("x,y").is_err());
+        // Meteor sites, the overview, a pitch, and values left empty.
+        assert_eq!(CameraArg::parse("site").unwrap().spot, Spot::Site(0));
+        assert_eq!(CameraArg::parse("site2,60").unwrap(), at(Spot::Site(2), Some(60.0), None));
+        assert_eq!(CameraArg::parse("overview").unwrap(), at(Spot::Overview, None, None));
+        assert_eq!(CameraArg::parse("overview,,45").unwrap(), at(Spot::Overview, None, Some(45.0)));
+        assert_eq!(CameraArg::parse("crater,1,2,3").unwrap().pitch, Some(3.0));
+        assert_eq!(CameraArg::parse("5,6,,,80").unwrap(), CameraArg { spot: Spot::Point(Vec2::new(5.0, 6.0)), distance: None, turn: None, pitch: Some(80.0) });
+        // Names that merely start like `p<N>` or `site<N>` are not taken for them.
+        for bad in ["peak", "p", "px2", "sites", "site-1", "overview,far"] {
+            let err = CameraArg::parse(bad).err().unwrap_or_else(|| panic!("`{bad}` was accepted"));
+            assert!(err.starts_with("--camera"), "{err}");
+        }
+        assert!(CameraArg::parse("peak").unwrap_err().contains("site<N>|overview"), "the error lists the spots");
+    }
+
+    /// A flat test map with its features: the main site at the centre, a
+    /// second one off to the side.
+    fn camera_world(size: f32) -> (MapInfo, MapFeatures, Players) {
+        use af_core::ext::map::{MapSize, MeteorSite, ResolvedMapOptions, SiteKind, WaterLevel};
+        let map = MapInfo { size: Vec2::splat(size), crater_center: Vec2::splat(size * 0.5), crater_radius: 20.0, ..default() };
+        let site = |center, radius| MeteorSite { kind: SiteKind::Shattered, center, radius };
+        let features = MapFeatures {
+            options: ResolvedMapOptions { size: MapSize::Huge, water: WaterLevel::Seas, rivers: 2, site: SiteKind::Shattered },
+            land_min: Vec2::ZERO,
+            land_max: Vec2::splat(size),
+            ocean_edges: Vec::new(),
+            sites: vec![site(Vec2::splat(size * 0.5), 16.0), site(Vec2::new(size * 0.2, size * 0.7), 9.0)],
+            rivers: Vec::new(),
+            mountains: Vec::new(),
+        };
+        (map, features, Players::default())
+    }
+
+    /// Whether every ground point is inside the camera's frame.
+    fn in_frame(rig: &CameraRig, aspect: f32, points: &[Vec2]) -> bool {
+        let from_world = af_input::rig_transform(rig).compute_affine().inverse();
+        let tan = (af_input::FOV_DEG.to_radians() * 0.5).tan();
+        points.iter().all(|p| {
+            let v = from_world.transform_point3(Vec3::new(p.x, 0.0, p.y));
+            -v.z > 0.0 && v.x.abs() <= -v.z * tan * aspect + 1e-3 && v.y.abs() <= -v.z * tan + 1e-3
+        })
+    }
+
+    #[test]
+    fn overview_frames_the_whole_map_and_sites_their_rims() {
+        let aspect = 16.0 / 9.0;
+        for size in [160.0, 384.0, 1024.0, 1372.0] {
+            let (map, features, players) = camera_world(size);
+            let corners = [Vec2::ZERO, Vec2::new(size, 0.0), Vec2::splat(size), Vec2::new(0.0, size)];
+            for turn in [None, Some(45.0)] {
+                let view = CameraView { map: &map, features: Some(&features), players: &players, viewer: None, aspect };
+                let mut rig = CameraRig::default();
+                CameraArg { spot: Spot::Overview, distance: None, turn, pitch: None }.apply(&view, &mut rig);
+                assert_eq!(rig.focus, Vec2::splat(size * 0.5));
+                assert!(rig.distance > af_input::MAX_DISTANCE || size < 300.0, "{size} m: {}", rig.distance);
+                assert!(rig.distance < MAX_DEV_DISTANCE, "{size} m: the largest map fits ({})", rig.distance);
+                assert!(in_frame(&rig, aspect, &corners), "{size} m, turn {turn:?}: every corner in view");
+                assert!(!in_frame(&CameraRig { distance: rig.distance * 0.9, ..rig }, aspect, &corners), "{size} m: and no farther than needed");
+                // The farthest corner is inside the far plane.
+                let eye = af_input::rig_transform(&rig).translation;
+                assert!(corners.iter().all(|c| eye.distance(Vec3::new(c.x, 0.0, c.y)) < af_input::FAR_PLANE));
+            }
+            // A meteor site is framed round its rim; without features, the crater.
+            let view = CameraView { map: &map, features: Some(&features), players: &players, viewer: None, aspect };
+            let mut rig = CameraRig::default();
+            CameraArg::parse("site1").unwrap().apply(&view, &mut rig);
+            assert_eq!(rig.focus, features.sites[1].center);
+            assert!(in_frame(&rig, aspect, &[features.sites[1].center + Vec2::new(9.0, 0.0), features.sites[1].center - Vec2::new(0.0, 9.0)]));
+            assert!(rig.distance >= af_input::MIN_DISTANCE && rig.distance < 150.0, "{}", rig.distance);
+            let bare = CameraView { features: None, ..view };
+            CameraArg::parse("site1,40").unwrap().apply(&bare, &mut rig);
+            assert_eq!((rig.focus, rig.distance), (map.crater_center, 40.0));
+        }
+    }
+
+    #[test]
+    fn camera_pitch_and_distance_are_kept_in_range() {
+        let (map, features, players) = camera_world(200.0);
+        let view = CameraView { map: &map, features: Some(&features), players: &players, viewer: None, aspect: 1.5 };
+        let mut rig = CameraRig::default();
+        CameraArg::parse("centre,9000,0,90").unwrap().apply(&view, &mut rig);
+        assert_eq!(rig.distance, MAX_DEV_DISTANCE);
+        assert!((rig.pitch - MAX_PITCH_DEG.to_radians()).abs() < 1e-6, "never straight down");
+        assert!(rig_points_down(&rig));
+        CameraArg::parse("centre,60,0,2").unwrap().apply(&view, &mut rig);
+        assert!((rig.pitch - MIN_PITCH_DEG.to_radians()).abs() < 1e-6);
+        assert_eq!(rig.distance, 60.0);
+        // A whole-map view stays inside the far plane.
+        const { assert!(MAX_DEV_DISTANCE + 1000.0 < af_input::FAR_PLANE) };
+    }
+
+    #[test]
+    fn no_hud_hides_the_hud() {
+        let dev = args(&["--no-hud"]).unwrap();
+        assert!(dev.any(), "a dev flag: it needs a window");
+        let plan = dev.plan(&test_data(), &mut setup(2, Some(0))).unwrap();
+        assert!(plan.no_hud && !args(&[]).unwrap().plan(&test_data(), &mut setup(2, Some(0))).unwrap().no_hud);
+        let mut app = App::new();
+        install(&mut app, plan);
+        assert_eq!(app.world().get_resource::<HudHidden>(), Some(&HudHidden(true)));
+    }
+
+    fn rig_points_down(rig: &CameraRig) -> bool {
+        let t = af_input::rig_transform(rig);
+        t.translation.is_finite() && t.forward().y < 0.0
     }
 
     #[test]
@@ -1233,12 +1457,14 @@ mod tests {
         assert!(plan.follow);
         let mut rig = CameraRig::default();
         let map = MapInfo { size: Vec2::splat(100.0), ..default() };
-        CameraArg::parse("50,50,12").unwrap().apply(&map, &Players::default(), None, &mut rig);
+        let players = Players::default();
+        let view = CameraView { map: &map, features: None, players: &players, viewer: None, aspect: 16.0 / 9.0 };
+        CameraArg::parse("50,50,12").unwrap().apply(&view, &mut rig);
         assert_eq!(rig.distance, 12.0);
-        CameraArg::parse("50,50,1").unwrap().apply(&map, &Players::default(), None, &mut rig);
+        CameraArg::parse("50,50,1").unwrap().apply(&view, &mut rig);
         assert_eq!(rig.distance, CLOSE_UP_DISTANCE);
         let yaw = rig.yaw;
-        CameraArg::parse("50,50,12,180").unwrap().apply(&map, &Players::default(), None, &mut rig);
+        CameraArg::parse("50,50,12,180").unwrap().apply(&view, &mut rig);
         assert!((af_geom::wrap_angle(rig.yaw - af_input::VIEW_YAW).abs() - std::f32::consts::PI).abs() < 1e-5, "looking from the other side");
         assert_eq!(yaw, CameraRig::default().yaw, "no turn given: the yaw is left alone");
     }

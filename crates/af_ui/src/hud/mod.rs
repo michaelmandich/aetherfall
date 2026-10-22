@@ -4,8 +4,9 @@
 //!
 //! The node tree is spawned once on entering the match and updated in
 //! place; panels hide with `Display::None`/`Visibility::Hidden` instead of
-//! respawning. Two summaries computed first each frame feed every panel:
-//! [`HudView`] (whose eyes we look through) and [`SelectionInfo`].
+//! respawning, and the whole tree hides while `HudHidden` is set. Two
+//! summaries computed first each frame feed every panel: [`HudView`]
+//! (whose eyes we look through) and [`SelectionInfo`].
 
 pub(crate) mod card_view;
 pub(crate) mod groups;
@@ -18,6 +19,7 @@ pub(crate) mod topbar;
 #[cfg(test)]
 mod tests;
 
+use af_core::ext::ui::HudHidden;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -70,7 +72,7 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<SelectionInfo>()
         .configure_sets(Update, (HudSet::Prepare, HudSet::Panels).chain().in_set(ClientSet::Ui).run_if(in_state(GameState::Playing)))
         .add_systems(OnEnter(GameState::Playing), (reset_hud_state, spawn_hud).chain())
-        .add_systems(Update, (update_view, track_selection).in_set(HudSet::Prepare));
+        .add_systems(Update, (update_view, track_selection, hide_hud).in_set(HudSet::Prepare));
     topbar::plugin(app);
     groups::plugin(app);
     notices::plugin(app);
@@ -135,6 +137,15 @@ fn spawn_hud(mut commands: Commands, data: Res<Data>, mut images: ResMut<Assets<
             card_view::spawn_tooltip(root);
             overlays::spawn(root);
         });
+}
+
+/// `HudHidden`: the whole HUD out of sight (and out of the pointer's way)
+/// while it is set, back when it is cleared.
+fn hide_hud(hidden: Option<Res<HudHidden>>, mut roots: Query<&mut Visibility, With<HudRoot>>) {
+    let want = if hidden.is_some_and(|h| h.0) { Visibility::Hidden } else { Visibility::Inherited };
+    for mut v in &mut roots {
+        v.set_if_neq(want);
+    }
 }
 
 fn update_view(local: Res<LocalPlayer>, players: Option<Res<Players>>, choice: Res<SpectatorChoice>, mut view: ResMut<HudView>) {

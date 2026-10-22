@@ -14,7 +14,7 @@ use bevy::state::app::StatesPlugin;
 use bevy::ui::RelativeCursorPosition;
 
 use super::card_view::{CardSlot, CardState, SlotCount};
-use super::minimap::{Minimap, MINIMAP_PX};
+use super::minimap::{Minimap, MINIMAP_RES};
 use super::overlays::{GameOverScreen, GameOverState, LeavePanel};
 use super::selection::QueueSlot;
 use super::{HudRoot, HudView, SelectionInfo};
@@ -338,8 +338,8 @@ fn redrawn_minimap(app: &mut App) -> Vec<u8> {
 
 /// RGB of the minimap pixel over a point of the 128 m test map.
 fn rgb_at(pixels: &[u8], pos: Vec2) -> [u8; 3] {
-    let px = MinimapGeometry::new(Vec2::splat(128.0), MINIMAP_PX).pixel(pos).unwrap();
-    let i = ((px.y * MINIMAP_PX + px.x) * 4) as usize;
+    let px = MinimapGeometry::new(Vec2::splat(128.0), MINIMAP_RES).pixel(pos).unwrap();
+    let i = ((px.y * MINIMAP_RES + px.x) * 4) as usize;
     [pixels[i], pixels[i + 1], pixels[i + 2]]
 }
 
@@ -848,4 +848,80 @@ fn top_bar_names_its_values() {
     for name in ["Food", "Wood", "Stone", "Copper", "Iron", "Silicon", "Aether", "Adamant", "Pop"] {
         assert!(t.iter().any(|s| s == name), "{name} missing from {t:?}");
     }
+}
+
+/// A match on a map with features opens with a notice naming the map.
+#[test]
+fn the_match_opens_with_the_map_name() {
+    use af_core::ext::map::{MapFeatures, MapSize, ResolvedMapOptions, SiteKind, WaterLevel};
+    let mut app = sim_app(test_data());
+    add_client_resources(&mut app);
+    flat_world(&mut app, 128.0, &[("ironhold", 0), ("dune", 1)]);
+    app.insert_resource(LocalPlayer(Some(PlayerId(0))));
+    app.insert_resource(MapFeatures {
+        options: ResolvedMapOptions { size: MapSize::Large, water: WaterLevel::Lakes, rivers: 2, site: SiteKind::Shattered },
+        land_min: Vec2::ZERO,
+        land_max: Vec2::splat(128.0),
+        ocean_edges: Vec::new(),
+        sites: Vec::new(),
+        rivers: Vec::new(),
+        mountains: Vec::new(),
+    });
+    run_ticks(&mut app, 2);
+    let notices = &app.world().resource::<Notices>().list;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!((notices[0].player, notices[0].kind), (None, NoticeKind::Info), "for everyone");
+    assert!(texts(&mut app).contains(&"Large - Lakes - 2 rivers - The Shattered Fall".to_string()));
+    // Without features (today's maps, the test world) there is no such notice.
+    let mut plain = hud_app();
+    run_ticks(&mut plain, 2);
+    assert!(plain.world().resource::<Notices>().list.is_empty());
+}
+
+#[test]
+fn the_hud_hides_for_clean_screenshots_and_comes_back() {
+    use af_core::ext::ui::HudHidden;
+    let mut app = hud_app();
+    let root = |app: &mut App| {
+        let world = app.world_mut();
+        *world.query_filtered::<&Visibility, With<HudRoot>>().single(world).unwrap()
+    };
+    assert_eq!(root(&mut app), Visibility::Inherited);
+    app.insert_resource(HudHidden(true));
+    app.update();
+    assert_eq!(root(&mut app), Visibility::Hidden);
+    app.insert_resource(HudHidden(false));
+    app.update();
+    assert_eq!(root(&mut app), Visibility::Inherited);
+}
+
+/// The menu's map keys change the options, and Start hands them over.
+#[test]
+fn menu_map_keys_reach_the_match() {
+    use af_core::ext::map::{MapOptions, MapSize, RiverCount, SiteChoice, SiteKind, WaterLevel};
+    let mut app = App::new();
+    app.set_error_handler(bevy::ecs::error::warn);
+    app.add_plugins((MinimalPlugins, StatesPlugin));
+    app.insert_state(GameState::Menu);
+    app.insert_resource(Data(test_data()));
+    app.add_plugins(af_core::CorePlugin);
+    add_client_resources(&mut app);
+    app.update();
+    for key in [KeyCode::KeyM, KeyCode::KeyW, KeyCode::KeyR, KeyCode::KeyR, KeyCode::KeyC] {
+        tap(&mut app, key);
+    }
+    // Shift+C steps the site back again; a second C moves on to the Crater.
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ShiftLeft);
+    tap(&mut app, KeyCode::KeyC);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::ShiftLeft);
+    tap(&mut app, KeyCode::KeyC);
+    let t = texts(&mut app);
+    for shown in ["Large", "Coast: one sea edge", "Two", "Starfall Crater"] {
+        assert!(t.contains(&shown.to_string()), "{shown} missing from {t:?}");
+    }
+    tap(&mut app, KeyCode::Enter);
+    app.update();
+    let want = MapOptions { size: MapSize::Large, water: WaterLevel::Coast, rivers: RiverCount::Two, site: SiteChoice::Kind(SiteKind::Crater) };
+    assert_eq!(app.world().get_resource::<MapOptions>(), Some(&want));
+    assert_eq!(*app.world().resource::<State<GameState>>().get(), GameState::Playing);
 }

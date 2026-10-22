@@ -10,7 +10,8 @@
 //! | `down [left\|right]` / `up [left\|right]` | holds / releases a button (drags) |
 //! | `press <label>` | presses the HUD button with that label, as `--press` |
 //! | `select <what>` | selects, as `--select` (without moving the camera) |
-//! | `camera <spot>[,dist]` | frames the view, as `--camera` |
+//! | `camera <spot>[,dist[,turn[,pitch]]]` | frames the view, as `--camera` |
+//! | `hud on\|off` | shows / hides the HUD (as `--no-hud`) |
 //! | `defeat <player>` | deletes everything that player owns (to end a match) |
 //! | `damage <what> <fraction>` | sets what `select <what>` would pick to that fraction of its hit points (a building to repair) |
 //! | `shot <path>` | takes a screenshot (the run exits after the last one) |
@@ -23,10 +24,13 @@
 
 use std::path::PathBuf;
 
+use af_core::ext::map::MapFeatures;
+use af_core::ext::ui::HudHidden;
 use af_core::prelude::*;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
-use super::{CameraArg, Pick, PickWorld, VirtualCursor};
+use super::{CameraArg, CameraView, Pick, PickWorld, VirtualCursor};
 
 /// One scripted action.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +43,8 @@ pub(super) enum Step {
     Press(String),
     Select(Pick),
     Camera(CameraArg),
+    /// Show (`true`) or hide the HUD.
+    Hud(bool),
     Defeat(u8),
     /// Hit points of the picked entities set to this fraction of their most.
     Damage(Pick, f32),
@@ -112,6 +118,11 @@ pub(super) fn parse(data: &GameData, script: &str) -> Result<Vec<(f32, Step)>, S
             "press" if !arg.is_empty() => Step::Press(arg.to_string()),
             "select" => Step::Select(Pick::parse(data, arg)?),
             "camera" => Step::Camera(CameraArg::parse(arg)?),
+            "hud" => match arg {
+                "on" | "show" => Step::Hud(true),
+                "off" | "hide" => Step::Hud(false),
+                _ => return Err(err("want `hud on` or `hud off`")),
+            },
             "defeat" => Step::Defeat(super::number("--script defeat", arg)?),
             "damage" => {
                 let (what, fraction) = arg.rsplit_once(' ').ok_or_else(|| err("want `damage <what> <fraction>`"))?;
@@ -122,7 +133,7 @@ pub(super) fn parse(data: &GameData, script: &str) -> Result<Vec<(f32, Step)>, S
                 Step::Damage(Pick::parse(data, what.trim())?, fraction)
             }
             "shot" if !arg.is_empty() => Step::Shot(PathBuf::from(arg)),
-            _ => return Err(err("unknown action (key, move, click, down, up, press, select, camera, defeat, damage, shot)")),
+            _ => return Err(err("unknown action (key, move, click, down, up, press, select, camera, hud, defeat, damage, shot)")),
         };
         steps.push((at, step));
     }
@@ -279,8 +290,8 @@ pub(super) fn script_input(
 }
 
 /// Update, between af_input and af_ui: the due steps that act on the game
-/// (presses, selections, camera, defeats, damage); a press ends the frame's
-/// turn so the HUD sees one press at a time.
+/// (presses, selections, camera, the HUD, defeats, damage); a press ends
+/// the frame's turn so the HUD sees one press at a time.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn script_world(
     mut commands: Commands,
@@ -288,7 +299,9 @@ pub(super) fn script_world(
     clock: Res<SimClock>,
     local: Res<LocalPlayer>,
     map: Res<MapInfo>,
+    features: Option<Res<MapFeatures>>,
     players: Res<Players>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     picks: PickWorld,
     mut buttons: super::Buttons,
     mut rig: ResMut<CameraRig>,
@@ -312,7 +325,12 @@ pub(super) fn script_world(
                 let n = picks.select(&mut commands, pick, me).map_or(0, |(n, _)| n);
                 info!("script: selected {n} ({pick:?})");
             }
-            Step::Camera(arg) => arg.apply(&map, &players, local.0, &mut rig),
+            Step::Camera(arg) => {
+                let aspect = super::window_aspect(&windows);
+                let view = CameraView { map: &map, features: features.as_deref(), players: &players, viewer: local.0, aspect };
+                arg.apply(&view, &mut rig);
+            }
+            Step::Hud(shown) => commands.insert_resource(HudHidden(!shown)),
             Step::Defeat(p) => {
                 let player = PlayerId(p);
                 let entities: Vec<Entity> = owned.iter().filter(|(_, o)| o.0 == player).map(|(e, _)| e).collect();
@@ -356,6 +374,10 @@ mod tests {
         assert_eq!(steps[3].1, Step::Move(Vec2::new(800.0, 450.0)));
         assert_eq!(steps[4].1, Step::Click { button: MouseButton::Right, mods: vec![KeyCode::ShiftLeft] });
         assert_eq!(shots(&steps), vec![(4.0, PathBuf::from("a.png"))]);
+        let views = parse(&data, "1 camera overview,,45; 2 hud off; 3 camera site1; 4 hud on").unwrap();
+        assert_eq!(views[0].1, Step::Camera(CameraArg { spot: super::super::Spot::Overview, distance: None, turn: Some(45.0), pitch: None }));
+        assert_eq!((views[1].1.clone(), views[3].1.clone()), (Step::Hud(false), Step::Hud(true)));
+        assert!(!views[1].1.is_input(), "the HUD is switched with the world steps");
         let damage = parse(&data, "1 damage building:house 0.4").unwrap();
         assert_eq!(damage[0].1, Step::Damage(Pick::Building(data.building_id("house").unwrap()), 0.4));
     }
@@ -373,7 +395,7 @@ mod tests {
         assert_eq!(key("."), Some((vec![], KeyCode::Period)));
         assert_eq!(key("F1"), Some((vec![], KeyCode::F1)));
         assert_eq!(key("hyper+q"), None);
-        for bad in ["key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3", "1 damage hall", "1 damage hall 0", "1 damage hall 1.5", "1 damage nothing 0.5"] {
+        for bad in ["1 hud maybe", "1 camera peak", "key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3", "1 damage hall", "1 damage hall 0", "1 damage hall 1.5", "1 damage nothing 0.5"] {
             assert!(parse(&data, bad).is_err(), "{bad}");
         }
         assert!(parse(&data, " ; ;").unwrap().is_empty());

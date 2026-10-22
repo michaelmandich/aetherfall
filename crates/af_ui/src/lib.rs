@@ -28,7 +28,7 @@ pub mod tooltip;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
-pub use hud::minimap::{MinimapGeometry, MINIMAP_PX};
+pub use hud::minimap::{MinimapGeometry, MINIMAP_PX, MINIMAP_RES};
 
 /// Menu, HUD and the UI hit-test. Needs `CorePlugin`, and in a real app
 /// the UI, picking and input plugins (all in `DefaultPlugins`).

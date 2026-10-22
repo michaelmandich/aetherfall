@@ -1,5 +1,6 @@
 //! Pure text formatting shared by the HUD panels and tooltips.
 
+use af_core::ext::map::ResolvedMapOptions;
 use af_core::prelude::*;
 use bevy::prelude::Entity;
 
@@ -175,6 +176,13 @@ pub fn notice_alpha(age: f32) -> f32 {
     ((NOTICE_LIFETIME - age) / NOTICE_FADE).clamp(0.0, 1.0)
 }
 
+/// The map's name from its options: "Large - Lakes - 2 rivers - The
+/// Shattered Fall".
+pub fn map_title(o: &ResolvedMapOptions) -> String {
+    let rivers = if o.rivers == 1 { "1 river".to_string() } else { format!("{} rivers", o.rivers) };
+    format!("{} - {} - {rivers} - {}", o.size.name(), o.water.name(), o.site.name())
+}
+
 /// "Climber (Foot); Marshwalker (Mounted)", or "No terrain trait".
 pub fn faction_traits(f: &FactionDef) -> String {
     if f.traits.is_empty() {
@@ -196,6 +204,24 @@ mod tests {
     use super::*;
     use af_core::testing::test_data;
     use bevy::prelude::Vec2;
+
+    #[test]
+    fn maps_are_named_by_their_options() {
+        use af_core::ext::map::{MapSize, SiteKind, WaterLevel};
+        let o = ResolvedMapOptions { size: MapSize::Large, water: WaterLevel::Lakes, rivers: 2, site: SiteKind::Shattered };
+        assert_eq!(map_title(&o), "Large - Lakes - 2 rivers - The Shattered Fall");
+        let one = ResolvedMapOptions { size: MapSize::Small, water: WaterLevel::Dry, rivers: 1, site: SiteKind::Crater };
+        assert_eq!(map_title(&one), "Small - Dry - 1 river - The Starfall Crater");
+        for size in MapSize::ALL {
+            for water in WaterLevel::ALL {
+                for site in SiteKind::ALL {
+                    let t = map_title(&ResolvedMapOptions { size, water, rivers: 2, site });
+                    // The default font has ASCII; the feed is 620 px wide.
+                    assert!(t.is_ascii() && t.len() <= 60, "{t}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn clock_formats_minutes_and_hours() {

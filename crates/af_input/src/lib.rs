@@ -5,7 +5,8 @@
 //!
 //! 1. camera: once per match, frame the start position with the start view
 //!    ([`START_DISTANCE`], [`VIEW_YAW`]); pan/zoom the `CameraRig` (arrows,
-//!    screen edges, middle drag, wheel), drive the
+//!    screen edges, middle drag, wheel, out to [`max_distance`], which grows
+//!    on big maps), drive the
 //!    [`RtsCamera`](af_core::ext::input::RtsCamera) transform from it;
 //! 2. cursor: ray through the mouse (or its stand-in,
 //!    [`CursorOverride`](af_core::ext::input::CursorOverride)) ->
@@ -38,7 +39,7 @@ use af_core::prelude::*;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
-pub use camera::{rig_transform, view_axes, FOV_DEG, MAX_DISTANCE, MIN_DISTANCE, START_DISTANCE, VIEW_YAW};
+pub use camera::{max_distance, rig_transform, view_axes, FAR_PLANE, FOV_DEG, MAX_DISTANCE, MAX_DISTANCE_HUGE, MIN_DISTANCE, START_DISTANCE, VIEW_YAW};
 
 pub struct RtsInputPlugin;
 

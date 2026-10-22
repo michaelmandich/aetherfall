@@ -2,6 +2,7 @@
 //! `focus`, pitched down and looking along the fixed rig yaw.
 
 use af_core::ext::input::{CursorOverride, RtsCamera};
+use af_core::ext::map::MapFeatures;
 use af_core::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -14,8 +15,19 @@ pub const FOV_DEG: f32 = 32.0;
 /// Closest zoom of the mouse wheel (metres from the focus). A rig set
 /// closer from elsewhere (dev close-ups) stays there until the wheel turns.
 pub const MIN_DISTANCE: f32 = 25.0;
-/// Farthest zoom (metres from the focus).
+/// Farthest zoom of the mouse wheel on maps up to the usual size (metres
+/// from the focus); larger maps allow more ([`max_distance`]). A rig set
+/// farther from elsewhere (a dev overview) stays there until the wheel turns.
 pub const MAX_DISTANCE: f32 = 150.0;
+/// Farthest zoom of the mouse wheel on the largest maps.
+pub const MAX_DISTANCE_HUGE: f32 = 210.0;
+/// Land side (metres) up to which [`MAX_DISTANCE`] holds: the largest
+/// Medium map (eight players). Bigger land zooms out further, reaching
+/// [`MAX_DISTANCE_HUGE`] at 1.6 times this (Huge).
+const USUAL_LAND: f32 = 384.0;
+/// The camera draws everything up to this far away (metres): a whole huge
+/// map seen from a dev overview, a few kilometres out.
+pub const FAR_PLANE: f32 = 8000.0;
 /// Zoom a match starts at: a starting base (hall, houses, the nearest
 /// resources) fits on screen.
 pub const START_DISTANCE: f32 = 66.0;
@@ -130,9 +142,26 @@ impl Grab {
     }
 }
 
-/// New camera distance after `notches` wheel notches (positive = closer).
-pub(crate) fn zoomed(distance: f32, notches: f32) -> f32 {
-    (distance * ZOOM_STEP.powf(notches)).clamp(MIN_DISTANCE, MAX_DISTANCE)
+/// New camera distance after `notches` wheel notches (positive = closer),
+/// zooming out at most to `max`.
+pub(crate) fn zoomed(distance: f32, notches: f32, max: f32) -> f32 {
+    (distance * ZOOM_STEP.powf(notches)).clamp(MIN_DISTANCE, max)
+}
+
+/// Farthest wheel zoom on this map: [`MAX_DISTANCE`] on the usual sizes,
+/// rising with the land (its size option, or its side past the largest
+/// Medium map) to [`MAX_DISTANCE_HUGE`] on Huge maps, so a big map is still
+/// easy to look over without the camera feeling different on the others.
+pub fn max_distance(map: Option<&MapInfo>, features: Option<&MapFeatures>) -> f32 {
+    let land = match (features, map) {
+        (Some(f), _) => (f.land_max - f.land_min).max_element(),
+        (None, Some(m)) => m.size.max_element(),
+        (None, None) => 0.0,
+    };
+    let factor = features.map_or(1.0, |f| f.options.size.factor()).max(land / USUAL_LAND);
+    let huge = af_core::ext::map::MapSize::Huge.factor();
+    let t = ((factor - 1.0) / (huge - 1.0)).clamp(0.0, 1.0);
+    MAX_DISTANCE + (MAX_DISTANCE_HUGE - MAX_DISTANCE) * t
 }
 
 /// Arrow-key direction (x right, y up the screen).
@@ -146,7 +175,9 @@ pub(crate) fn spawn_camera(mut commands: Commands, rig: Res<CameraRig>, mut star
         Name::new("RTS camera"),
         RtsCamera,
         Camera3d::default(),
-        Projection::from(PerspectiveProjection { fov: FOV_DEG.to_radians(), near: 0.5, far: 2000.0, ..default() }),
+        // The projection's depth is infinite and reversed, so a far plane
+        // this far costs no precision; it only culls.
+        Projection::from(PerspectiveProjection { fov: FOV_DEG.to_radians(), near: 0.5, far: FAR_PLANE, ..default() }),
         rig_transform(&rig),
     ));
     start.0 = true;
@@ -159,19 +190,23 @@ pub(crate) fn despawn_camera(mut commands: Commands, cameras: Query<Entity, With
     }
 }
 
-/// Once per match: look at the local player's start (map centre when spectating).
+/// Once per match: look at the local player's start; a spectator looks at
+/// the main meteor site (the middle of the land, which the middle of the
+/// map is not when a sea edge widens it), else the map centre.
 pub(crate) fn focus_match_start(
     mut start: ResMut<StartFocus>,
     local: Res<LocalPlayer>,
     players: Res<Players>,
     map: Option<Res<MapInfo>>,
+    features: Option<Res<MapFeatures>>,
     mut rig: ResMut<CameraRig>,
 ) {
     if !start.0 {
         return;
     }
     let Some(map) = map else { return };
-    let target = local.0.and_then(|p| players.try_get(p)).map_or(map.size * 0.5, |p| p.start_pos);
+    let middle = features.as_ref().and_then(|f| f.sites.first()).map_or(map.size * 0.5, |s| s.center);
+    let target = local.0.and_then(|p| players.try_get(p)).map_or(middle, |p| p.start_pos);
     *rig = CameraRig { distance: START_DISTANCE, yaw: VIEW_YAW, ..CameraRig::default() };
     focus_on(&mut rig, target, Some(&map));
     start.0 = false;
@@ -187,6 +222,7 @@ pub(crate) fn camera_control(
     windows: Query<&Window, With<PrimaryWindow>>,
     stand_in: Option<Res<CursorOverride>>,
     map: Option<Res<MapInfo>>,
+    features: Option<Res<MapFeatures>>,
     mut rig: ResMut<CameraRig>,
     mut grab: Local<Grab>,
 ) {
@@ -217,7 +253,7 @@ pub(crate) fn camera_control(
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
     };
-    let distance = if cursor.over_ui || notches == 0.0 { rig.distance } else { zoomed(rig.distance, notches) };
+    let distance = if cursor.over_ui || notches == 0.0 { rig.distance } else { zoomed(rig.distance, notches, max_distance(map.as_deref(), features.as_deref())) };
 
     let focus = clamp_to_map(focus, map.as_deref());
     if focus != rig.focus || distance != rig.distance {
@@ -284,10 +320,51 @@ mod tests {
 
     #[test]
     fn zoom_is_clamped_and_wheel_up_moves_closer() {
-        assert!(zoomed(55.0, 1.0) < 55.0);
-        assert!(zoomed(55.0, -1.0) > 55.0);
-        assert_eq!(zoomed(30.0, 10.0), MIN_DISTANCE);
-        assert_eq!(zoomed(140.0, -10.0), MAX_DISTANCE);
+        assert!(zoomed(55.0, 1.0, MAX_DISTANCE) < 55.0);
+        assert!(zoomed(55.0, -1.0, MAX_DISTANCE) > 55.0);
+        assert_eq!(zoomed(30.0, 10.0, MAX_DISTANCE), MIN_DISTANCE);
+        assert_eq!(zoomed(140.0, -10.0, MAX_DISTANCE), MAX_DISTANCE);
+        assert_eq!(zoomed(140.0, -10.0, MAX_DISTANCE_HUGE), MAX_DISTANCE_HUGE);
+        // From a dev overview far out, the first notch comes back in range.
+        assert_eq!(zoomed(900.0, 1.0, MAX_DISTANCE), MAX_DISTANCE);
+    }
+
+    /// Map features for a map of `size` with land of side `land`.
+    fn features(size: af_core::ext::map::MapSize, land: f32) -> MapFeatures {
+        use af_core::ext::map::{ResolvedMapOptions, SiteKind, WaterLevel};
+        MapFeatures {
+            options: ResolvedMapOptions { size, water: WaterLevel::Lakes, rivers: 1, site: SiteKind::Crater },
+            land_min: Vec2::ZERO,
+            land_max: Vec2::splat(land),
+            ocean_edges: Vec::new(),
+            sites: Vec::new(),
+            rivers: Vec::new(),
+            mountains: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_zoom_reaches_further_on_bigger_maps() {
+        use af_core::ext::map::MapSize;
+        let map = |side: f32| MapInfo { size: Vec2::splat(side), ..default() };
+        // Today's maps keep today's limit.
+        assert_eq!(max_distance(None, None), MAX_DISTANCE);
+        for side in [160.0, 224.0, 288.0, 384.0] {
+            assert_eq!(max_distance(Some(&map(side)), None), MAX_DISTANCE, "{side} m");
+        }
+        // By the size option: Small and Medium as today, Large between, Huge furthest.
+        let by = |size: MapSize, land: f32| max_distance(Some(&map(land)), Some(&features(size, land)));
+        assert_eq!(by(MapSize::Small, 176.0), MAX_DISTANCE);
+        assert_eq!(by(MapSize::Medium, 384.0), MAX_DISTANCE);
+        let large = by(MapSize::Large, 288.0);
+        assert!(large > MAX_DISTANCE && large < MAX_DISTANCE_HUGE, "{large}");
+        assert!((by(MapSize::Huge, 360.0) - MAX_DISTANCE_HUGE).abs() < 1e-3, "two-player Huge");
+        assert!((by(MapSize::Huge, 616.0) - MAX_DISTANCE_HUGE).abs() < 1e-3, "eight-player Huge");
+        // A side set in metres counts by its land; an ocean band does not.
+        assert!((max_distance(Some(&map(1024.0)), None) - MAX_DISTANCE_HUGE).abs() < 1e-3);
+        assert!(max_distance(Some(&map(480.0)), None) > MAX_DISTANCE);
+        let coast = MapInfo { size: Vec2::splat(224.0 * 1.17), ..default() };
+        assert_eq!(max_distance(Some(&coast), Some(&features(MapSize::Medium, 224.0))), MAX_DISTANCE);
     }
 
     #[test]
