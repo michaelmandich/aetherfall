@@ -688,6 +688,7 @@ pub(crate) fn service_paths(
                 }
             }
             // ... and a groupmate served earlier in the line may have found the way.
+            nav.prepare(mob.mobility.0, ask.team);
             let mut checks = 0;
             let shared = queue.share(nav, &ask, &mut checks);
             spent += checks;
@@ -1482,5 +1483,79 @@ mod tests {
         println!("path service on a 768 m map with a river: {runs} ticks for 60 riders, {mean:.2} ms per tick, p90 {p90:.2} ms, worst {worst:.2} ms; {cells} cell and {coarse} coarse expansions");
         assert!(runs <= 40, "{runs} ticks");
         assert!(mean < 4.0 && p90 < 6.0, "{mean:.2} ms per tick of the path service, p90 {p90:.2} ms");
+    }
+
+    /// Paint `terrain` over every cell `inside` says.
+    fn paint(app: &mut App, terrain: &str, inside: impl Fn(i32, i32) -> bool) {
+        let data = app.world().resource::<Data>().0.clone();
+        let t = data.terrain_id(terrain).unwrap_or_else(|| panic!("no terrain `{terrain}`")).0;
+        let mut nav = app.world_mut().resource_mut::<Nav>();
+        for y in 0..nav.height() as i32 {
+            for x in 0..nav.width() as i32 {
+                if inside(x, y) {
+                    nav.set_terrain(IVec2::new(x, y), t);
+                }
+            }
+        }
+    }
+
+    /// A mountain range across a 512 m map with one 5 m pass 300 m off
+    /// the line: a rider crosses at the pass, and a giant too wide for it
+    /// is told at once that it cannot get there.
+    #[test]
+    fn a_range_is_crossed_at_its_pass() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 512.0, &[("ironhold", 0)]);
+        paint(&mut app, "mountain", |x, y| (250..266).contains(&y) && !(400..405).contains(&x));
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let (start, goal) = (Vec2::new(100.5, 200.5), Vec2::new(100.5, 320.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 12_000);
+        let (cells, coarse) = expanded(&app);
+        println!("a range with one pass 300 m off the line, 512 m map: {ticks} ticks, {cells} cell and {coarse} coarse expansions");
+        assert_eq!(s, PathStatus::Arrived);
+        assert!(trail.iter().any(|q| (399.0..406.0).contains(&q.x) && (250.0..266.0).contains(&q.y)), "through the pass");
+        assert!(cells < 5_000, "{cells} cell expansions");
+        // Wider than the pass: no search, and it fails at the foot of the range.
+        let giant = data
+            .unit_ids()
+            .filter(|u| data.unit(*u).locomotion != MoveFlag::Flying)
+            .max_by(|a, b| data.unit(*a).size[0].total_cmp(&data.unit(*b).size[0]).then(b.cmp(a)))
+            .filter(|u| data.unit(*u).size[0] * 0.5 > 2.5);
+        if let Some(giant) = giant {
+            let before = expanded(&app).0;
+            let g = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), giant, start, 0.0));
+            app.world_mut().entity_mut(g).insert(MoveGoal::point(goal, 0.5));
+            let (s, ..) = walk(&mut app, g, 3_000);
+            assert_eq!(s, PathStatus::Failed);
+            assert_eq!(expanded(&app).0, before, "no search");
+        }
+    }
+
+    /// Two rivers crossing in a plus, one ford on each arm: a rider goes
+    /// from one quadrant to the opposite one through two fords.
+    #[test]
+    fn two_crossing_rivers_are_crossed_at_their_fords() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 512.0, &[("ironhold", 0)]);
+        paint(&mut app, "deep_water", |x, y| (250..262).contains(&x) || (250..262).contains(&y));
+        paint(&mut app, "ford", |x, y| ((250..262).contains(&x) && ((60..67).contains(&y) || (450..457).contains(&y))) || ((250..262).contains(&y) && ((60..67).contains(&x) || (450..457).contains(&x))));
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let (start, goal) = (Vec2::new(200.5, 200.5), Vec2::new(312.5, 312.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 12_000);
+        let (cells, coarse) = expanded(&app);
+        println!("two crossing rivers, 512 m map: {ticks} ticks, {cells} cell and {coarse} coarse expansions");
+        assert_eq!(s, PathStatus::Arrived);
+        let nav = app.world().resource::<Nav>();
+        let deep = data.terrain_id("deep_water").expect("deep water");
+        assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != deep), "never in deep water");
+        assert!(cells < 5_000, "{cells} cell expansions");
     }
 }

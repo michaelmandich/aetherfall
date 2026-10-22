@@ -10,10 +10,10 @@ that turns sim state into boxes, so "real graphics" later means replacing
 | crate | role | depends on |
 |---|---|---|
 | `af_data` | content schema, RON loader, validator (`cargo run -p af_data --example check`) | serde, ron |
-| `af_geom` | ground-plane geometry (OBB/SAT/rays), `NavGrid`, A* | bevy_math |
+| `af_geom` | ground-plane geometry (OBB/SAT/rays), `NavGrid`, A*, terrain regions and coarse routes | bevy_math |
 | `af_core` | **the contract**: components, resources, messages, sets, rules, spawn, placement, spatial index, test helpers | bevy, af_data, af_geom |
 | `af_map` | match setup: terrain generation, resources, players, start spawns, teardown | af_core |
-| `af_movement` | obstacle sync into the nav grid, path service, steering, no-overlap collisions | af_core |
+| `af_movement` | obstacle sync into the nav grid, terrain regions (`NavRegions`), path service, steering, no-overlap collisions | af_core |
 | `af_behavior` | unit commands, order state machines, gathering/building/repair, chasing, stances, healing | af_core |
 | `af_combat` | target acquisition, all weapon kinds, projectiles/FX, damage/armour/shields, death | af_core |
 | `af_economy` | placement, construction, production queues, research/ages/techs, upgrades, trickle, victory | af_core |
@@ -66,10 +66,36 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   minutes; marking nodes or buildings does not. So a windowed match can
   drift from its headless replay (and `--select` changes a match). The
   determinism tests do not cover it yet.
+* Pathing on big maps (`docs/design/maps-and-terrain.md`, section 7): a
+  single A* search stops after 24,000 cells, so a river or a range across
+  the map is handled a level up. af_geom labels the connected regions of
+  the terrain per mover class (the terrain its mobility enters x its
+  clearance; obstacles and teams left out, so they hold all match) and
+  builds a coarse graph over them, one node per connected part of each
+  8 x 8 cell block (`af_geom::regions`). af_movement publishes them as
+  `af_core::ext::movement::NavRegions`: made on entering a match (the
+  start units' classes built at once) and again whenever the grid's
+  terrain stamp changes; any other class's map is built on first use, a
+  pure function of the terrain, whoever asks. The path service answers a
+  goal out of the mover's region at once with the reachable point nearest
+  it (no search); plans a long way that no straight line covers on the
+  coarse graph and, when the route bends round the terrain, searches it
+  leg by leg (64 m of route a leg; the next leg is searched from the end
+  of the path while the unit walks its last 24 m, so it never stands
+  waiting); measures progress by the way left (path plus route beyond);
+  and serves the players' queues in turn, one request each round.
+  af_behavior's automatic choices (drop sites, next nodes, fields,
+  formation slots, patients, hostiles to chase) and af_ai's spots,
+  workers, targets and attack progress read the same regions and route
+  distances; without `NavRegions` (flat-world tests) everything is
+  reachable by the straight line.
 * Invariants: `crates/aetherfall/tests/invariants.rs` runs AI matches and
   checks every tick that no boxes overlap (> 0.1 m is a hard failure), that
-  nothing is stuck, NaN, leaking or mis-counted. Long sweeps:
-  `cargo test --release -p aetherfall --test invariants -- --include-ignored`.
+  nothing is stuck (by progress along its path), NaN, leaking or
+  mis-counted. Long sweeps:
+  `cargo test --release -p aetherfall --test invariants -- --include-ignored`
+  (`sweep_big_maps`: six to eight players on 512-768 m maps); `AF_SWEEP`
+  names matches and their map options (see `sweep_custom`).
 
 ## Client model
 

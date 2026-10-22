@@ -289,9 +289,10 @@ fn next_leg(goal: &MoveGoal, mob: &Mobile, pos: Vec2, path: &mut Mut<PathState>,
     // Past the last waypoint.
     if path.partial {
         if mover.truncated {
-            // The end of a leg, or of a search cut short: on along the same way.
+            // The end of a leg (on along the same way: the progress count
+            // goes on), or of a search cut short (counted afresh).
             mover.wants_repath = true;
-            mover.continuing = true;
+            mover.continuing = mover.on_leg;
         } else {
             path.status = PathStatus::Failed;
         }
