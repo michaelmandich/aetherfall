@@ -7,7 +7,9 @@
 //!   point also counts as arrived (the group settles into a blob).
 //! * After its last waypoint a unit walks straight at the goal (the box
 //!   surface of a followed entity) until it arrives; the end of a partial
-//!   path means the goal cannot be reached: `Failed`.
+//!   path means the goal cannot be reached (`Failed`), unless the path only
+//!   ends a leg of a long way, or a search the path service cut short:
+//!   then it asks for the way on.
 //! * Speed is `Stats::speed` x the terrain multiplier under the unit x a
 //!   facing factor, so slow-turning machines turn on the spot first.
 //! * Ground units look ahead along their heading and veer right of units in
@@ -287,7 +289,9 @@ fn next_leg(goal: &MoveGoal, mob: &Mobile, pos: Vec2, path: &mut Mut<PathState>,
     // Past the last waypoint.
     if path.partial {
         if mover.truncated {
+            // The end of a leg, or of a search cut short: on along the same way.
             mover.wants_repath = true;
+            mover.continuing = true;
         } else {
             path.status = PathStatus::Failed;
         }

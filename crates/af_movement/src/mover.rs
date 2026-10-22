@@ -1,6 +1,9 @@
 //! af_movement's private per-unit bookkeeping, kept beside the contract's
 //! `PathState` (which other crates read).
 
+use std::sync::Arc;
+
+use af_core::prelude::af_geom::CoarseRoute;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -9,6 +12,25 @@ use bevy::prelude::*;
 pub(crate) struct FollowTarget {
     pub pos: Vec2,
     pub obb: Obb,
+}
+
+/// What one search of the path service heads for (see `pathing`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Aim {
+    /// Where the search heads.
+    pub goal: Vec2,
+    /// It walks up to the followed entity's box (the last leg of a follow goal).
+    pub reach: bool,
+    /// `goal` is where the way ends; else it is the end of a leg of a
+    /// coarse route, and more legs follow.
+    pub last: bool,
+    /// The way ends at the reachable point nearest the goal: the goal
+    /// itself lies out of the unit's region.
+    pub unreachable: bool,
+    /// Route length left beyond `goal` (metres; 0 on the last leg).
+    pub beyond: f32,
+    /// The next leg, searched from the end of the unit's path and added to it.
+    pub extends: bool,
 }
 
 /// Movement state of one unit. Inserted by [`attach_movers`] on every unit.
@@ -68,6 +90,33 @@ pub(crate) struct Mover {
     /// ids do not tell age: Bevy orders them by opaque bits, the generation
     /// of a recycled slot first.
     pub born: u64,
+    /// Where the way to the current goal ends: the goal, or the reachable
+    /// point nearest it when the goal is out of the unit's region.
+    pub way_end: Vec2,
+    pub unreachable: bool,
+    /// The coarse route of a long way (shared with groupmates), the terrain
+    /// stamp of the map it was planned on, and the route leg the unit was
+    /// last found on.
+    pub route: Option<Arc<CoarseRoute>>,
+    pub route_stamp: u64,
+    pub route_segment: usize,
+    /// The path ends at the end of a leg of the route, not of the way: more
+    /// legs follow.
+    pub on_leg: bool,
+    /// Route length left beyond the end of the path (metres; 0 unless `on_leg`).
+    pub beyond: f32,
+    /// The next leg is wanted (searched from the end of the path while the
+    /// unit walks on).
+    pub extend: bool,
+    /// The pending repath only goes on along the same way (the end of a
+    /// leg was reached before the next leg came): it continues the progress
+    /// count.
+    pub continuing: bool,
+    /// What the search the path service holds for this unit heads for (set
+    /// while it is spread over ticks).
+    pub aim: Option<Aim>,
+    /// Searches started for the current goal (names each for `find_path_sliced`).
+    pub searches: u32,
 }
 
 impl Default for Mover {
@@ -96,6 +145,17 @@ impl Default for Mover {
             fresh: false,
             overlapped_for: 0,
             born: 0,
+            way_end: Vec2::ZERO,
+            unreachable: false,
+            route: None,
+            route_stamp: 0,
+            route_segment: 0,
+            on_leg: false,
+            beyond: 0.0,
+            extend: false,
+            continuing: false,
+            aim: None,
+            searches: 0,
         }
     }
 }
@@ -129,6 +189,19 @@ impl Mover {
         self.progress_best = f32::INFINITY;
         self.progress_time = 0.0;
         self.fruitless_repaths = 0;
+    }
+
+    /// Length of the way left from `pos` (metres): along the path to its
+    /// end (straight to where it led once past it), plus the route beyond
+    /// it when the path ends at the end of a leg.
+    pub fn way_left(&self, pos: Vec2, path: &PathState) -> f32 {
+        let along = match path.waypoints.get(path.next) {
+            Some(&next) => pos.distance(next) + path.waypoints[path.next..].windows(2).map(|w| w[0].distance(w[1])).sum::<f32>(),
+            // Waiting for the next leg at the end of one: the route is the rest.
+            None if self.on_leg => 0.0,
+            None => pos.distance(self.path_goal),
+        };
+        along + self.beyond
     }
 }
 

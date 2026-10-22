@@ -9,9 +9,12 @@
 //!   (each hands it the same route through a gap it does not fit, so it
 //!   paces between the same waypoints, which the first rule never sees), or
 //!   after [`NO_PROGRESS_TIME`] of following without progress at all.
-//!   Progress is the path length left shrinking by [`PROGRESS_STEP`]; the
-//!   count restarts with every new goal or path, except a path asked for
-//!   because the unit was stuck.
+//!   Progress is the length of the way left shrinking by [`PROGRESS_STEP`]:
+//!   along the path, plus the coarse route beyond it while the path ends
+//!   at the end of a leg (see `pathing`), so a long detour is progress all
+//!   the way. The count restarts with every new goal or path, except a
+//!   path asked for because the unit was stuck, and the next leg of the
+//!   same way.
 //!
 //! Time spent waiting for the path service does not count.
 
@@ -91,20 +94,11 @@ pub(crate) fn track_progress(mut units: Query<ProgressQuery, Without<Dead>>) {
     }
 }
 
-/// Path length left from `pos`: to the next waypoint and along the rest,
-/// or straight to where the path led once past its end.
-fn path_left(pos: Vec2, path: &PathState, mover: &Mover) -> f32 {
-    match path.waypoints.get(path.next) {
-        Some(&next) => pos.distance(next) + path.waypoints[path.next..].windows(2).map(|w| w[0].distance(w[1])).sum::<f32>(),
-        None => pos.distance(mover.path_goal),
-    }
-}
-
 /// One tick of following: updates the progress count (a new best path
 /// length left, or more time without one) and returns false once the unit
 /// has followed for [`NO_PROGRESS_TIME`] without progress.
 fn making_progress(pos: Vec2, path: &PathState, mover: &mut Mover) -> bool {
-    let left = path_left(pos, path, mover);
+    let left = mover.way_left(pos, path);
     if left < mover.progress_best - PROGRESS_STEP || !mover.progress_best.is_finite() {
         mover.progress_best = left;
         mover.progress_time = 0.0;

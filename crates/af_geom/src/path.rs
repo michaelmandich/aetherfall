@@ -517,10 +517,10 @@ impl NavGrid {
     /// `map` (the mover's class, see [`crate::regions`]) is swapped for the
     /// reachable point nearest it, with no search to find that out (the
     /// path is never `complete`); a goal beyond a straight walk is planned
-    /// on the coarse graph first and searched leg by leg, about `leg`
-    /// metres of the route at a time, each leg within
-    /// `req.max_expansions`. The legs join into one path, and `expansions`
-    /// counts them all.
+    /// on the coarse graph first and, when the route bends round the
+    /// terrain, searched leg by leg, about `leg` metres of the route at a
+    /// time, each leg within `req.max_expansions`. The legs join into one
+    /// path, and `expansions` counts them all.
     pub fn find_path_routed(&mut self, req: &PathRequest, map: &RegionMap, leg: f32) -> PathResult {
         if req.mobility & FLYING != 0 {
             return PathResult::straight(req.goal, true);
@@ -535,7 +535,8 @@ impl NavGrid {
             return PathResult { complete: quick.complete && reachable, ..quick };
         }
         let route = map.open_near(goal, GOAL_SEARCH_RADIUS).and_then(|end| map.route(start, end));
-        let Some(route) = route.filter(|r| r.length() > leg * 1.5) else {
+        // A straight route leaves the way to the obstacles: one search.
+        let Some(route) = route.filter(|r| r.points.len() > 2 && r.length() > leg * 1.5) else {
             let found = self.find_path(&plain);
             return PathResult { complete: found.complete && reachable, ..found };
         };
