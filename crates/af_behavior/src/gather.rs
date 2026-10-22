@@ -106,10 +106,18 @@ pub(crate) fn node_room(half: Vec2, worker_width: f32) -> usize {
     ((perimeter / (worker_width + GATHER_SPACING)) as usize).clamp(1, MAX_WORKERS_PER_NODE)
 }
 
-pub(crate) fn run_gather_orders(mut workers: Query<Worker, (With<Unit>, Without<Dead>)>, mut harvest: Harvest) {
+pub(crate) fn run_gather_orders(mut workers: Query<Worker, (With<Unit>, Without<Dead>)>, mut harvest: Harvest, mut order: Local<Vec<Entity>>) {
     harvest.recount_field_users(&workers);
     harvest.count_crowds(&workers);
-    for mut u in &mut workers {
+    // In entity order, not table order (which client-only components on a
+    // unit change): node room and field slots go first come first served,
+    // and what two workers take from one node sums in the order they are
+    // visited. Lockstep peers with different selections must agree.
+    order.clear();
+    order.extend(workers.iter().map(|u| u.entity));
+    order.sort_unstable();
+    for e in order.iter() {
+        let Ok(mut u) = workers.get_mut(*e) else { continue };
         if !u.brain.synced(&u.orders) {
             continue;
         }

@@ -74,14 +74,16 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   (`af_core::sim_ids`), so client-side spawns (visuals, UI) never shift the
   ids the simulation sees; the same seed replays identically headless or
   windowed (`crates/aetherfall/tests/determinism.rs`).
-  Known gap (found 2026-10-19): some sim system depends on the order in
-  which it visits units, and adding a client-only component to a unit
-  (`Selected`, `BoxVisual`, a model marker) moves it to another archetype
-  and changes that order. In a headless test, marking every other unit
-  with an empty component at tick 90 changes the match within four
-  minutes; marking nodes or buildings does not. So a windowed match can
-  drift from its headless replay (and `--select` changes a match). The
-  determinism tests do not cover it yet.
+  Client-only components (`Selected`, `BoxVisual`, a model marker) move a
+  unit to another archetype and change the order queries visit units, so
+  no sim system may depend on that order: whatever is first come first
+  served (node room, field slots, the path queue, healers' patients),
+  whatever sums floats (steering's avoidance pushes, damage, what workers
+  take from a node) and whatever breaks ties by insertion (the spatial
+  index) visits entities sorted by `Entity`. `tests/determinism.rs`
+  marks every second unit with an empty component and checks that five
+  minutes of play stay bit-identical; lockstep peers with different
+  selections depend on it.
 * Invariants: `crates/aetherfall/tests/invariants.rs` runs AI matches and
   checks every tick that no boxes overlap (> 0.1 m is a hard failure), that
   nothing is stuck, NaN, leaking or mis-counted. Long sweeps:

@@ -13,7 +13,7 @@
 
 use bevy::prelude::*;
 
-use crate::components::{Building, Dead, Facing, Health, Owner, Position, ResourceNode, Unit};
+use crate::components::{Building, Dead, Facing, Gatherer, Health, Owner, Position, ResourceNode, Unit};
 use crate::resources::{Players, SimClock};
 
 /// FNV-1a over 64 bits: tiny, stable, and good enough to tell two matches apart.
@@ -85,9 +85,10 @@ pub fn sim_hash(world: &mut World) -> u64 {
         }
     }
     let mut rows: Vec<(Entity, u8, u16, u8, u32, u32, u32, u32)> = Vec::new();
-    let mut units = world.query_filtered::<(Entity, &Unit, &Owner, &Position, &Facing, Option<&Health>), Without<Dead>>();
-    for (e, u, o, p, f, hp) in units.iter(world) {
-        rows.push((e, 0, u.kind.0, o.0 .0, p.0.x.to_bits(), p.0.y.to_bits(), f.0.to_bits(), hp.map_or(0, |h| h.hp.to_bits())));
+    let mut units = world.query_filtered::<(Entity, &Unit, &Owner, &Position, &Facing, Option<&Health>, Option<&Gatherer>), Without<Dead>>();
+    for (e, u, o, p, f, hp, cargo) in units.iter(world) {
+        let hp_and_cargo = hp.map_or(0, |h| h.hp.to_bits()) ^ cargo.map_or(0, |g| g.amount.to_bits().rotate_left(16));
+        rows.push((e, 0, u.kind.0, o.0 .0, p.0.x.to_bits(), p.0.y.to_bits(), f.0.to_bits(), hp_and_cargo));
     }
     let mut buildings = world.query_filtered::<(Entity, &Building, &Owner, &Position, &Facing, Option<&Health>), Without<Dead>>();
     for (e, b, o, p, f, hp) in buildings.iter(world) {

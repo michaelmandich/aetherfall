@@ -208,7 +208,11 @@ fn rebuild_spatial(
         index.reset(map.size);
     }
     index.clear();
-    for (e, u, o, p, f, fp, alt, st, mob) in &units {
+    // In entity order, not table order (which client-only components on a
+    // unit change): `SpatialIndex::nearest` breaks ties by insertion order.
+    let mut unit_rows: Vec<_> = units.iter().collect();
+    unit_rows.sort_unstable_by_key(|row| row.0);
+    for (e, u, o, p, f, fp, alt, st, mob) in unit_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
@@ -227,7 +231,9 @@ fn rebuild_spatial(
             blocking: false,
         });
     }
-    for (e, b, o, p, f, fp, st, building) in &buildings {
+    let mut building_rows: Vec<_> = buildings.iter().collect();
+    building_rows.sort_unstable_by_key(|row| row.0);
+    for (e, b, o, p, f, fp, st, building) in building_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
@@ -246,7 +252,9 @@ fn rebuild_spatial(
             blocking: true,
         });
     }
-    for (e, n, p, f, fp, blocking) in &nodes {
+    let mut node_rows: Vec<_> = nodes.iter().collect();
+    node_rows.sort_unstable_by_key(|row| row.0);
+    for (e, n, p, f, fp, blocking) in node_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,

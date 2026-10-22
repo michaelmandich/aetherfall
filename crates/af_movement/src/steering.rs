@@ -138,10 +138,15 @@ pub(crate) fn steer(data: Res<Data>, nav: Res<Nav>, mut scratch: Local<SteerScra
         };
         let obb = fp.obb(pos.0, facing.0);
         s.neighbors.push(Neighbor { entity, pos: pos.0, rho: r, dir, obb, radius: fp.half.length() });
-        s.bounds.push((pos.0 - Vec2::splat(r), pos.0 + Vec2::splat(r)));
         s.max_rho = s.max_rho.max(r);
         s.max_radius = s.max_radius.max(fp.half.length());
     }
+    // In entity order, not table order (which client-only components on a
+    // unit change): the grid lists neighbours in this order, `avoid` sums
+    // their pushes in it, and a float sum depends on the order of its
+    // terms. Lockstep peers with different selections must agree.
+    s.neighbors.sort_unstable_by_key(|n| n.entity);
+    s.bounds.extend(s.neighbors.iter().map(|n| (n.pos - Vec2::splat(n.rho), n.pos + Vec2::splat(n.rho))));
     s.grid.rebuild(nav.origin(), nav.world_size(), GRID_CELL, &s.bounds);
     s.seen.clear();
     s.seen.resize(s.neighbors.len(), 0);

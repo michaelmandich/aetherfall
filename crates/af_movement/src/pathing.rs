@@ -320,7 +320,13 @@ pub(crate) fn collect_requests(
     let nav = nav.bypass_change_detection();
     queue.spent = 0;
     queue.follow_grid(nav);
-    for (e, pos, facing, mob, owner, goal, mut path, mut mover) in &mut units {
+    // In entity order, not table order (which client-only components on a
+    // unit change): the queue is first come first served and the tick's
+    // budget runs out on whoever asks last. Lockstep peers must agree.
+    let mut order: Vec<Entity> = units.iter().map(|u| u.0).collect();
+    order.sort_unstable();
+    for e in order {
+        let Ok((e, pos, facing, mob, owner, goal, mut path, mut mover)) = units.get_mut(e) else { continue };
         let Some(goal) = goal else {
             if path.status != PathStatus::Idle || path.goal_seq != 0 || !path.waypoints.is_empty() {
                 // Seq 0 = no goal, so re-inserting the same MoveGoal paths again.

@@ -56,7 +56,12 @@ pub(crate) fn run_healers(
             *load.entry(t).or_default() += 1;
         }
     }
-    for mut m in &mut medics {
+    // In entity order (see gather.rs): healers share patients first come
+    // first served.
+    let mut order: Vec<Entity> = medics.iter().map(|m| m.entity).collect();
+    order.sort_unstable();
+    for e in order {
+        let Ok(mut m) = medics.get_mut(e) else { continue };
         let Some(heal) = &data.unit(m.unit.kind).healer else { continue };
         if !m.brain.synced(m.orders) {
             continue;
