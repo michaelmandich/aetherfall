@@ -49,7 +49,7 @@
 //!                           x,z | crater | centre | start | p<N> (player N's
 //!                           start) | site | site<N> (meteor site N, 0 the main
 //!                           one; framed whole without DIST) | overview (the
-//!                           whole map), optionally at DIST metres (5-4000;
+//!                           whole map), optionally at DIST metres (5-6000;
 //!                           the wheel zooms 25-150, up to 210 on huge maps),
 //!                           seen from TURN degrees round (clockwise from
 //!                           above) and PITCH degrees above the horizon (10-85;

@@ -31,10 +31,10 @@ const MAX_BATTLE_COUNT: u32 = 40;
 /// `--camera` may frame closer than the mouse wheel can zoom, for close-ups
 /// of single units (metres from the focus).
 const CLOSE_UP_DISTANCE: f32 = 5.0;
-/// ... and much farther out, to see a whole map (the largest needs about
-/// 2.6 km at the game's pitch); the camera draws out to
-/// `af_input::FAR_PLANE`.
-const MAX_DEV_DISTANCE: f32 = 4000.0;
+/// ... and much farther out, to see a whole map: the largest (1024 m of
+/// land between two sea bands, 1372 m) needs about 3.5 km in a 16:9 window
+/// at the game's pitch. The camera draws out to `af_input::FAR_PLANE`.
+const MAX_DEV_DISTANCE: f32 = 6000.0;
 /// `--camera` pitch limits, degrees above the horizon (straight down would
 /// leave the camera without an up direction).
 const MIN_PITCH_DEG: f32 = 10.0;
@@ -1293,7 +1293,8 @@ mod tests {
         CameraArg::parse("centre,60,0,2").unwrap().apply(&view, &mut rig);
         assert!((rig.pitch - MIN_PITCH_DEG.to_radians()).abs() < 1e-6);
         assert_eq!(rig.distance, 60.0);
-        assert!(MAX_DEV_DISTANCE + 1000.0 < af_input::FAR_PLANE, "a whole-map view stays inside the far plane");
+        // A whole-map view stays inside the far plane.
+        const { assert!(MAX_DEV_DISTANCE + 1000.0 < af_input::FAR_PLANE) };
     }
 
     #[test]

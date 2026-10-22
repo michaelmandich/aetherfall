@@ -277,7 +277,7 @@ fn rgba(c: [f32; 3]) -> [u8; 4] {
 /// How strongly a terrain claims a texel that covers some of it. Rivers,
 /// shores, fords and barriers are thin lines on a big map, and a texel can
 /// span several metres: they outweigh open ground, so a river or a range
-/// never breaks up (water covering a third of a texel takes it), and a
+/// never breaks up (water over a quarter of a grass texel takes it), and a
 /// ford, the way across, outweighs the water round it. Mountains and
 /// highlands weigh less than water, so a pass or a ramp gap a couple of
 /// texels wide still shows open.
