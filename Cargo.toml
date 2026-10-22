@@ -8,7 +8,11 @@ edition = "2024"
 rust-version = "1.95"
 
 [workspace.dependencies]
-bevy = "0.19"
+# Only what the simulation needs, so the server (`af_server`) builds
+# without windowing, rendering, audio or input devices: no desktop
+# libraries on a Raspberry Pi. The client crates (af_input, af_ui,
+# af_render, aetherfall) turn Bevy's default features back on.
+bevy = { version = "0.19", default-features = false, features = ["std", "multi_threaded", "async_executor", "bevy_state", "bevy_log", "bevy_color"] }
 bevy_math = "0.19"
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"

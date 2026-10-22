@@ -13,6 +13,8 @@ use bevy::prelude::*;
 /// 255 unexplored. Inserted by af_render while fog is shown (a player view
 /// with fog enabled); absent for spectators and fog-off matches. af_ui may
 /// draw it over the minimap (flip vertically if the minimap puts +Z up).
+/// Client builds only (af_core's `client` feature): the server has no images.
+#[cfg(feature = "client")]
 #[derive(Resource, Clone, Debug)]
 pub struct FogTexture(pub Handle<Image>);
 

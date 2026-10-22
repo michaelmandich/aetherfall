@@ -6,4 +6,4 @@ publish = false
 description = "Compile-verified probe of the Bevy 0.19.1 API surface (see docs/bevy-0.19-notes.md)."
 
 [dependencies]
-bevy = { workspace = true }
+bevy = { workspace = true, features = ["default"] }
