@@ -1,0 +1,249 @@
+{
+    "_about": "Models to generate with tools/tripo/tripo.py: the scenery batch the owner approved (shopping list in the map and terrain art review; docs/design/maps-and-terrain.md 6.3), in batches P0, P1 and P2. Schema as art/meshy/requests.json: id (a game id for nodes and buildings), kind (nodes, buildings, units, props, or decor: landscape scenery that is not a game entity, installed to art/static/source/decor/<key>.glb), prompt (what the thing is; the style layers in art/tripo/style.json say how it looks), variants (name -> extra description, each its own model), retired (variants never made again), prompt_suffix (replaces the kind's text), plus face_limit (Tripo triangles at generation; style.json face_limit by kind otherwise) and route (concept, the default: concepts -> pick -> models; text: made straight from text by `make`, for cheap fillers). Names may not repeat a Meshy asset's, retired ones included (oak_c). Readability (style guide, section 9): nothing here may look like a resource node: no loose grey boulder piles, no red berries, no violet crystals outside the aether pieces' thin veins, no gold-veined charred rock, no scorched rings, no free-standing tree that is not a wood node.",
+    "assets": [
+        {
+            "id": "mountain_peak", "kind": "decor", "batch": "P0", "face_limit": 20000,
+            "prompt": "A single jagged mountain peak of solid grey granite, broad at its foot and rising to a craggy summit, about one and a half times as wide as it is tall: steep faceted rock faces with chunky, softly rounded edges like weathered granite tors, deep vertical clefts and a few broad ledges, light to mid cool grey rock with pale yellow-green lichen, its foot spreading into rocky buttresses that end in an irregular edge, no loose boulders or rubble",
+            "variants": {
+                "a": "a thick cap of clean white snow on the summit and in the upper clefts, the snow thinning out halfway down",
+                "b": "twin summits joined by a snowy saddle, snow lying in the gullies and on the upper ledges",
+                "c": "bare rock all the way to the top with no snow, one side a sheer cliff",
+                "d": "no snow; its lower flanks covered in lush green moss and grassy slopes with a few low shrubs, bare grey rock above"
+            }
+        },
+        {
+            "id": "mountain_ridge", "kind": "decor", "batch": "P0", "face_limit": 20000,
+            "prompt": "An elongated mountain ridge of solid grey granite, about three times as long as it is wide and lower than a peak: a jagged crest line with several small rocky summits along its length, steep faceted flanks with chunky, softly rounded edges, light to mid cool grey rock with pale lichen, both ends tapering down so that ridges chain into a range, its foot ending in an irregular edge, no loose boulders",
+            "variants": {
+                "a": "bare rock with a straight crest",
+                "b": "a light dusting of white snow along the crest and in the gullies",
+                "c": "a gently curving crest, green grassy patches on its lower slopes"
+            }
+        },
+        {
+            "id": "mountain_foothill", "kind": "decor", "batch": "P0", "face_limit": 12000,
+            "prompt": "A low rocky knoll at the foot of a mountain range: a gentle hump of green meadow grass with outcrops of solid grey granite bedrock breaking through, much wider than it is tall, grassy slopes running down to an irregular edge, the rock in a few large smooth slabs, not loose boulders",
+            "variants": {
+                "a": "one rounded hump with a rocky shoulder on one side",
+                "b": "two humps with a shallow grassy dip between them",
+                "c": "a long low spur with stepped rock ledges along one side"
+            }
+        },
+
+        {
+            "id": "crater_rim", "kind": "decor", "batch": "P0", "face_limit": 15000,
+            "prompt": "One arc-shaped segment of a meteor crater's rim, about four times as long as it is tall, curving gently as part of a great ring: layers of dark grey rock strata bent upward and broken by the impact, the inner face steep and scorched near-black, the outer face sloping down more gently, a few thin violet veins in the cracks of the inner face",
+            "variants": {
+                "a": "a short, tightly curved arc",
+                "b": "a long, gently curved arc with a low dip in the middle",
+                "c": "a tall arc crowned with jagged upturned slabs of rock"
+            }
+        },
+        {
+            "id": "star_core", "kind": "decor", "batch": "P0", "face_limit": 15000,
+            "prompt": "The huge heart of a fallen star, half buried in the ground: a massive rounded mass of charred black rock with a cracked, glassy fused crust, deep violet fissures running across it, broken slabs of crust tilted up around its foot, as wide as a small house; plain dark rock with no gold, no ore and no metal",
+            "variants": {
+                "a": "sunk deep, only its domed top and one side showing",
+                "b": "tilted on its side with a long split down the middle"
+            }
+        },
+        {
+            "id": "aether_monolith", "kind": "decor", "batch": "P0", "face_limit": 10000,
+            "prompt": "A giant dormant crystal spire rising out of dark rock: one tall, slightly leaning six-sided crystal column about four times as tall as it is wide, with a few shorter columns at its foot, the crystal pale smoky grey with only a faint lilac tint, clouded, dull and frosted, not bright violet and not glowing, dark broken rock around its base"
+        },
+        {
+            "id": "impact_scar", "kind": "decor", "batch": "P0", "face_limit": 8000,
+            "prompt": "A small fresh impact crater lip: a low horseshoe-shaped ridge of freshly thrown-up brown earth, torn green turf and broken dark rock around a shallow pit, open on one side, much wider than it is tall; earth colours, not scorched black, no glow and no crystals"
+        },
+        {
+            "id": "meteor_shard", "kind": "decor", "batch": "P0", "face_limit": 6000,
+            "prompt": "A charred meteor fragment stuck in the ground: a jagged slab of black, glassy fused rock with a cracked crust and rough broken edges, plain dark rock with no ore, no gold, no metal and no crystals",
+            "variants": {
+                "a": "a single tall wedge-shaped shard standing at an angle",
+                "b": "a low, wide shard lying half sunk, one broken edge raised"
+            }
+        },
+
+        {
+            "id": "reeds", "kind": "decor", "batch": "P0", "face_limit": 8000,
+            "prompt": "A clump of reeds and cattails as they grow at the edge of a river: dense tall green blades and stalks springing from one base, the blades bending slightly outward",
+            "variants": {
+                "a": "tall and dense, about twice as tall as it is wide, a few brown velvety cattail heads on tall stems",
+                "b": "a lower, wider clump with many brown cattail heads",
+                "c": "a sparse clump of rushes with thin round stems and no cattail heads"
+            }
+        },
+        {
+            "id": "river_rocks", "kind": "decor", "batch": "P0", "face_limit": 5000,
+            "prompt": "A low, flat group of smooth water-worn river stones lying half sunk in a riverbed, as at a shallow ford: rounded and polished by the current, wet and darker grey with a soft sheen, a band of green algae where the water reaches, much wider than it is tall, lying side by side, nothing piled up",
+            "variants": {
+                "a": "three or four large flat stones in a row",
+                "b": "one big smooth stone with a few small ones around it",
+                "c": "a long low shelf of smooth rock broken into a few pieces"
+            }
+        },
+
+        {
+            "id": "pine_stump", "kind": "nodes", "batch": "P1", "route": "text", "face_limit": 3000,
+            "prompt_suffix": "A single tree stump for a strategy game, what is left when a tree is felled, standing alone with no base plate and no ground around it.",
+            "prompt": "The stump left by a felled Scots pine: a short sawn trunk about knee high with a flat, pale, freshly cut top showing growth rings, thick reddish-brown flaky bark, a few thick roots spreading out at its foot"
+        },
+        {
+            "id": "oak_stump", "kind": "nodes", "batch": "P1", "route": "text", "face_limit": 3000,
+            "prompt_suffix": "A single tree stump for a strategy game, what is left when a tree is felled, standing alone with no base plate and no ground around it.",
+            "prompt": "The stump left by a felled European oak: a short, broad sawn trunk about knee high with a flat, pale, freshly cut top showing growth rings, thick grey-brown deeply furrowed bark, gnarled roots spreading out at its foot"
+        },
+        {
+            "id": "palm_stump", "kind": "nodes", "batch": "P1", "route": "text", "face_limit": 3000,
+            "prompt_suffix": "A single tree stump for a strategy game, what is left when a tree is felled, standing alone with no base plate and no ground around it.",
+            "prompt": "The stump left by a felled date palm: a short ringed trunk about knee high with a flat, fibrous, freshly cut top, rough grey-brown bark in rings of old leaf bases, a tuft of thin roots at its foot"
+        },
+        {
+            "id": "sea_cliff", "kind": "decor", "batch": "P1", "face_limit": 15000,
+            "prompt": "A section of sea cliff where the land meets the ocean: a tall wall of layered grey rock with green grass along its flat top edge, the face sheer and fissured with horizontal strata and pale streaks, about three times as long as it is tall, its foot ending in rough wave-worn ledges",
+            "variants": {
+                "a": "straight",
+                "b": "curving gently inward like the side of a cove",
+                "c": "a jutting headland corner with a dark sea cave at its foot"
+            }
+        },
+        {
+            "id": "sea_stack", "kind": "decor", "batch": "P1", "face_limit": 12000,
+            "prompt": "A sea stack standing alone off the coast: a tall pillar of layered grey rock with sheer wave-worn sides and horizontal strata, its flat top crowned with green grass, a few white streaks down its seaward face",
+            "variants": {
+                "a": "slender and tall, about three times as tall as it is wide",
+                "b": "stout, with a natural arch through its base"
+            }
+        },
+        {
+            "id": "beach_rocks", "kind": "decor", "batch": "P1", "face_limit": 6000,
+            "prompt": "A low shelf of dark, wave-worn rock as found on a sandy beach: one continuous shelf of flat slabs and smooth rounded ledges, wet and darker near its foot with green weed and pale barnacles, much wider than it is tall, not a pile of loose stones"
+        },
+        {
+            "id": "bramble", "kind": "decor", "batch": "P1", "face_limit": 10000,
+            "prompt": "A dense, dark bramble thicket: a tangle of arching thorny stems with small dark-green serrated leaves and a few brown dead stems, no flowers, no berries and no fruit of any kind",
+            "variants": {
+                "a": "a round, dense mound",
+                "b": "a long, low hedge-like thicket",
+                "c": "a tall, tangled thicket with long arching runners"
+            }
+        },
+        {
+            "id": "oak", "kind": "nodes", "batch": "P1",
+            "prompt": "A broad old European oak tree with a thick gnarled trunk and a wide rounded crown of dense green leaves",
+            "variants": {
+                "d": "a forest oak with a tall straight trunk and a high, compact crown",
+                "e": "a medium oak with a slightly leaning trunk and a lopsided crown"
+            }
+        },
+        {
+            "id": "pine", "kind": "nodes", "batch": "P1",
+            "prompt": "A tall Scots pine tree with a straight reddish-brown trunk, a bare lower trunk and a crown of layered dark-green needle clusters",
+            "variants": {
+                "d": "an old pine with a flat-topped, umbrella-like crown"
+            }
+        },
+        {
+            "id": "birch", "kind": "nodes", "batch": "P1",
+            "prompt": "A silver birch tree with a slender white trunk marked with black horizontal streaks and dark diamond-shaped scars, thin drooping branches and a light, airy crown of small bright-green leaves",
+            "variants": {
+                "a": "tall and straight",
+                "b": "two slender trunks growing from one base, leaning slightly apart"
+            }
+        },
+        {
+            "id": "willow", "kind": "nodes", "batch": "P1",
+            "prompt": "A weeping willow tree with a short, thick, gnarled grey-brown trunk and long curtains of thin drooping branches with narrow pale-green leaves hanging almost to the ground",
+            "variants": {
+                "a": "a broad, dome-shaped crown",
+                "b": "a younger, narrower willow leaning to one side as if toward water"
+            }
+        },
+        {
+            "id": "mossy_boulder", "kind": "decor", "batch": "P1", "face_limit": 6000,
+            "prompt": "A single large boulder half sunk in a forest floor, so thickly covered in deep green moss that only small patches of grey rock show, a few small ferns at its foot, soft and rounded in shape; one stone, not a pile",
+            "variants": {
+                "a": "a rounded dome",
+                "b": "long and low, split by a mossy crack",
+                "c": "tall and tilted to one side"
+            }
+        },
+        {
+            "id": "shrub", "kind": "decor", "batch": "P1", "face_limit": 8000,
+            "prompt": "A single low wild shrub as it grows at the edge of a temperate European meadow",
+            "variants": {
+                "a": "gorse: a dense rounded bush of spiny dark-green shoots covered in small bright yellow flowers",
+                "b": "hazel: many slender upright stems from one base with a loose rounded crown of broad, soft, round green leaves and a few pale hanging catkins, no nuts"
+            }
+        },
+        {
+            "id": "fern", "kind": "decor", "batch": "P1", "face_limit": 8000,
+            "prompt": "A clump of wild ferns growing from one root: long arching fronds of bright-green leaflets spreading out from the centre",
+            "variants": {
+                "a": "bracken: tall, upright, branching fronds",
+                "b": "a low, wide clump of lady ferns with soft curling tips"
+            }
+        },
+        {
+            "id": "lily_pads", "kind": "decor", "batch": "P1", "face_limit": 4000,
+            "prompt": "A floating patch of water lilies, very flat: about a dozen round green lily pads with a notch cut into each, lying flat and overlapping, three white water-lily flowers with yellow centres and a few curled-up young leaves"
+        },
+
+        {
+            "id": "standing_stones", "kind": "decor", "batch": "P2", "face_limit": 6000,
+            "prompt": "Ancient standing stones in a meadow: tall upright slabs of weathered grey stone with rounded tops, patches of pale lichen and moss, wildflowers and long grass at their feet",
+            "variants": {
+                "a": "three tall stones in an arc with a flat capstone resting across two of them",
+                "b": "a single very tall stone leaning slightly, worn spiral carvings on its face"
+            }
+        },
+        {
+            "id": "ruined_watchtower", "kind": "decor", "batch": "P2", "face_limit": 15000,
+            "prompt": "A ruined old watchtower: a round tower of rough grey fieldstone broken off at different heights, one side collapsed down to the first storey, empty window and door openings, ivy and moss climbing the walls, grass growing on the broken top, the fallen stones long since overgrown"
+        },
+        {
+            "id": "wayside_shrine", "kind": "decor", "batch": "P2", "face_limit": 10000,
+            "prompt": "A small wayside shrine by a country road, of no particular faith: a stout timber post with a little shingled roof over a plain carved wooden niche holding a clay oil lamp and a few wildflowers, on a low fieldstone footing, no symbols"
+        },
+        {
+            "id": "fallen_log", "kind": "decor", "batch": "P2", "face_limit": 6000,
+            "prompt": "A fallen tree trunk lying on the forest floor: a long thick log with moss along its top and a few short broken branch stubs, one end jagged where it snapped, lying flat",
+            "variants": {
+                "a": "an old oak log with thick grey-brown furrowed bark",
+                "b": "a pine log with reddish flaky bark and its upturned root plate at one end"
+            }
+        },
+        {
+            "id": "driftwood", "kind": "decor", "batch": "P2", "face_limit": 5000,
+            "prompt": "Driftwood washed up on a beach: one long, silver-grey, weathered branch with a twisted root end and smooth worn surfaces, lying flat"
+        },
+        {
+            "id": "shipwreck", "kind": "decor", "batch": "P2", "face_limit": 15000,
+            "prompt": "The weathered wreck of a small wooden trading ship stranded on its side: a broken hull of dark timber planks with its ribs showing through a hole, a snapped mast stump, barnacles and green weed on the lower hull, no sails and no flags"
+        },
+        {
+            "id": "stone_bridge", "kind": "decor", "batch": "P2", "face_limit": 12000,
+            "prompt": "An old single-arch stone bridge over a small river: a humped bridge of rough grey fieldstone with low parapet walls and moss in the joints, about four times as long as it is wide, both ends sloping down to meet the ground"
+        },
+        {
+            "id": "wooden_footbridge", "kind": "decor", "batch": "P2", "face_limit": 10000,
+            "prompt": "A simple wooden footbridge over a stream: a narrow walkway of rough planks on two log beams with a single rail of peeled poles on each side, resting on short fieldstone piers at both ends, about five times as long as it is wide"
+        },
+        {
+            "id": "backdrop_mountains", "kind": "decor", "batch": "P2", "face_limit": 20000,
+            "prompt": "A wide backdrop piece of distant mountains for beyond the edge of a game map: one long, continuous range of grey mountains about five times as wide as it is tall, very simple broad shapes and little detail, as seen from far away",
+            "variants": {
+                "a": "jagged high peaks with snow on the highest summits",
+                "b": "rounder, lower mountains with dark green forested lower slopes"
+            }
+        },
+        {
+            "id": "backdrop_forest", "kind": "decor", "batch": "P2", "face_limit": 20000,
+            "prompt": "A wide backdrop piece of a distant forest edge for beyond the edge of a game map: one long, continuous mass of treetops about six times as wide as it is tall, merged into a single solid band with no separate trees, very simple broad shapes and little detail, as seen from far away",
+            "variants": {
+                "a": "mostly dark green conifers with a jagged top line",
+                "b": "mixed broadleaf crowns in several greens with a rolling top line"
+            }
+        }
+    ]
+}

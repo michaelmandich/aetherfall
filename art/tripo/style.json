@@ -1,0 +1,99 @@
+{
+    "_about": "Shared settings for every Tripo model (tools/tripo/tripo.py), adapted from art/meshy/style.json so new models match the Meshy ones: the framing, look, ages, factions, magic and kinds texts and the style references are Meshy's, word for word; decor (landscape scenery) adds its own kind text, framing and look. The reasoning behind every layer is docs/art/style-guide.md. A concept prompt is framing + Subject + faction + magic + age + kind (or the asset's prompt_suffix) + look (kind_look for its kind if any); a text-to-model prompt is subject + faction + magic + age + kind + text_model.look. Change these and every later model follows; already-made models keep the style they were made with (the ledger hash includes every text sent).",
+
+    "concurrency": 100,
+
+    "concept": {
+        "_about": "banana_pro is Gemini 3 Pro Image, the model Meshy calls nano-banana-pro: it drew every Meshy concept. Image to image with the kind's references (uploaded once per run), 2 candidates per asset. The banana models take aspect_ratio; size 2K as in the docs' banana_pro example.",
+        "model": "banana_pro",
+        "candidates": 2,
+        "size": "2K",
+        "aspect": { "character": "3:4", "object": "1:1", "prop": "1:1", "scenery": "4:3" }
+    },
+
+    "model": {
+        "_about": "Image to model (H series) from a picked concept: v3.1, detailed texture (40 credits). PBR off: the static and unit builds keep only the base colour (and Meshy's models were made without PBR). texture_version v3.5 with delight removes lighting baked into the concept before texturing (the style guide: no baked lighting); orientation default (Tripo turns it upright and front-facing itself; align_image would copy the concept's three-quarter view); texture_alignment original_image keeps the concept's colours; no autofix (the concepts are clean); auto_size off (the pipelines scale every model to its box). face_limit per kind below.",
+        "model": "v3.1-20260211",
+        "texture": true,
+        "pbr": false,
+        "texture_quality": "detailed",
+        "texture_version": "v3.5-20260815",
+        "delight": true,
+        "geometry_quality": "standard",
+        "orientation": "default",
+        "texture_alignment": "original_image",
+        "enable_image_autofix": false,
+        "auto_size": false
+    },
+
+    "text_model": {
+        "_about": "Text to model for cheap fillers (requests.json \"route\": \"text\", made by `make`): v3.1, standard texture (20 credits), no PBR. look is the short style line text prompts end with (Tripo takes at most 1024 characters); negative_prompt at most 255.",
+        "model": "v3.1-20260211",
+        "texture": true,
+        "pbr": false,
+        "texture_quality": "standard",
+        "texture_version": "v3.5-20260815",
+        "delight": true,
+        "geometry_quality": "standard",
+        "auto_size": false,
+        "negative_prompt": "base plate, plinth, display stand, square ground tile, text, letters, logo, flag, banner, people, animals, cartoon, outlines, cel shading, glow, baked shadows",
+        "look": "Grounded realism with a hand-made warmth, like a finely painted miniature: chunky, slightly simplified forms with softly rounded edges, believable natural materials, even light, no baked shadows."
+    },
+
+    "face_limit": {
+        "_about": "Triangles at generation (Tripo face_limit). The static build reduces nodes to 2000-3000 and buildings to 6000-10000, so this is the detail it starts from; decor assets give their own in requests.json.",
+        "units": 30000,
+        "buildings": 30000,
+        "nodes": 8000,
+        "props": 3000,
+        "decor": 10000
+    },
+
+    "references": {
+        "units": ["art/meshy/references/peasant.png", "art/meshy/references/house.png"],
+        "props": ["art/meshy/references/peasant.png", "art/meshy/references/house.png"],
+        "buildings": ["art/meshy/references/house.png", "art/meshy/references/town_center.png", "art/meshy/references/lumber_camp.png"],
+        "nodes": ["art/meshy/references/pine.png", "art/meshy/references/oak.png", "art/meshy/references/house.png"],
+        "decor": ["art/tripo/references/stone_outcrop.png", "art/meshy/references/oak.png", "art/meshy/references/house.png"]
+    },
+    "framing": {
+        "character": "Concept art for a 3D game model: one full-body character seen straight from the front, standing in a relaxed A-pose with the arms angled down and away from the body, empty open hands, feet flat on the ground, the whole figure in frame with space around it, on a plain light grey background, soft even studio light, no cast shadows.",
+        "object": "Concept art for a 3D game model: one single object shown whole in three-quarter view from slightly above, as a strategy-game camera sees it, centred with space around it, on a plain light grey background, soft even studio light, no cast shadows, no ground plane.",
+        "prop": "Concept art for a 3D game prop: one single hand-held item shown whole, lying flat and seen from the side, centred with space around it, on a plain light grey background, soft even studio light, no cast shadows, no hands holding it.",
+        "scenery": "Concept art for a 3D game model of landscape scenery: one single piece shown whole in three-quarter view from slightly above, as a strategy-game camera sees it, centred, on a plain light grey background, soft even daylight, no cast shadows."
+    },
+    "look": "Art style: grounded realism with a hand-made warmth, like a finely painted miniature: believable materials, chunky and slightly simplified forms, a few large readable details, muted natural colours, lived-in and weathered but cared for. Not cartoon, no outlines, no cel shading, not gritty photorealism. Any glow is a thin accent only. No text, letters, logos, heraldry, flags or banners.",
+    "kind_look": {
+        "decor": "Art style: grounded realism with a hand-made warmth, like a finely painted miniature diorama: believable natural materials, chunky, slightly simplified forms with softly rounded edges, a few large readable shapes, rich and vibrant natural colours. Not cartoon, no outlines, no cel shading, not gritty photorealism, no fine noise. Nothing glows. No baked shadows, no text, logos, flags or banners."
+    },
+    "ages": {
+        "1": "Hearth Age materials: timber, wattle and daub, straw thatch, fieldstone, undyed wool and linen, leather and fur; bronze and rough dark iron; nothing glows.",
+        "2": "Banner Age materials: dressed stone, slate and shingle, mail, padded gambesons, forged steel and iron plate pieces; nothing glows.",
+        "3": "Starfall Age: the first aether tech, grown out of craft: brass, gold trim, verdigris bronze and dark riveted iron, violet aether crystals set in carved fittings, thin warm amber glowing lines.",
+        "4": "Engine Age: blackened iron, gunmetal grey, heavy rivets, pipes, gauges and boilers, verdigris bronze and gold trim, a little soot; thin warm amber glowing lines and small amber cores.",
+        "5": "Ascendant Age: dark polished metal, gold and cool grey plates over hand-forged riveted frames, shadowy recesses; thin blue glowing lines and small blue cores."
+    },
+    "factions": {
+        "ironhold": "Ironhold Thanes culture: Norse and Germanic mountain clans, dwarves in spirit though human: broad, stocky and bearded, heavy riveted plate, rock-cut stone and forge-iron forms; small accents of soot black, oxblood red and gold runes.",
+        "sylvan": "Sylvan Wardens culture: Celtic forest clans of druids, rangers and beast-tamers: torcs, leather, bark and living wood, knotwork, standing-stone forms; small accents of moss green and bark brown.",
+        "dune": "Sunspire Caliphate culture: desert scholars and glass-wrights in the Abbasid and Persian tradition: flowing linen, veils and turbans, domes and pointed arches, brass and sun-fused glass; small accents of white linen and saffron.",
+        "tide": "Tidecrown Republic culture: Venetian and Byzantine lagoon merchants with a Varangian guard: lamellar and quilted coats, galley-built timber, coral and sea-worn bronze; small accents of teal-cyan and copper.",
+        "steppe": "Khaganate of the Steppe culture: Mongol and Turkic horse clans: felt, lacquered leather and lamellar, fur-trimmed hats, horn and silver fittings, felt-and-lattice forms; small accents of indigo and silver.",
+        "starborn": "Synod of the Fallen Star culture: a monastic star-cult of paladins and monks: cathedral and reliquary forms, star motifs; small accents of white and gold."
+    },
+    "magic": {
+        "starborn": "Its holy power shows as white enamel, polished gold and pale crystal with a thin pale-gold starlight glow.",
+        "sylvan": "Its nature magic shows as living wood, bark, moss and bronze with a thin soft green glow.",
+        "dune": "Its sorcery shows as sun-fused glass and polished brass with a thin amber sun-glow.",
+        "ironhold": "Its rune-craft shows as blackened iron and carved stone with inlaid gold runes glowing a thin molten orange.",
+        "tide": "Its sea-magic shows as copper, verdigris, coral and mother-of-pearl with a thin sea-teal glow.",
+        "steppe": "Its sky-magic shows as horn, silver and lacquer with a thin white-gold sky-fire glow."
+    },
+    "kinds": {
+        "units": "A single game unit: exactly one figure or machine, slightly heroic proportions with weapons, shields, helmets and hands about a quarter larger than life and a normal-sized head, a plain weathered face. Neutral undyed cloth and natural metals; no strong colour on large areas.",
+        "props": "A single hand-held weapon or shield for a game unit, slightly oversized and chunky so it reads from far away, nothing attached to it.",
+        "buildings": "A single building for a strategy game: chunky readable massing with a clear roof shape and a few large features, standing alone with no base plate, no ground around it, no people or animals.",
+        "nodes": "A single natural resource object for a strategy game, standing alone with no base plate and no ground around it.",
+        "decor": "A single piece of landscape scenery for a strategy-game map, not a building and not something to gather, in the lush, vibrant colours of temperate Europe in summer: fresh deep greens, clean cool grey stone, clear white snow. Its foot ends in an irregular natural edge that can sink into the terrain: no base plate, plinth or square ground tile. No people or animals."
+    }
+}
