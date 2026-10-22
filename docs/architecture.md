@@ -76,7 +76,9 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   measures how many get through and how fast, failed orders, units left
   stuck and the deepest overlap. The fast tests check overlap and
   determinism; the table:
-  `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`.
+  `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`
+  (`AF_CHOKE_JITTER=<seed>` moves every unit a little from its spot: a
+  variant, to tell a change that helps from one that suits the layout).
 
 ## Client model
 

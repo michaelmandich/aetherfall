@@ -37,6 +37,9 @@
 //! `AF_CHOKE_UNITS=<name>|all` also lists every second each unit within
 //! two metres of the gap: where it stands and faces, its velocity, path
 //! status, next waypoint and stuck time, and its order.
+//! `AF_CHOKE_JITTER=<seed>` moves every unit up to [`JITTER`] from its spot,
+//! the same way for the same seed: a variant of each scenario, to tell a
+//! change that helps from one that happens to suit the exact layout.
 
 use std::f32::consts::FRAC_PI_2;
 use std::fmt::Write as _;
@@ -66,6 +69,9 @@ const PAST: f32 = 0.5;
 const STUCK_MOVE: f32 = 1.0;
 /// ...over this many final seconds.
 const STUCK_SECS: usize = 10;
+/// Farthest `AF_CHOKE_JITTER` moves a unit from its spot, along x and along
+/// z (metres).
+const JITTER: f32 = 0.15;
 
 // ---------------------------------------------------------------------------
 // The map: a wall across x with one gap
@@ -145,10 +151,25 @@ fn spawn_building_at(app: &mut App, player: PlayerId, kind: BuildingTypeId, pos:
 }
 
 fn spawn(app: &mut App, player: PlayerId, id: &str, pos: Vec2, facing: f32) -> Entity {
+    let pos = pos + jitter(pos);
     with_commands(app, |c, data, players| {
         let kind = data.unit_id(id).unwrap_or_else(|| panic!("unit {id}"));
         spawn_unit(c, data, players.get(player), kind, pos, facing)
     })
+}
+
+/// How far `AF_CHOKE_JITTER` moves a unit spawned at `pos`: up to
+/// [`JITTER`] each way, a hash of the seed and the spot (zero without it).
+fn jitter(pos: Vec2) -> Vec2 {
+    let Some(seed) = std::env::var("AF_CHOKE_JITTER").ok().and_then(|v| v.parse::<u32>().ok()) else { return Vec2::ZERO };
+    let hash = |salt: u32| {
+        let mut x = seed.wrapping_mul(0x9E37_79B1) ^ pos.x.to_bits().wrapping_mul(0x85EB_CA6B) ^ pos.y.to_bits().wrapping_mul(0xC2B2_AE35) ^ salt;
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x2C1B_3C6D);
+        x ^= x >> 13;
+        (x % 1001) as f32 / 500.0 - 1.0
+    };
+    Vec2::new(hash(1), hash(2)) * JITTER
 }
 
 /// Size (width across, length along) of a unit type.
