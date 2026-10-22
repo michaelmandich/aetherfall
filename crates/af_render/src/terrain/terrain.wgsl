@@ -212,8 +212,12 @@ fn mountain(p: vec2<f32>, y: f32, n: vec3<f32>, bulge: f32) -> Paint {
 }
 
 // Rocky highland: a plateau of grey rock with grass and lichen on top,
-// bare scarps at its edge.
-fn highland(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
+// bare scarps at its edge. A meteor site's rim (`rim` > 0: 0.2 at its
+// edges, 1 along its crest) is drawn as a raised lip of shattered rock.
+fn highland(p: vec2<f32>, y: f32, n: vec3<f32>, rim: f32) -> Paint {
+    if (rim > 0.1) {
+        return crater_rim(p, y, n, clamp((rim - 0.2) / 0.8, 0.0, 1.0));
+    }
     var r = rock(p, y * 2.5, n);
     let tufts = lin(vec3<f32>(0.3, 0.47, 0.2)) * (0.72 + 0.35 * vnoise(p * 2.1));
     let top = smoothstep(0.93, 0.99, n.y);
@@ -222,6 +226,41 @@ fn highland(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
     // The scarps: darker, steeper-looking rock.
     r.color *= 1.0 - (1.0 - top) * 0.25;
     return r;
+}
+
+// A meteor site's rim, thrown up by the impact: a lip of heaved,
+// scorched rock (`crest` 1 along its top, 0 at its feet). The top is big
+// blocks split by deep dark joints, lit; the flanks fall away darker in
+// screes of angular stones, which the bumped normals light and shade
+// stone by stone. Heights stay those units stand on: only the shading
+// raises it.
+fn crater_rim(p: vec2<f32>, y: f32, n: vec3<f32>, crest: f32) -> Paint {
+    let light = lin(vec3<f32>(0.56, 0.54, 0.52));
+    let mid = lin(vec3<f32>(0.4, 0.385, 0.38));
+    let dark = lin(vec3<f32>(0.24, 0.225, 0.23));
+    let char_col = lin(vec3<f32>(0.2, 0.18, 0.19));
+    var r = rock(p, y * 2.5, n);
+    let warp = vec2<f32>(vnoise(p * 0.6), vnoise(p * 0.6 + 4.1)) * 0.6;
+    // Blocks along the top.
+    let blocks = cells(p * 0.75 + warp);
+    let joint = 1.0 - smoothstep(0.03, 0.13, blocks.y - blocks.x);
+    let block_col = mix(mid, light, blocks.z) * (0.85 + 0.3 * vnoise(p * 1.7));
+    // Scree on the flanks: stones a few decimetres across.
+    let scree = cells(p * 2.6 + warp * 2.0);
+    let gap = 1.0 - smoothstep(0.04, 0.16, scree.y - scree.x);
+    let stone_col = mix(dark, mid * 1.1, scree.z) * (1.0 - gap * 0.55);
+    let flank = 1.0 - smoothstep(0.15, 0.75, crest);
+    var c = mix(mix(r.color, block_col, 0.6), stone_col, flank * 0.85);
+    c = mix(c, dark * 0.4, joint * (1.0 - flank) * 0.75);
+    // Lit along the lip, falling into shade down its flanks; the stones
+    // nearest the floor scorched.
+    c *= mix(0.62, 1.12, smoothstep(0.0, 0.9, crest));
+    c = mix(c, char_col, smoothstep(0.55, 0.9, vnoise(p * 0.35 + 6.0)) * flank * 0.4);
+    // The lip's swell, for the bumped normal: its flanks face the light or
+    // turn from it, as a raised ridge's would.
+    let swell = smoothstep(0.0, 1.0, crest) * 0.9;
+    let bump = swell + (1.0 - flank) * (blocks.z * 0.22 - joint * 0.12) + flank * ((1.0 - gap) * 0.07 + scree.z * 0.05);
+    return paint(c, 0.9, bump);
 }
 
 // The meteor site's floor: dark basalt cracked into plates, glassy in
@@ -316,7 +355,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if (wa.y > 0.003) { acc = add(acc, wa.y, sand(p, wet, ra.x)); }
     if (wa.z > 0.003) { acc = add(acc, wa.z, marsh(p)); }
     if (wa.w > 0.003) { acc = add(acc, wa.w, forest_floor(p, off_map, in.color.b)); }
-    if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n)); }
+    if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n, in.color.a)); }
     if (wb.y > 0.003) { acc = add(acc, wb.y, mountain(p, y, n, in.color.b)); }
     if (wb.z > 0.003) { acc = add(acc, wb.z, scar(p)); }
     if (wb.w > 0.003) { acc = add(acc, wb.w, bed(p)); }
@@ -327,8 +366,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let r = rock(p, y, n);
         acc = Paint(mix(acc.color, r.color, steep), mix(acc.rough, r.rough, steep), acc.glow, mix(acc.bump, r.bump, steep));
     }
-    // A darker ring of scree and shade round a mountain's foot.
-    let foot = in.color.g * (1.0 - wb.y) * smoothstep(0.75, 0.95, n.y);
+    // A darker ring of scree and shade round a mountain's foot and a
+    // meteor site's rim (not on the rim itself).
+    let foot = in.color.g * (1.0 - wb.y) * (1.0 - wb.x * step(0.1, in.color.a)) * smoothstep(0.75, 0.95, n.y);
     acc.color = mix(acc.color, acc.color * vec3<f32>(0.82, 0.8, 0.76), foot * 0.45);
     // Hollows a little darker, edges a little lighter (the vertex bulge).
     acc.color *= clamp(1.0 + (in.color.b - 0.5) * 0.6, 0.78, 1.18);

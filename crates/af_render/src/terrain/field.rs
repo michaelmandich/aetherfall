@@ -143,6 +143,13 @@ pub struct Field {
     pub depth: Vec<f32>,
     /// Cells from each off-map woodland cell to the wood's edge (0 elsewhere).
     pub wood: Vec<f32>,
+    /// How far each cell of a meteor site's rim (highland in a site) lies
+    /// inside it: cells to the nearest cell off the rim (1 at its edges,
+    /// most along its crest); 0 off the rims.
+    pub rim: Vec<f32>,
+    /// Cells from each cell to the nearest cell of a meteor site's rim
+    /// (capped at [`SKIRT`] when there is none).
+    pub to_rim: Vec<f32>,
     /// River flow on water cells, metres per second (zero for still water).
     pub flow: Vec<Vec2>,
     /// Where a flowing cell lies along its river: (metres downstream from
@@ -193,6 +200,8 @@ impl Field {
             rock: Vec::new(),
             depth: Vec::new(),
             wood: Vec::new(),
+            rim: Vec::new(),
+            to_rim: Vec::new(),
             flow: vec![Vec2::ZERO; n],
             course: vec![Vec2::ZERO; n],
             river: vec![0.0; n],
@@ -243,6 +252,7 @@ impl Field {
             Some(m) => m.sites.iter().map(|s| (s.center, s.radius)).collect(),
             None => src.crater.into_iter().filter(|(_, r)| *r > 0.0).collect(),
         };
+        f.lay_rims();
         f.spire = src.features.and_then(|m| {
             let site = m.sites.iter().find(|s| s.kind == SiteKind::Spire)?;
             let land = (m.land_max - m.land_min).min_element().max(1.0);
@@ -326,13 +336,42 @@ impl Field {
         self.cover_at(x, z).is_land()
     }
 
+    /// Is a world point within one of the meteor sites (rims included)?
+    pub fn in_site(&self, p: Vec2) -> bool {
+        self.sites.iter().any(|(c, r)| p.distance(*c) < r * 1.15 + 2.0)
+    }
+
+    /// The meteor sites' rims (their highland): how deep inside a rim each
+    /// of its cells lies, and how far every cell is from a rim.
+    fn lay_rims(&mut self) {
+        let n = self.cover.len();
+        let on_rim: Vec<bool> = (0..n)
+            .map(|i| self.cover[i] == Cover::Highland && self.in_site(self.world_cell(i as i32 % self.cols, i as i32 / self.cols)))
+            .collect();
+        if !on_rim.contains(&true) {
+            self.rim = vec![0.0; n];
+            self.to_rim = vec![SKIRT as f32; n];
+            return;
+        }
+        let inside = self.distance(|c| c != Cover::Highland);
+        self.rim = (0..n).map(|i| if on_rim[i] { inside[i] } else { 0.0 }).collect();
+        self.to_rim = self.distance_to(&on_rim);
+    }
+
     /// Chamfer distance (in cells) from every cell to the nearest cell
     /// `target` holds for (capped at [`SKIRT`] when there is none).
     fn distance(&self, target: impl Fn(Cover) -> bool) -> Vec<f32> {
+        let mask: Vec<bool> = self.cover.iter().map(|c| target(*c)).collect();
+        self.distance_to(&mask)
+    }
+
+    /// Chamfer distance (in cells) from every cell to the nearest cell
+    /// marked in `target` (capped at [`SKIRT`] when none is).
+    fn distance_to(&self, target: &[bool]) -> Vec<f32> {
         const FAR: f32 = 1.0e6;
         const DIAG: f32 = std::f32::consts::SQRT_2;
         let (w, h) = (self.cols, self.rows);
-        let mut d: Vec<f32> = self.cover.iter().map(|c| if target(*c) { 0.0 } else { FAR }).collect();
+        let mut d: Vec<f32> = target.iter().map(|t| if *t { 0.0 } else { FAR }).collect();
         if !d.contains(&0.0) {
             return vec![SKIRT as f32; d.len()];
         }

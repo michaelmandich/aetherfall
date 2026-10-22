@@ -263,6 +263,21 @@ fn char_shades() -> [[f32; 4]; 3] {
     [lin(0x3a3436, 0.0), lin(0x2b2628, 0.0), lin(0x4a4446, 0.0)]
 }
 
+/// Heaved, scorched rim rock: darker greys warmed by soot.
+fn rim_shades() -> [[f32; 4]; 4] {
+    [lin(0x6e6a68, 0.0), lin(0x57534f, 0.0), lin(0x7f7b77, 0.0), lin(0x403b3b, 0.0)]
+}
+
+/// The drawn ground's height at a world point (bilinear between its
+/// cell's corners: close enough to set a stone on).
+fn surface(field: &Field, p: Vec2) -> f32 {
+    let g = (p - field.origin) / field.cell;
+    let (x, z) = (g.x.floor() as i32, g.y.floor() as i32);
+    let (fx, fz) = (g.x - x as f32, g.y - z as f32);
+    let h = |dx: i32, dz: i32| field.height(x + dx, z + dz);
+    (h(0, 0) * (1.0 - fx) + h(1, 0) * fx) * (1.0 - fz) + (h(0, 1) * (1.0 - fx) + h(1, 1) * fx) * fz
+}
+
 /// Is the cell next to (4-neighbourhood) a cell `pred` holds for?
 fn next_to(field: &Field, x: i32, z: i32, pred: impl Fn(Cover) -> bool) -> Option<Vec2> {
     let mut away = Vec2::ZERO;
@@ -283,7 +298,7 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
         let centre = field.world_cell(x, z);
         let jitter = |dice: &mut Dice| centre + Vec2::new(dice.range(-0.3, 0.3), dice.range(-0.3, 0.3)) * field.cell;
         let on = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
-        let in_site = field.sites.iter().any(|(c, rad)| centre.distance(*c) < rad * 1.15 + 2.0);
+        let in_site = field.in_site(centre);
         let in_spire = field.spire.is_some_and(|(c, rad)| centre.distance(c) < rad + 3.0);
         match cover {
             Cover::Thicket => {
@@ -309,6 +324,23 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
                 let size = dice.range(0.3, 0.6);
                 let y = field.height(x, z).min(field.height(x + 1, z + 1));
                 m.shard(on(p, y), size, size * dice.range(0.5, 0.9), lean, &mut dice, &char_shades());
+            }
+            Cover::Highland if in_site => {
+                let mut dice = Dice::new(x, z, salt ^ 0x5c07);
+                if let Some(away) = next_to(field, x, z, |c| c != Cover::Highland) {
+                    // Scree down the rim's flanks: a few angular stones.
+                    for _ in 0..1 + (dice.next() * 3.0) as usize {
+                        let p = centre + Vec2::new(dice.range(-0.45, 0.45), dice.range(-0.45, 0.45)) * field.cell + away * 0.12;
+                        let size = dice.range(0.14, 0.3);
+                        m.shard(on(p, surface(field, p) + 0.06), size, size * dice.range(0.5, 0.9), away, &mut dice, &rim_shades());
+                    }
+                } else if field.rim[field.index(x, z)] >= 2.0 && dice.next() < 0.16 {
+                    // Jagged spurs along the crest.
+                    let p = jitter(&mut dice);
+                    let lean = Vec2::new(dice.range(-1.0, 1.0), dice.range(-1.0, 1.0)).normalize_or(Vec2::X);
+                    let size = dice.range(0.3, 0.55);
+                    m.shard(on(p, surface(field, p)), size, size * dice.range(0.9, 1.5), lean, &mut dice, &rim_shades());
+                }
             }
             Cover::Mountain => {
                 if let Some(away) = next_to(field, x, z, Cover::is_land)
