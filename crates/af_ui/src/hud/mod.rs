@@ -22,6 +22,7 @@ use af_core::prelude::*;
 use bevy::prelude::*;
 
 use crate::card::CardSelection;
+use crate::skin::SkinSet;
 
 /// Whose resources, notices and fog the HUD shows: the local player, or
 /// the player a spectator picked.
@@ -68,7 +69,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<HudView>()
         .init_resource::<SpectatorChoice>()
         .init_resource::<SelectionInfo>()
-        .configure_sets(Update, (HudSet::Prepare, HudSet::Panels).chain().in_set(ClientSet::Ui).run_if(in_state(GameState::Playing)))
+        .configure_sets(Update, (HudSet::Prepare, HudSet::Panels).chain().in_set(ClientSet::Ui).before(SkinSet).run_if(in_state(GameState::Playing)))
         .add_systems(OnEnter(GameState::Playing), (reset_hud_state, spawn_hud).chain())
         .add_systems(Update, (update_view, track_selection).in_set(HudSet::Prepare));
     topbar::plugin(app);

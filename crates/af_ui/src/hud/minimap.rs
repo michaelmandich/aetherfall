@@ -119,7 +119,8 @@ pub(super) fn create(commands: &mut Commands, images: &mut Assets<Image>) -> Han
 }
 
 pub(super) fn spawn(bottom: &mut ChildSpawnerCommands, image: Handle<Image>) {
-    bottom.spawn((theme::panel_node(Node { padding: UiRect::all(px(4)), flex_shrink: 0.0, ..default() }), theme::panel_colors())).with_child((
+    // The panel's usual padding keeps the map off its frame's metal band.
+    bottom.spawn((theme::panel_node(Node { flex_shrink: 0.0, ..default() }), theme::panel_colors(), crate::skin::SkinPanel::Panel)).with_child((
         MinimapView,
         ImageNode::new(image),
         Node { width: px(MINIMAP_PX as f32), height: px(MINIMAP_PX as f32), ..default() },

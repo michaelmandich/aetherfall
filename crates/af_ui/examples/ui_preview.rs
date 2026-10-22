@@ -38,10 +38,15 @@ fn main() -> AppExit {
 
     let mut app = App::new();
     app.set_error_handler(bevy::ecs::error::warn);
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window { title: "Aetherfall UI preview".into(), resolution: WindowResolution::new(1600, 900), ..default() }),
-        ..default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window { title: "Aetherfall UI preview".into(), resolution: WindowResolution::new(1600, 900), ..default() }),
+                ..default()
+            })
+            // The repository's assets (the UI skin), not `crates/af_ui/assets`.
+            .set(AssetPlugin { file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").into(), ..default() }),
+    );
     app.insert_state(if hud { GameState::Playing } else { GameState::Menu });
     app.insert_resource(Data(test_data()));
     app.add_plugins((af_core::CorePlugin, af_ui::HudPlugin));
