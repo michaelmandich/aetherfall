@@ -35,6 +35,7 @@ mod idle;
 mod intake;
 mod motion;
 mod notice;
+mod reach;
 mod targeting;
 mod travel;
 mod tuning;

@@ -4,8 +4,14 @@
 //! so a unit never stands where af_combat would not fire: the same reach,
 //! the same distance measure (`edge_distance`), and nothing fires at a
 //! target inside its minimum range.
+//!
+//! A ground unit only takes on, and keeps chasing, hostiles it can get
+//! within weapon reach of over the terrain (see `reach`): not a camp across
+//! the river that only a long detour by the ford leads to, nor anything on
+//! an island. What its weapons already reach is always fair game.
 
 use af_core::ext::combat::{edge_distance, in_weapon_range, weapon_reach, TargetClass};
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -13,7 +19,11 @@ use bevy::prelude::*;
 
 use crate::brain::Unreachable;
 use crate::motion::{Engagement, Plan};
+use crate::reach::Reach;
 use crate::tuning::*;
+
+/// The best-scoring hostiles a chase is checked for detours, in order.
+const DETOUR_CHECKS: usize = 3;
 
 /// Longest reach of any of these weapons; `None` when unarmed.
 pub(crate) fn longest_reach(data: &GameData, stats: &Stats, weapons: &Weapons) -> Option<f32> {
@@ -118,6 +128,7 @@ pub(crate) struct Seeker<'a> {
     pub pos: Vec2,
     pub obb: Obb,
     pub flying: bool,
+    pub mobile: &'a Mobile,
     pub stats: &'a Stats,
     pub weapons: &'a Weapons,
     /// Hostiles we could not reach lately, as of `tick`.
@@ -144,12 +155,18 @@ pub(crate) struct Sight<'w, 's> {
     pub players: Res<'w, Players>,
     fog: Res<'w, FogOfWar>,
     pub spatial: Res<'w, SpatialIndex>,
+    regions: Option<Res<'w, NavRegions>>,
     armament: Query<'w, 's, &'static Weapons, Without<Dead>>,
 }
 
 impl Sight<'_, '_> {
     pub(crate) fn team(&self, player: PlayerId) -> u8 {
         self.players.team(player)
+    }
+
+    /// Where a ground seeker can get to over the terrain (`None` for flyers).
+    fn reach(&self, me: &Seeker) -> Option<Reach> {
+        (!me.flying).then(|| Reach::of(self.regions.as_deref(), me.pos, me.mobile))
     }
 
     fn hostile(&self, me: PlayerId, other: Option<PlayerId>) -> bool {
@@ -172,11 +189,15 @@ impl Sight<'_, '_> {
     /// The best hostile to engage on our own initiative: within `radius`
     /// (box edge to our centre) or, with `in_range`, only what one of our
     /// weapons can already fire at. Walls and hostiles we could not reach
-    /// lately are never picked automatically. Returns the entity and its
-    /// score.
+    /// lately are never picked automatically, nor (by a ground unit, unless
+    /// in range) ones it cannot get within weapon reach of over the terrain,
+    /// or only by a long detour (see [`CHASE_DETOUR`]). Returns the entity
+    /// and its score.
     pub(crate) fn best_hostile(&self, me: &Seeker, radius: f32, in_range: bool) -> Option<(Entity, f32)> {
         let team = self.team(me.owner);
-        let mut best: Option<(f32, Entity)> = None;
+        let reach = if in_range { None } else { self.reach(me) };
+        let weapon = longest_reach(&self.data, me.stats, me.weapons).unwrap_or(0.0);
+        let mut found: Vec<(f32, Entity, Option<Vec2>)> = Vec::new();
         self.spatial.for_each_near(me.pos, radius, |e| {
             if e.kind == SpatialKind::Node
                 || e.entity == me.entity
@@ -192,15 +213,17 @@ impl Sight<'_, '_> {
             } else {
                 threatens(&self.data, me.weapons, class) && e.obb.distance_to_point(me.pos) <= radius
             };
-            if !near || !self.fog.visible(team, e.pos) {
+            if !near || !self.fog.visible(team, e.pos) || reach.as_ref().is_some_and(|r| !r.within(&e.obb, weapon)) {
                 return;
             }
-            let score = edge_distance(&me.obb, &e.obb) + self.penalty(me, e.entity, e.kind == SpatialKind::Building, e.under_construction);
-            if best.is_none_or(|(s, b)| score < s || (score == s && e.entity < b)) {
-                best = Some((score, e.entity));
-            }
+            let gap = edge_distance(&me.obb, &e.obb);
+            let score = gap + self.penalty(me, e.entity, e.kind == SpatialKind::Building, e.under_construction);
+            // Out of weapon reach: the chase's way is checked below.
+            found.push((score, e.entity, (gap > weapon).then_some(e.pos)));
         });
-        best.map(|(s, e)| (e, s))
+        found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let direct = |chase: Option<Vec2>| chase.zip(reach.as_ref()).is_none_or(|(p, r)| !r.detour(p));
+        found.into_iter().take(DETOUR_CHECKS).find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
     }
 
     /// How our weapons stand against `target`, whoever it belongs to (a
@@ -210,12 +233,20 @@ impl Sight<'_, '_> {
     }
 
     /// Is `target` still a hostile worth engaging automatically, no farther
-    /// than `leash` and in sight?
+    /// than `leash`, in sight and, when a ground unit would have to chase
+    /// it, within its weapon reach of ground it can get to?
     pub(crate) fn engageable(&self, me: &Seeker, target: &TargetDataItem, leash: f32) -> Option<Engagement> {
         if !target.mortal || !self.hostile(me.owner, target.owner()) || !self.fog.visible(self.team(me.owner), target.pos.0) {
             return None;
         }
-        self.assess(me, target).filter(|en| en.gap <= leash)
+        let en = self.assess(me, target).filter(|en| en.gap <= leash)?;
+        if !en.plan.stands()
+            && let Some(reach) = self.reach(me)
+            && !reach.within(&target.obb(), longest_reach(&self.data, me.stats, me.weapons).unwrap_or(0.0))
+        {
+            return None;
+        }
+        Some(en)
     }
 
     /// Score of a target already engaged (see [`Sight::best_hostile`]).

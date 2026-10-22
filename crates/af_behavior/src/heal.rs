@@ -1,7 +1,9 @@
-//! Healers mend injured allies: idle healers seek them out within vision;
-//! healers holding, following, attacking, attack-moving or patrolling mend
-//! whoever is already in range.
+//! Healers mend injured allies: idle healers seek them out within vision
+//! (those they can get within healing range of over the terrain, see
+//! `reach`); healers holding, following, attacking, attack-moving or
+//! patrolling mend whoever is already in range.
 
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::platform::collections::HashMap;
@@ -9,6 +11,7 @@ use bevy::prelude::*;
 
 use crate::brain::Brain;
 use crate::motion::{self, Engagement, Plan};
+use crate::reach::Reach;
 use crate::tuning::*;
 
 #[derive(QueryData)]
@@ -20,6 +23,7 @@ pub(crate) struct Medic {
     pos: &'static Position,
     facing: &'static Facing,
     footprint: &'static Footprint,
+    mobile: &'static Mobile,
     stats: &'static Stats,
     path: &'static PathState,
     orders: &'static Orders,
@@ -44,6 +48,7 @@ pub(crate) fn run_healers(
     data: Res<Data>,
     players: Res<Players>,
     spatial: Res<SpatialIndex>,
+    regions: Option<Res<NavRegions>>,
     clock: Res<SimClock>,
     mut commands: Commands,
     mut medics: Query<Medic, (With<Unit>, Without<Dead>)>,
@@ -104,6 +109,7 @@ pub(crate) fn run_healers(
             let tags = TagSet::from_tags(&heal.tags);
             let radius = if roam { m.stats.vision } else { reach + obb.bounding_radius() };
             let avoid = m.brain.unreachable;
+            let ground = (roam && !m.mobile.flying).then(|| Reach::of(regions.as_deref(), m.pos.0, m.mobile));
             let mut best: Option<(f32, f32, Entity)> = None;
             spatial.for_each_near(m.pos.0, radius, |e| {
                 let eligible = e.kind == SpatialKind::Unit
@@ -111,7 +117,8 @@ pub(crate) fn run_healers(
                     && e.tags.0 & tags.0 != 0
                     && e.owner.is_some_and(|o| players.allied(me, o))
                     && load.get(&e.entity).copied().unwrap_or(0) < MAX_HEALERS_PER_TARGET
-                    && !avoid.skips(e.entity, clock.tick);
+                    && !avoid.skips(e.entity, clock.tick)
+                    && ground.as_ref().is_none_or(|g| g.within(&e.obb, reach));
                 if !eligible {
                     return;
                 }

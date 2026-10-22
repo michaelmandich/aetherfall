@@ -36,6 +36,7 @@ impl<'w> FighterItem<'w, '_> {
             pos: self.pos.0,
             obb: self.footprint.obb(self.pos.0, self.facing.0),
             flying: self.mobile.flying,
+            mobile: self.mobile,
             stats: self.stats,
             weapons: self.weapons,
             unreachable: self.brain.unreachable,

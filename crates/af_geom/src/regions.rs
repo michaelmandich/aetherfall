@@ -664,6 +664,23 @@ impl RegionMap {
         best.map(|(_, c)| self.cell_center(c))
     }
 
+    /// The first cell of `region` on the way from `to` back to `from` (its
+    /// centre): the bank facing `to` across water or rock, as seen from
+    /// `from`. Costs a walk along the line; `None` when the line never
+    /// enters the region.
+    pub fn facing(&self, region: RegionId, from: Vec2, to: Vec2) -> Option<Vec2> {
+        let mut found = None;
+        traverse_cells(self.origin, self.cell, to, from, |c| {
+            if self.node_at(c).is_some_and(|n| self.nodes[n as usize].region == region) {
+                found = Some(self.cell_center(c));
+                false
+            } else {
+                true
+            }
+        });
+        found
+    }
+
     /// Every cell the segment `a`-`b` crosses is open for the class.
     pub fn line_open(&self, a: Vec2, b: Vec2) -> bool {
         traverse_cells(self.origin, self.cell, a, b, |c| self.open_cell(c))
@@ -1026,6 +1043,8 @@ mod tests {
         let west = m.region_at(Vec2::new(20.5, 40.5));
         let p = m.nearest_in(west, Vec2::new(75.5, 40.3)).expect("a bank");
         assert!((p - Vec2::new(41.5, 40.5)).length() < 0.01, "{p}");
+        assert_eq!(m.facing(west, Vec2::new(20.5, 40.5), Vec2::new(75.5, 40.5)), Some(Vec2::new(41.5, 40.5)), "the facing bank");
+        assert_eq!(m.facing(west, Vec2::new(80.5, 40.5), Vec2::new(75.5, 40.5)), None, "a line that never enters the region");
         assert_eq!(m.nearest_in(west, Vec2::new(10.2, 3.3)), Some(Vec2::new(10.2, 3.3)));
         // Brute force over a few goals.
         for goal in [Vec2::new(60.0, 5.0), Vec2::new(95.0, 95.0), Vec2::new(47.0, 47.0)] {

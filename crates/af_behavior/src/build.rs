@@ -1,5 +1,6 @@
 //! Build and Repair orders.
 
+use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -8,6 +9,7 @@ use bevy::prelude::*;
 
 use crate::brain::{Brain, Phase};
 use crate::motion;
+use crate::reach::Reach;
 use crate::tuning::*;
 
 #[derive(QueryData)]
@@ -19,6 +21,7 @@ pub(crate) struct Builder {
     pos: &'static Position,
     facing: &'static Facing,
     footprint: &'static Footprint,
+    mobile: &'static Mobile,
     path: &'static PathState,
     orders: &'static mut Orders,
     brain: &'static mut Brain,
@@ -51,6 +54,7 @@ pub(crate) struct Works<'w, 's> {
     data: Res<'w, Data>,
     players: Res<'w, Players>,
     spatial: Res<'w, SpatialIndex>,
+    regions: Option<Res<'w, NavRegions>>,
     commands: Commands<'w, 's>,
     structures: Query<'w, 's, Structure, Without<Dead>>,
     nodes: Query<'w, 's, &'static ResourceNode, Without<Dead>>,
@@ -166,10 +170,13 @@ impl Works<'_, '_> {
     }
 
     /// Nearest node around a new drop site that it accepts and the worker
-    /// can gather, preferring what the worker gathered last.
+    /// can gather (and get to: not across the river from it), preferring
+    /// what the worker gathered last.
     fn node_for_drop_site(&self, u: &BuilderItem, kind: BuildingTypeId, at: Vec2) -> Option<Entity> {
         let accepts = &self.data.building(kind).drop_site_ids;
         let player = self.players.try_get(u.owner.0)?;
+        let reach = Reach::of(self.regions.as_deref(), u.pos.0, u.mobile);
+        let within = WORK_ARRIVE + u.mobile.radius + NODE_REACH_SLACK;
         let usable = |r: ResourceId| accepts.contains(&r) && stats::gather_rate(&self.data, player, u.unit.kind, r) > 0.0;
         let last = u.gatherer.and_then(|g| g.last_node_kind).map(|k| self.data.node(k).resource_id).filter(|r| usable(*r));
         let find = |wanted: &dyn Fn(ResourceId) -> bool| {
@@ -180,7 +187,10 @@ impl Works<'_, '_> {
                         return false;
                     }
                     let def = self.data.node(NodeTypeId(e.type_index));
-                    def.requires_building_id.is_none() && wanted(def.resource_id) && self.nodes.get(e.entity).is_ok_and(|n| n.remaining > 0.0)
+                    def.requires_building_id.is_none()
+                        && wanted(def.resource_id)
+                        && self.nodes.get(e.entity).is_ok_and(|n| n.remaining > 0.0)
+                        && reach.within(&e.obb, within)
                 })
                 .map(|e| e.entity)
         };
