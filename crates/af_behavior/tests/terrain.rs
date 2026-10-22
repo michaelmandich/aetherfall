@@ -155,3 +155,19 @@ fn an_archer_shoots_across_a_forded_river_from_its_bank() {
     assert!(sim.has::<Idle>(spear));
     assert_eq!(sim.get::<AttackTarget>(archer).map(|a| a.entity), Some(enemy), "the archer shoots across");
 }
+
+/// Three armed hostiles over a forded river outrank an enemy house the
+/// spearman already reaches, and each is a long way round by the ford: the
+/// spearman passes them over and attacks the house.
+#[test]
+fn a_soldier_takes_what_it_reaches_past_hostiles_round_by_the_ford() {
+    let mut sim = Sim::new(&[("ironhold", 0), ("dune", 1)]);
+    river(&mut sim, Some(112..120));
+    let spear = sim.unit(P0, "spearman", Vec2::new(58.5, 44.0));
+    for y in [42.0, 44.0, 46.0] {
+        sim.unit(P1, "spearman", Vec2::new(66.5, y));
+    }
+    let house = sim.building(P1, "house", Vec2::new(55.5, 44.0), true);
+    sim.run_secs(1.0);
+    assert_eq!(sim.get::<AttackTarget>(spear).map(|a| a.entity), Some(house));
+}

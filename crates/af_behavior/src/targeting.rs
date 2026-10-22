@@ -23,7 +23,9 @@ use crate::motion::{Engagement, Plan};
 use crate::reach::Reach;
 use crate::tuning::*;
 
-/// The best-scoring hostiles a chase is checked for detours, in order.
+/// Chases a scan checks for detours at most (each may cost a coarse
+/// search): the best-scoring hostiles out of weapon reach, in order. What
+/// the weapons already reach needs no check.
 const DETOUR_CHECKS: usize = 3;
 
 /// Longest reach of any of these weapons; `None` when unarmed.
@@ -192,8 +194,9 @@ impl Sight<'_, '_> {
     /// weapons can already fire at. Walls and hostiles we could not reach
     /// lately are never picked automatically, nor (by a ground unit, unless
     /// in range) ones it cannot get within weapon reach of over the terrain,
-    /// or only by a long detour (see [`CHASE_DETOUR`]). Returns the entity
-    /// and its score.
+    /// or only by a long detour (see [`CHASE_DETOUR`]; past the first
+    /// [`DETOUR_CHECKS`] chases, only what needs none is taken). Returns the
+    /// entity and its score.
     pub(crate) fn best_hostile(&self, me: &Seeker, radius: f32, in_range: bool) -> Option<(Entity, f32)> {
         let team = self.team(me.owner);
         let reach = if in_range { None } else { self.reach(me) };
@@ -223,8 +226,15 @@ impl Sight<'_, '_> {
             found.push((score, e.entity, (gap > weapon).then_some(e.obb)));
         });
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let direct = |chase: Option<Obb>| chase.zip(reach.as_ref()).is_none_or(|(obb, r)| !r.detour(&obb, weapon));
-        found.into_iter().take(DETOUR_CHECKS).find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
+        let mut checks = 0;
+        let mut direct = |chase: Option<Obb>| match chase.zip(reach.as_ref()) {
+            Some((obb, r)) => {
+                checks += 1;
+                checks <= DETOUR_CHECKS && !r.detour(&obb, weapon)
+            }
+            None => true,
+        };
+        found.into_iter().find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
     }
 
     /// How our weapons stand against `target`, whoever it belongs to (a
