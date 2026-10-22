@@ -74,8 +74,11 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   through narrow gaps (cliff gaps, slots between houses, crossing head-on,
   past idle units, behind a ram) the way a player's right-click does, and
   measures how many get through and how fast, failed orders, units left
-  stuck and the deepest overlap. The fast tests check overlap and
-  determinism; the table:
+  stuck and the deepest overlap. The fast tests run every scenario and
+  check overlap, determinism and that each crowd gets through as its bar
+  asks (everyone through, no order failed, within a time; the ram, whose
+  path does not fit its slot, and one unit whose formation slot lies on
+  the cliff are the only exceptions); the table:
   `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`
   (`AF_CHOKE_JITTER=<seed>` moves every unit a little from its spot: a
   variant, to tell a change that helps from one that suits the layout).

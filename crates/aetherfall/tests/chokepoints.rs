@@ -20,8 +20,11 @@
 //! ground units at the end of any tick; and the collision solver's
 //! counters ([`CollisionStats`]) over the run.
 //!
-//! The fast tests check that no tick ends with boxes overlapping past the
-//! game's rule and that two runs agree bit for bit. The report is a
+//! The fast tests check that no tick of any scenario ends with boxes
+//! overlapping past the game's rule, that every scenario's crowd gets
+//! through on the default layout as its bar asks ([`BARS`]: everyone
+//! through, no order failed, in good time, but for two units that
+//! cannot), and that two runs agree bit for bit. The report is a
 //! measurement, so it is `#[ignore]`d:
 //!
 //! ```text
@@ -451,6 +454,9 @@ struct Outcome {
     t50: Option<f32>,
     t90: Option<f32>,
     t100: Option<f32>,
+    /// When each unit that got through did (seconds after the order),
+    /// earliest first.
+    times: Vec<f32>,
     stuck: usize,
     max_overlap: f32,
     max_overlap_at: f32,
@@ -613,6 +619,7 @@ fn run(name: &'static str, secs: Option<u32>) -> Outcome {
         t50: time_for(0.5),
         t90: time_for(0.9),
         t100: time_for(1.0),
+        times,
         stuck,
         max_overlap,
         max_overlap_at,
@@ -791,15 +798,79 @@ fn chokepoint_report() {
     println!("\n{}", table(&outcomes));
 }
 
-/// Two hostile crowds crossing in a channel, and a ram, infantry and
-/// knights squeezing through a slot between houses: no tick ends with two
-/// units overlapping past the game's rule.
+/// In every scenario (crowds pressing into gaps one cell wide, two hostile
+/// crowds crossing in a channel, a ram, infantry and knights squeezing
+/// through a slot between houses...), no tick ends with two units
+/// overlapping past the game's rule.
 #[test]
 fn chokepoint_crowds_never_overlap() {
-    for name in ["head_on_gap_2_enemies", "mixed_sizes"] {
+    for (name, _) in SCENARIOS {
         let o = run(name, None);
         assert!(o.max_overlap <= MAX_OVERLAP, "{name}: units overlapped by {:.3} m at t={:.1}s\n{}", o.max_overlap, o.max_overlap_at, table(std::slice::from_ref(&o)));
     }
+}
+
+/// What a scenario must come to on its default layout: at least `through`
+/// units through, at most `failed` orders failed and `short` units arrived
+/// short of the gap, and the first `through` of them through within `secs`
+/// seconds of the order.
+struct Bar {
+    name: &'static str,
+    through: usize,
+    failed: usize,
+    short: usize,
+    secs: f32,
+}
+
+/// Every scenario's bar: everyone through and no order failed, but for one
+/// unit of the crowd ordered just past the exit, whose formation slot lies
+/// on the cliff beside it (it stops at the mouth), and the ram, whose path
+/// clearance does not fit its slot (its order fails where it stands). The
+/// times leave about a third over what the bench measures. Before the
+/// collision solver let crowds file through (slipping round corners of the
+/// terrain, waiting their turn in a queue, a file going on giving way to
+/// the column it met), 3 of 40 got through the cliff gap, 11 of 40 across
+/// the channel, 9 of 24 across the one-cell gap, and 106 orders failed
+/// over the bench.
+const BARS: [Bar; 8] = [
+    Bar { name: "one_way_cliff_gap_1", through: 40, failed: 0, short: 0, secs: 32.0 },
+    Bar { name: "one_way_building_gap", through: 40, failed: 0, short: 0, secs: 28.0 },
+    Bar { name: "head_on_gap_2_enemies", through: 40, failed: 0, short: 0, secs: 52.0 },
+    Bar { name: "head_on_gap_1_allies", through: 24, failed: 0, short: 0, secs: 25.0 },
+    Bar { name: "wide_funnel", through: 60, failed: 0, short: 0, secs: 45.0 },
+    Bar { name: "idle_plug", through: 30, failed: 0, short: 0, secs: 16.0 },
+    Bar { name: "goal_just_past_exit", through: 39, failed: 0, short: 1, secs: 20.0 },
+    Bar { name: "mixed_sizes", through: 26, failed: 1, short: 0, secs: 16.0 },
+];
+
+/// Every scenario's crowd gets through as its bar ([`BARS`]) asks: the
+/// crowds that used to gridlock in gaps and channels file through.
+#[test]
+fn chokepoint_crowds_get_through() {
+    let mut missed = Vec::new();
+    let mut outcomes = Vec::new();
+    for (name, _) in SCENARIOS {
+        let bar = BARS.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("no bar for {name}"));
+        let o = run(name, None);
+        let within = o.times.get(bar.through.saturating_sub(1)).copied();
+        if o.through < bar.through || o.failed > bar.failed || o.short > bar.short || within.is_none_or(|t| t > bar.secs) {
+            missed.push(format!(
+                "{name}: {}/{} through (bar {}), {} failed (bar {}), {} short (bar {}), first {} through at {} s (bar {:.0} s)",
+                o.through,
+                o.total,
+                bar.through,
+                o.failed,
+                bar.failed,
+                o.short,
+                bar.short,
+                bar.through,
+                secs(within),
+                bar.secs
+            ));
+        }
+        outcomes.push(o);
+    }
+    assert!(missed.is_empty(), "{}\n\n{}", missed.join("\n"), table(&outcomes));
 }
 
 /// The same scenario run twice ends with every unit in the same place,
