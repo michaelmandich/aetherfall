@@ -289,6 +289,37 @@ fn arrows_pan_and_wheel_zooms_within_limits() {
     assert_eq!(m.rig().distance, 8.0);
 }
 
+/// On a Huge map the wheel zooms out further, and a spectator starts over
+/// the main meteor site (the middle of the land), not the middle of the map.
+#[test]
+fn big_maps_zoom_out_further_and_spectators_start_at_the_main_site() {
+    use af_core::ext::map::{MapFeatures, MapSize, MeteorSite, ResolvedMapOptions, SiteKind, WaterLevel};
+    let mut app = sim_app(test_data());
+    app.add_plugins(RtsInputPlugin);
+    flat_world(&mut app, 128.0, &[("ironhold", 0), ("dune", 1)]);
+    let site = Vec2::new(52.0, 70.0);
+    app.insert_resource(MapFeatures {
+        options: ResolvedMapOptions { size: MapSize::Huge, water: WaterLevel::Coast, rivers: 1, site: SiteKind::Spire },
+        land_min: Vec2::ZERO,
+        land_max: Vec2::new(104.0, 128.0),
+        ocean_edges: Vec::new(),
+        sites: vec![MeteorSite { kind: SiteKind::Spire, center: site, radius: 6.0 }],
+        rivers: Vec::new(),
+        mountains: Vec::new(),
+    });
+    run_ticks(&mut app, 1);
+    let rig = || *app.world().resource::<CameraRig>();
+    assert_eq!(rig().focus, site, "spectating: the main site");
+    let mut m = Match { app, me: PlayerId(0), enemy: PlayerId(1) };
+    m.app.world_mut().insert_resource(AccumulatedMouseScroll { unit: MouseScrollUnit::Line, delta: Vec2::new(0.0, -30.0) });
+    m.step();
+    assert_eq!(m.rig().distance, af_input::MAX_DISTANCE_HUGE);
+    // Without the features (today's maps) the limit is as it was.
+    m.app.world_mut().remove_resource::<MapFeatures>();
+    m.step();
+    assert_eq!(m.rig().distance, af_input::MAX_DISTANCE);
+}
+
 #[test]
 fn camera_works_while_paused_and_stays_on_the_map() {
     let mut m = Match::new(false);
