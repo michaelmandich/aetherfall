@@ -12,9 +12,12 @@
 *.key
 
 # Placeholder static models, built from art/static/placeholders/source/
-# (art/static/placeholders.py --build); the real ones are committed.
+# (art/static/placeholders.py --build); the real ones are committed. The
+# decor stand-ins' sources are not committed either (placeholders.py
+# writes them).
 /assets/models/_placeholders/
 /assets/visuals-placeholders/
+/art/static/placeholders/source/decor/
 
 # Python bytecode (Blender scripts and tools).
 __pycache__/

@@ -8,6 +8,9 @@ Run headless from the repository root:
 Options (after the `--`):
     (none)          write every placeholder source to art/static/placeholders/source/
     --only a,b      only these sources (file stems: pine_a, house...)
+    --kind K        only the sources of one kind (buildings, nodes or decor)
+    --heavy         decor stand-ins subdivided to about their triangle budget
+                    (as heavy as the real models: for measuring frame time)
     --build         then build them like real models into assets/models/_placeholders/,
                     registry assets/visuals-placeholders/static.ron (both git-ignored),
                     with the settings in placeholders/assets.toml (not art/static/assets.toml);
@@ -17,7 +20,9 @@ Options (after the `--`):
                     crates/af_render/tests/fixtures/static/ (the engine's tests),
                     with the contract's default settings
 
-The sources are committed (they are small); the built outputs are not.
+The building and node sources are committed (they are small); the decor
+sources (placeholders/source/decor/, stand-ins for the Tripo scenery) and
+every built output are not.
 Every recipe models at the game's box size (assets/data), in metres,
 Blender axes: Z up, the front toward -Y (glTF +Z). Shapes and colours come
 from lib/shapes.py; randomness is seeded per recipe, so the sources are
@@ -700,6 +705,588 @@ def mining_camp(m):
 
 
 # ===========================================================================
+# Decor (landscape scenery the engine places from the terrain; not game
+# entities). Rough stand-ins for every decor model asked of Tripo
+# (art/tripo/requests.json), modelled at their drawn size
+# (lib/settings.py DECOR): long pieces along X, the front (a rim's inner
+# face, a cliff's sea face, a backdrop's side toward the map) toward -Y,
+# glTF +Z. Their sources are not committed (the folder is git-ignored).
+# ===========================================================================
+
+ROCK = "#a4a6a8"
+ROCK_MID = "#7e8184"
+ROCK_DARK = "#55585c"
+LICHEN = "#b9be8c"
+SNOW = "#eef3f8"
+SNOW_SHADE = "#c9d6e6"
+MEADOW = "#4e7a32"
+MEADOW_DARK = "#3b5a2a"
+RIM = "#8f8a85"
+RIM_MID = "#66625f"
+RIM_DARK = "#3d393b"
+CHAR = "#2b2628"
+CHAR_LIGHT = "#4a4446"
+VIOLET_DIM = "#7c58b0"
+SPIRE_PALE = "#d2c9e4"
+SPIRE_MID = "#a497c4"
+EARTH = "#7a5a3a"
+REED = "#71823f"
+REED_TIP = "#bcae66"
+CATTAIL = "#5b4330"
+WET_STONE = "#6d7275"
+ALGAE = "#4f6b3a"
+LILY = "#3f7a35"
+LILY_LIGHT = "#5d9a45"
+BLOOM = "#f4f1e8"
+GORSE = "#2f5a2a"
+GORSE_FLOWER = "#e8c33a"
+HAZEL = "#5f8f3a"
+FERN_GREEN = "#4f8a34"
+MOSS = "#4e6e2e"
+DRIFT = "#b7b2a6"
+SEA_ROCK = "#6b6d70"
+BARNACLE = "#c9c3b0"
+HAZE_ROCK = "#8f949b"
+FOREST = "#2f5a2f"
+FOREST_LIGHT = "#3f6b37"
+
+
+def crag(m, at, radius, height, colours, sides=9, levels=3, jitter=0.16, squash=(1.0, 1.0), snow=None):
+    """A craggy peak: stacked, jittered frustums narrowing to a point,
+    coloured from `colours` per level (foot first); `snow` paints the
+    levels from that fraction of the height up white."""
+    x, y, z = at
+    for k in range(levels):
+        r0 = radius * (1 - k / levels) ** 0.9
+        r1 = radius * (1 - (k + 1) / levels) ** 0.9 if k + 1 < levels else 0.0
+        h = height / levels * (1.25 if k == 0 else 0.95)
+        z0 = z + height * k / levels * 0.98
+        c = colours[min(k, len(colours) - 1)]
+        if snow is not None and (k + 1) / levels > snow:
+            c = SNOW if k + 1 == levels else SNOW_SHADE
+        m.prism(sides, r0, h, at=(x + m.rng.uniform(-0.08, 0.08) * radius, y + m.rng.uniform(-0.08, 0.08) * radius, z0),
+                top=r1 if r1 > 0 else 0, colour=c, rot=m.rng.uniform(0, 360), jitter=jitter, squash=squash,
+                cap_top=False, vary=0.1)
+
+
+@recipe("decor", "mountain_peak_a", 201)
+def mountain_peak_a(m):
+    crag(m, (0, 0, 0), 6.4, 8.5, (ROCK_MID, ROCK, ROCK, ROCK), levels=4, snow=0.55)
+    for a in (20, 140, 260):
+        d = Vector((math.cos(math.radians(a)), math.sin(math.radians(a)), 0)) * 4.2
+        crag(m, (d.x, d.y, 0), 2.6, 3.2, (ROCK_DARK, ROCK_MID), levels=2)
+
+
+@recipe("decor", "mountain_peak_b", 202)
+def mountain_peak_b(m):
+    crag(m, (-2.2, 0.4, 0), 5.2, 8.5, (ROCK_MID, ROCK, ROCK), levels=3, snow=0.6)
+    crag(m, (2.6, -0.3, 0), 4.6, 7.4, (ROCK_MID, ROCK, ROCK), levels=3, snow=0.6)
+    m.prism(7, 2.2, 1.2, at=(0.2, 0.0, 5.0), top=1.2, colour=SNOW, jitter=0.2, cap_top=True)
+
+
+@recipe("decor", "mountain_peak_c", 203)
+def mountain_peak_c(m):
+    crag(m, (0, 0, 0), 6.2, 8.5, (ROCK_DARK, ROCK_MID, ROCK, LICHEN), levels=4, squash=(1.0, 0.75))
+    m.box((7.0, 1.6, 6.5), at=(0.8, 2.2, 0.0), colour=ROCK_DARK, rot=8, vary=0.08)  # the sheer side
+
+
+@recipe("decor", "mountain_peak_d", 204)
+def mountain_peak_d(m):
+    crag(m, (0, 0, 0), 6.4, 8.0, (MEADOW, MEADOW_DARK, ROCK_MID, ROCK), levels=4)
+
+
+def ridge(m, length, height, depth, colours, snow=None, bumps=5):
+    for i in range(bumps):
+        t = (i + 0.5) / bumps
+        x = -length / 2 + length * t
+        h = height * (0.55 + 0.45 * math.sin(math.pi * t)) * m.rng.uniform(0.85, 1.05)
+        r = depth * 0.5 * (0.75 + 0.25 * math.sin(math.pi * t))
+        crag(m, (x, m.rng.uniform(-0.3, 0.3), 0), r, h, colours, levels=3, squash=(length / bumps / depth * 1.25, 1.0),
+             snow=snow)
+
+
+@recipe("decor", "mountain_ridge_a", 211)
+def mountain_ridge_a(m):
+    ridge(m, 21.0, 6.0, 8.0, (ROCK_MID, ROCK, ROCK))
+
+
+@recipe("decor", "mountain_ridge_b", 212)
+def mountain_ridge_b(m):
+    ridge(m, 21.0, 6.0, 8.0, (ROCK_MID, ROCK, ROCK), snow=0.6)
+
+
+@recipe("decor", "mountain_ridge_c", 213)
+def mountain_ridge_c(m):
+    ridge(m, 21.0, 5.5, 8.0, (MEADOW, ROCK_MID, ROCK))
+
+
+def knoll(m, humps, slab_side=1):
+    for x, y, r, h in humps:
+        m.blob(r, at=(x, y, 0.0), scale=(1.0, 0.85, h / r), colour=MEADOW, subdiv=2, jitter=0.1, vary=0.08,
+               flat_bottom=0.0)
+    x, y, r, h = humps[0]
+    m.box((r * 1.1, r * 0.5, h * 0.9), at=(x + slab_side * r * 0.35, y + r * 0.2, 0.0), colour=ROCK, rot=15,
+          tilt=(10, 0), vary=0.06)
+
+
+@recipe("decor", "mountain_foothill_a", 221)
+def mountain_foothill_a(m):
+    knoll(m, [(0.0, 0.0, 4.6, 2.8)])
+
+
+@recipe("decor", "mountain_foothill_b", 222)
+def mountain_foothill_b(m):
+    knoll(m, [(-2.3, 0.0, 3.0, 2.6), (2.4, 0.3, 2.8, 2.2)], slab_side=-1)
+
+
+@recipe("decor", "mountain_foothill_c", 223)
+def mountain_foothill_c(m):
+    knoll(m, [(0.0, 0.0, 4.9, 1.8)])
+    for k in range(3):
+        m.box((3.0, 1.2, 0.7 + 0.4 * k), at=(-2.5 + 2.4 * k, 1.8, 0.0), colour=ROCK_MID, vary=0.06)
+
+
+def rim_arc(m, length, height, depth, bend, crown=False):
+    """A curved wall of heaved strata: its concave (inner, steep, darker)
+    side toward -Y (the front)."""
+    n = 7
+    radius = length / bend
+    for i in range(n):
+        t = (i + 0.5) / n - 0.5
+        a = t * bend
+        # The ends curl toward the front: the centre of the crater lies there.
+        x, y = math.sin(a) * radius, -(1 - math.cos(a)) * radius + depth * 0.1
+        h = height * (0.75 + 0.25 * math.cos(t * math.pi)) * m.rng.uniform(0.85, 1.05)
+        rot = -math.degrees(a)
+        m.box((length / n * 1.15, depth * 0.55, h), at=(x, y + depth * 0.15, 0.0), colour=RIM, rot=rot, tilt=(-12, 0),
+              vary=0.08)
+        m.box((length / n * 1.1, depth * 0.3, h * 0.95), at=(x, y - depth * 0.22, 0.0), colour=RIM_DARK, rot=rot,
+              tilt=(8, 0), vary=0.06)
+        if crown and i % 2 == 0:
+            m.box((0.9, 0.7, 1.4), at=(x, y, h * 0.85), colour=RIM_MID, rot=rot + 20, tilt=(25, 10))
+    m.box((length * 0.5, 0.05, 0.12), at=(0.0, -depth * 0.36, height * 0.4), colour=VIOLET_DIM)
+
+
+@recipe("decor", "crater_rim_a", 231)
+def crater_rim_a(m):
+    rim_arc(m, 8.0, 2.4, 3.8, 0.8)
+
+
+@recipe("decor", "crater_rim_b", 232)
+def crater_rim_b(m):
+    rim_arc(m, 10.0, 2.2, 4.0, 0.35)
+
+
+@recipe("decor", "crater_rim_c", 233)
+def crater_rim_c(m):
+    rim_arc(m, 9.0, 2.9, 4.0, 0.5, crown=True)
+
+
+@recipe("decor", "star_core_a", 241)
+def star_core_a(m):
+    m.blob(3.0, at=(0, 0, 0.2), scale=(1.0, 0.95, 0.6), colour=CHAR, subdiv=2, jitter=0.12, vary=0.1, flat_bottom=-0.2)
+    for k in range(5):
+        a = math.tau * k / 5
+        m.box((2.2, 0.08, 0.12), at=(math.cos(a) * 1.2, math.sin(a) * 1.2, 1.7), rot=math.degrees(a) + 30,
+              colour=VIOLET_DIM)
+        m.box((1.4, 1.0, 0.25), at=(math.cos(a) * 3.0, math.sin(a) * 3.0, 0.0), rot=math.degrees(a), tilt=(30, 0),
+              colour=CHAR_LIGHT, vary=0.08)
+
+
+@recipe("decor", "star_core_b", 242)
+def star_core_b(m):
+    for side in (-1, 1):
+        m.blob(2.3, at=(side * 1.3, 0, 1.2), scale=(0.8, 1.0, 0.95), colour=CHAR, subdiv=2, jitter=0.12, vary=0.1,
+               tilt=(0, side * 12), flat_bottom=-1.2)
+    m.box((0.25, 3.2, 2.2), at=(0, 0, 0.2), colour=VIOLET_DIM)
+
+
+@recipe("decor", "aether_monolith", 251)
+def aether_monolith(m):
+    m.blob(1.4, at=(0, 0, 0.2), scale=(1.0, 1.0, 0.45), colour=CHAR, subdiv=1, flat_bottom=-0.2, vary=0.08)
+    crystal(m, 0.8, 6.6, 1.3, (0.0, 0.0, 0.0), SPIRE_MID, SPIRE_PALE, tilt=(6, 4))
+    for k, (r, h) in enumerate(((0.4, 2.6), (0.35, 1.9), (0.3, 1.4))):
+        a = math.tau * k / 3 + 0.5
+        crystal(m, r, h, 0.5, (math.cos(a) * 0.95, math.sin(a) * 0.95, 0.0), SPIRE_MID, SPIRE_PALE,
+                tilt=(math.degrees(math.sin(a)) * 0.5, -math.degrees(math.cos(a)) * 0.5))
+
+
+@recipe("decor", "impact_scar", 261)
+def impact_scar(m):
+    for k in range(9):
+        a = math.radians(-120 + 240 * k / 8)
+        m.blob(0.9, at=(math.cos(a) * 1.9, math.sin(a) * 1.5, 0.0), scale=(1.2, 0.9, 0.6),
+               colour=EARTH if k % 3 else MEADOW_DARK, subdiv=1, flat_bottom=0.0, vary=0.1)
+    m.box((0.6, 0.5, 0.35), at=(1.6, -0.4, 0.2), colour=CHAR_LIGHT, rot=30, tilt=(20, 0))
+
+
+@recipe("decor", "meteor_shard_a", 271)
+def meteor_shard_a(m):
+    m.prism(5, 0.55, 1.6, top=0.0, colour=CHAR, tilt=(14, 6), jitter=0.2, vary=0.1)
+    m.prism(4, 0.3, 0.6, at=(0.5, 0.2, 0.0), top=0.0, colour=CHAR_LIGHT, tilt=(-20, 0), jitter=0.2)
+
+
+@recipe("decor", "meteor_shard_b", 272)
+def meteor_shard_b(m):
+    m.box((1.4, 1.0, 0.55), colour=CHAR, tilt=(0, 14), vary=0.1)
+    m.box((0.8, 0.9, 0.25), at=(0.5, 0.0, 0.5), colour=CHAR_LIGHT, tilt=(0, 30))
+
+
+def reed_clump(m, blades, height, spread, cattails):
+    for i in range(blades):
+        a = math.tau * i / blades + m.rng.uniform(-0.3, 0.3)
+        r = m.rng.uniform(0.0, spread * 0.4)
+        foot = (math.cos(a) * r, math.sin(a) * r, 0.0)
+        h = height * m.rng.uniform(0.6, 1.0)
+        lean = m.rng.uniform(4, 16)
+        m.prism(3, 0.04, h, at=foot, top=0.005, colour=REED if i % 3 else REED_TIP, rot=math.degrees(a),
+                tilt=(lean * math.sin(a), -lean * math.cos(a)), cap_top=False)
+    for k in range(cattails):
+        a = math.tau * k / max(1, cattails) + 0.4
+        x, y = math.cos(a) * spread * 0.15, math.sin(a) * spread * 0.15
+        m.segment((x, y, 0.0), (x, y, height * 1.05), 0.012, colour=REED, sides=3)
+        m.prism(6, 0.05, 0.22, at=(x, y, height * 0.8), colour=CATTAIL, cap_top=True)
+
+
+@recipe("decor", "reeds_a", 281)
+def reeds_a(m):
+    reed_clump(m, 22, 1.5, 0.9, 3)
+
+
+@recipe("decor", "reeds_b", 282)
+def reeds_b(m):
+    reed_clump(m, 26, 1.1, 1.2, 7)
+
+
+@recipe("decor", "reeds_c", 283)
+def reeds_c(m):
+    reed_clump(m, 14, 1.3, 0.8, 0)
+
+
+def river_stones(m, stones):
+    for x, y, r, sc in stones:
+        m.blob(r, at=(x, y, r * sc[2] * 0.4), scale=sc, colour=WET_STONE, subdiv=2, jitter=0.08, vary=0.06,
+               flat_bottom=-r * sc[2] * 0.4)
+        m.blob(r * 1.02, at=(x, y, r * sc[2] * 0.4 - r * sc[2] * 0.55), scale=sc, colour=ALGAE, subdiv=1,
+               flat_bottom=-r * sc[2] * 0.4 + r * sc[2] * 0.55 - 0.01)
+
+
+@recipe("decor", "river_rocks_a", 291)
+def river_rocks_a(m):
+    river_stones(m, [(-0.7, 0.0, 0.45, (1.2, 1.0, 0.45)), (0.0, 0.1, 0.5, (1.1, 1.0, 0.4)),
+                     (0.75, -0.1, 0.4, (1.2, 1.0, 0.5))])
+
+
+@recipe("decor", "river_rocks_b", 292)
+def river_rocks_b(m):
+    river_stones(m, [(0.0, 0.0, 0.7, (1.1, 1.0, 0.45)), (0.85, 0.3, 0.22, (1.0, 1.0, 0.6)),
+                     (-0.8, -0.3, 0.2, (1.0, 1.0, 0.6))])
+
+
+@recipe("decor", "river_rocks_c", 293)
+def river_rocks_c(m):
+    river_stones(m, [(-0.6, 0.0, 0.5, (1.5, 0.9, 0.3)), (0.5, 0.05, 0.45, (1.5, 0.9, 0.3))])
+
+
+@recipe("decor", "lily_pads", 301)
+def lily_pads(m):
+    for k in range(12):
+        a, d = m.rng.uniform(0, math.tau), m.rng.uniform(0.0, 1.0)
+        r = m.rng.uniform(0.22, 0.34)
+        m.prism(9, r, 0.03, at=(math.cos(a) * d, math.sin(a) * d, 0.01 * (k % 3)), colour=LILY if k % 2 else LILY_LIGHT,
+                cap_top=True)
+    for k in range(3):
+        a = math.tau * k / 3 + 0.7
+        m.prism(6, 0.09, 0.08, at=(math.cos(a) * 0.6, math.sin(a) * 0.6, 0.03), top=0.12, colour=BLOOM, cap_top=True)
+
+
+def cliff_wall(m, length, height, depth, bend=0.0, cave=False):
+    """Strata of grey rock, its sheer face toward -Y (the sea), grass on top."""
+    layers = 5
+    n = 6
+    for i in range(n):
+        t = (i + 0.5) / n - 0.5
+        x = t * length
+        y = bend * (t * 2) ** 2 * depth
+        for k in range(layers):
+            z0 = height * k / layers
+            c = (ROCK_MID, ROCK, ROCK_MID, LICHEN, ROCK)[k]
+            m.box((length / n * 1.05, depth * (1.0 - 0.05 * k), height / layers * 1.02),
+                  at=(x, y + depth * 0.025 * k, z0), colour=c, rot=math.degrees(math.atan(bend * 4 * t)) if bend else 0,
+                  vary=0.05)
+        m.box((length / n * 1.05, depth * 0.78, 0.25), at=(x, y + depth * 0.12, height), colour=MEADOW, vary=0.05)
+    if cave:
+        m.box((2.4, 0.6, 2.2), at=(length * 0.18, -depth * 0.5, 0.0), colour="#1f2124")
+
+
+@recipe("decor", "sea_cliff_a", 311)
+def sea_cliff_a(m):
+    cliff_wall(m, 24.0, 7.0, 6.0)
+
+
+@recipe("decor", "sea_cliff_b", 312)
+def sea_cliff_b(m):
+    cliff_wall(m, 24.0, 6.5, 6.0, bend=0.5)
+
+
+@recipe("decor", "sea_cliff_c", 313)
+def sea_cliff_c(m):
+    cliff_wall(m, 22.0, 7.0, 7.0, cave=True)
+
+
+def stack(m, radius, height, sides=7):
+    layers = 5
+    for k in range(layers):
+        r = radius * (1.0 - 0.06 * k)
+        m.prism(sides, r, height / layers * 1.02, at=(0, 0, height * k / layers), top=r * 0.96,
+                colour=(ROCK_MID, ROCK, ROCK_MID, ROCK, LICHEN)[k], rot=m.rng.uniform(0, 360), jitter=0.1,
+                cap_top=k == layers - 1, vary=0.06)
+    m.prism(sides, radius * 0.75, 0.25, at=(0, 0, height), colour=MEADOW, cap_top=True, jitter=0.1)
+
+
+@recipe("decor", "sea_stack_a", 321)
+def sea_stack_a(m):
+    stack(m, 1.6, 8.0)
+
+
+@recipe("decor", "sea_stack_b", 322)
+def sea_stack_b(m):
+    for x in (-1.3, 1.3):
+        m.prism(7, 1.0, 4.0, at=(x, 0, 0), top=0.95, colour=ROCK_MID, jitter=0.1, cap_top=False, vary=0.06)
+    m.box((4.4, 2.0, 1.6), at=(0, 0, 4.0), colour=ROCK, vary=0.06)
+    m.prism(7, 1.9, 2.6, at=(0, 0, 5.6), top=1.6, colour=ROCK, jitter=0.1, cap_top=False, vary=0.06)
+    m.prism(7, 1.6, 0.25, at=(0, 0, 8.2), colour=MEADOW, cap_top=True)
+
+
+@recipe("decor", "beach_rocks", 331)
+def beach_rocks(m):
+    for x, y, r, sc in ((-1.1, 0.0, 0.9, (1.3, 1.0, 0.35)), (0.4, 0.2, 1.0, (1.4, 1.0, 0.4)),
+                        (1.5, -0.3, 0.6, (1.2, 1.0, 0.45))):
+        m.blob(r, at=(x, y, 0.1), scale=sc, colour=SEA_ROCK, subdiv=2, jitter=0.1, vary=0.07, flat_bottom=-0.1)
+        m.blob(r * 1.03, at=(x, y, -0.05), scale=(sc[0], sc[1], sc[2] * 0.6), colour=BARNACLE, subdiv=1,
+               flat_bottom=0.05)
+
+
+def bramble_mass(m, lobes):
+    for x, y, r, h in lobes:
+        m.blob(r, at=(x, y, 0.0), scale=(1.0, 1.0, h / r), colour=GORSE if m.rng.random() < 0.5 else MEADOW_DARK,
+               subdiv=2, jitter=0.18, vary=0.1, flat_bottom=0.0)
+    for k in range(8):
+        a = m.rng.uniform(0, math.tau)
+        x, y, r, h = lobes[k % len(lobes)]
+        p0 = Vector((x + math.cos(a) * r * 0.5, y + math.sin(a) * r * 0.5, h * 0.7))
+        m.segment(p0, p0 + Vector((math.cos(a) * 0.6, math.sin(a) * 0.6, 0.25)), 0.025, colour="#4a3a2a", sides=3)
+
+
+@recipe("decor", "bramble_a", 341)
+def bramble_a(m):
+    bramble_mass(m, [(0.0, 0.0, 1.0, 1.2), (0.5, 0.3, 0.6, 0.8), (-0.5, -0.2, 0.6, 0.7)])
+
+
+@recipe("decor", "bramble_b", 342)
+def bramble_b(m):
+    bramble_mass(m, [(-0.7, 0.0, 0.6, 0.8), (0.0, 0.1, 0.65, 0.9), (0.7, -0.1, 0.55, 0.75)])
+
+
+@recipe("decor", "bramble_c", 343)
+def bramble_c(m):
+    bramble_mass(m, [(0.0, 0.0, 0.8, 1.3), (0.6, 0.4, 0.5, 1.0), (-0.5, 0.3, 0.45, 0.9)])
+
+
+def mossy(m, r, scale, tilt=(0.0, 0.0)):
+    m.blob(r, at=(0, 0, r * scale[2] * 0.6), scale=scale, colour=MOSS, subdiv=2, jitter=0.1, vary=0.1, tilt=tilt,
+           flat_bottom=-r * scale[2] * 0.6)
+    m.blob(r * 0.5, at=(r * 0.5, -r * 0.3, r * scale[2] * 0.4), scale=(1.0, 1.0, 0.6), colour=ROCK_MID, subdiv=1)
+
+
+@recipe("decor", "mossy_boulder_a", 351)
+def mossy_boulder_a(m):
+    mossy(m, 0.75, (1.1, 1.0, 0.9))
+
+
+@recipe("decor", "mossy_boulder_b", 352)
+def mossy_boulder_b(m):
+    mossy(m, 0.75, (1.3, 0.8, 0.6))
+
+
+@recipe("decor", "mossy_boulder_c", 353)
+def mossy_boulder_c(m):
+    mossy(m, 0.6, (0.9, 0.8, 1.4), tilt=(0, 14))
+
+
+@recipe("decor", "shrub_a", 361)
+def shrub_a(m):
+    m.blob(0.75, at=(0, 0, 0.0), scale=(1.0, 1.0, 1.0), colour=GORSE, subdiv=2, jitter=0.15, vary=0.1, flat_bottom=0.0)
+    for k in range(16):
+        p = surface((0.0, 0.0, 0.0), (0.75, 0.75, 0.75), m.rng.uniform(0, 360), m.rng.uniform(10, 80), depth=1.0)
+        m.blob(0.07, at=tuple(p), colour=GORSE_FLOWER, subdiv=1)
+
+
+@recipe("decor", "shrub_b", 362)
+def shrub_b(m):
+    for k in range(7):
+        a = math.tau * k / 7
+        m.segment((0, 0, 0), (math.cos(a) * 0.4, math.sin(a) * 0.4, 1.0), 0.03, colour=BARK, sides=4)
+    for x, y, z, r in ((0, 0, 1.0, 0.55), (0.35, 0.2, 0.85, 0.4), (-0.3, -0.25, 0.9, 0.42)):
+        m.blob(r, at=(x, y, z), colour=HAZEL, subdiv=2, jitter=0.15, vary=0.08)
+
+
+def fern_clump(m, fronds, length, rise):
+    for i in range(fronds):
+        a = math.tau * i / fronds + m.rng.uniform(-0.15, 0.15)
+        d = Vector((math.cos(a), math.sin(a), 0.0))
+        side = Vector((-d.y, d.x, 0.0)) * 0.09
+        p0, mid, tip = Vector((0, 0, 0.05)), d * length * 0.5 + Vector((0, 0, rise)), d * length + Vector((0, 0, rise * 0.4))
+        m.poly([p0 - side * 0.3, p0 + side * 0.3, mid + side, mid - side, tip],
+               [(0, 1, 2, 3), (3, 2, 4)], colour=FERN_GREEN, vary=0.1)
+
+
+@recipe("decor", "fern_a", 371)
+def fern_a(m):
+    fern_clump(m, 7, 0.55, 0.8)
+
+
+@recipe("decor", "fern_b", 372)
+def fern_b(m):
+    fern_clump(m, 10, 0.6, 0.35)
+
+
+@recipe("decor", "standing_stones_a", 381)
+def standing_stones_a(m):
+    for x, y in ((-1.6, 0.4), (0.0, 0.0), (1.6, 0.4)):
+        m.box((0.9, 0.6, 2.8), at=(x, y, 0.0), colour=ROCK, rot=m.rng.uniform(-10, 10), vary=0.08)
+    m.box((2.6, 0.8, 0.45), at=(0.8, 0.2, 2.8), colour=ROCK_MID, rot=12)
+    for k in range(6):
+        m.blob(0.25, at=(m.rng.uniform(-2, 2), m.rng.uniform(-1, 1), 0.0), colour=MEADOW, flat_bottom=0.0, subdiv=1)
+
+
+@recipe("decor", "standing_stones_b", 382)
+def standing_stones_b(m):
+    m.box((1.1, 0.7, 3.2), colour=ROCK, tilt=(0, 8), vary=0.08)
+    m.box((0.05, 0.4, 0.4), at=(0.0, -0.37, 1.8), colour=LICHEN)
+
+
+@recipe("decor", "ruined_watchtower", 391)
+def ruined_watchtower(m):
+    for k, top in enumerate((7.5, 5.5, 3.2, 6.4, 4.4, 2.6, 7.0, 5.0)):
+        a = math.tau * k / 8
+        m.box((1.7, 0.7, top), at=(math.cos(a) * 2.0, math.sin(a) * 2.0, 0.0), rot=math.degrees(a) + 90,
+              colour=STONE_WALL if k % 2 else STONE_BASE, vary=0.07)
+    for k in range(5):
+        m.blob(0.4, at=(m.rng.uniform(-2.4, 2.4), m.rng.uniform(-2.4, 2.4), 0.0), colour=MOSS, flat_bottom=0.0)
+
+
+@recipe("decor", "wayside_shrine", 401)
+def wayside_shrine(m):
+    m.box((0.9, 0.9, 0.35), colour=STONE_BASE, vary=0.06)
+    m.box((0.25, 0.25, 1.7), at=(0, 0, 0.35), colour=TIMBER)
+    m.box((0.55, 0.4, 0.5), at=(0, -0.05, 1.45), colour=PLANK)
+    m.gable_roof(0.6, 0.55, 0.35, at=(0, 0, 2.0), colour=ROOF_TILE, overhang=0.12, thick=0.06)
+
+
+def fallen(m, length, radius, root_plate=False):
+    log(m, (-length / 2, 0, radius), (length / 2, 0, radius), radius)
+    m.segment((-length / 2 + 0.3, 0, radius * 1.7), (length / 2 - 0.5, 0, radius * 1.7), radius * 0.35, colour=MOSS,
+              sides=4)
+    if root_plate:
+        m.prism(9, radius * 2.4, 0.3, at=(length / 2, 0, radius * 0.6), tilt=(0, 90), colour=EARTH, jitter=0.15)
+
+
+@recipe("decor", "fallen_log_a", 411)
+def fallen_log_a(m):
+    fallen(m, 4.8, 0.38)
+
+
+@recipe("decor", "fallen_log_b", 412)
+def fallen_log_b(m):
+    fallen(m, 4.4, 0.32, root_plate=True)
+
+
+@recipe("decor", "driftwood", 421)
+def driftwood(m):
+    m.segment((-1.7, 0.0, 0.18), (1.4, 0.2, 0.15), 0.15, colour=DRIFT, sides=6, top=0.08)
+    m.segment((1.4, 0.2, 0.15), (1.8, 0.6, 0.35), 0.1, colour=DRIFT, sides=5)
+    m.segment((1.4, 0.2, 0.15), (1.7, -0.4, 0.3), 0.08, colour=DRIFT, sides=5)
+
+
+@recipe("decor", "shipwreck", 431)
+def shipwreck(m):
+    mark = m.mark()
+    m.prism(10, 2.2, 10.0, tilt=(0, 90), squash=(1.0, 0.85), at=(-5.0, 0, 2.0), top=1.3, colour=TIMBER, vary=0.1,
+            cap_top=True, cap_bottom=True)
+    m.segment((0.0, 0.0, 2.0), (0.6, 0.0, 6.0), 0.18, colour=PLANK)
+    m.blob(1.0, at=(-2.0, 1.4, 1.2), scale=(2.0, 0.4, 0.6), colour=ALGAE, subdiv=1)
+    m.transform_since(mark, lambda v: Vector((v.x, v.y * math.cos(0.7) - (v.z - 0.0) * math.sin(0.7),
+                                              v.y * math.sin(0.7) + v.z * math.cos(0.7))))
+
+
+@recipe("decor", "stone_bridge", 441)
+def stone_bridge(m):
+    n = 9
+    for i in range(n):
+        t = (i + 0.5) / n
+        x = -6.0 + 12.0 * t
+        z = 2.0 * math.sin(math.pi * t)
+        m.box((12.0 / n * 1.05, 3.2, 0.5), at=(x, 0, z + 0.4), colour=STONE_WALL, vary=0.06)
+        for y in (-1.5, 1.5):
+            m.box((12.0 / n * 1.05, 0.3, 0.55), at=(x, y, z + 0.9), colour=STONE_BASE, vary=0.06)
+        if abs(t - 0.5) > 0.3:
+            m.box((12.0 / n * 1.05, 3.0, z + 0.4), at=(x, 0, 0.0), colour=STONE_BASE, vary=0.06)
+
+
+@recipe("decor", "wooden_footbridge", 451)
+def wooden_footbridge(m):
+    for x in (-4.6, 4.6):
+        m.box((1.0, 2.0, 0.9), at=(x, 0, 0.0), colour=STONE_BASE, vary=0.06)
+    for y in (-0.6, 0.6):
+        m.segment((-4.8, y, 0.95), (4.8, y, 0.95), 0.14, colour=BARK, sides=6)
+        m.segment((-4.6, y * 1.25, 1.75), (4.6, y * 1.25, 1.75), 0.05, colour=BARK, sides=5)
+        for x in (-4.0, -1.3, 1.3, 4.0):
+            m.segment((x, y * 1.25, 1.05), (x, y * 1.25, 1.78), 0.05, colour=BARK, sides=5)
+    for k in range(20):
+        m.box((0.42, 1.6, 0.06), at=(-4.6 + 0.48 * k, 0, 1.08), colour=PLANK, rot=m.rng.uniform(-3, 3), vary=0.06)
+
+
+def backdrop_range(m, width, height, depth, colours, snow=None, peaks=7):
+    for i in range(peaks):
+        t = (i + 0.5) / peaks
+        x = -width / 2 + width * t
+        h = height * m.rng.uniform(0.6, 1.0)
+        crag(m, (x, m.rng.uniform(-depth * 0.15, depth * 0.15), 0), depth * 0.5, h, colours, levels=3, sides=7,
+             squash=(width / peaks / depth * 1.3, 1.0), snow=snow)
+
+
+@recipe("decor", "backdrop_mountains_a", 461)
+def backdrop_mountains_a(m):
+    backdrop_range(m, 58.0, 12.0, 14.0, (HAZE_ROCK, ROCK, ROCK), snow=0.65)
+
+
+@recipe("decor", "backdrop_mountains_b", 462)
+def backdrop_mountains_b(m):
+    backdrop_range(m, 58.0, 9.0, 14.0, (FOREST, FOREST_LIGHT, HAZE_ROCK))
+
+
+@recipe("decor", "backdrop_forest_a", 471)
+def backdrop_forest_a(m):
+    for i in range(26):
+        x = -20.0 + 40.0 * (i + 0.5) / 26 + m.rng.uniform(-0.5, 0.5)
+        y = m.rng.uniform(-3.5, 3.5)
+        h = m.rng.uniform(5.0, 7.0)
+        m.prism(6, 1.6, h, at=(x, y, 0.0), top=0.0, colour=FOREST if i % 2 else FOREST_LIGHT, rot=m.rng.uniform(0, 60))
+
+
+@recipe("decor", "backdrop_forest_b", 472)
+def backdrop_forest_b(m):
+    for i in range(18):
+        x = -20.0 + 40.0 * (i + 0.5) / 18 + m.rng.uniform(-0.6, 0.6)
+        y = m.rng.uniform(-3.0, 3.0)
+        r = m.rng.uniform(1.8, 2.6)
+        m.blob(r, at=(x, y, r * 1.4), scale=(1.0, 1.0, 1.2), colour=(FOREST, FOREST_LIGHT, OAK)[i % 3], subdiv=1,
+               jitter=0.15, vary=0.08)
+        m.prism(5, 0.3, r * 1.4, at=(x, y, 0.0), colour=BARK)
+
+
+# ===========================================================================
 # Fixtures: the tiniest models that still have every feature the engine
 # reads (variants, a stump, a banner, a texture). A few KB each.
 # ===========================================================================
@@ -747,8 +1334,24 @@ FIXTURE_RECIPES = {
 
 # ===========================================================================
 
-def write_sources(recipes, out_dir, only=None):
-    """Model every recipe and export it as `<out_dir>/<kind>/<name>.glb`."""
+def thicken(obj, triangles):
+    """Subdivide a stand-in until it has about `triangles` (the build
+    decimates the rest): decor stand-ins as heavy as the real models, to
+    measure what they cost."""
+    import bmesh
+    while scene.triangles(obj) < triangles * 0.6:
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=1, use_grid_fill=True)
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        bm.to_mesh(obj.data)
+        bm.free()
+
+
+def write_sources(recipes, out_dir, only=None, heavy=False):
+    """Model every recipe and export it as `<out_dir>/<kind>/<name>.glb`
+    (`heavy`: decor subdivided to about its triangle budget)."""
+    from lib import discover, settings
     written = []
     for (kind, name), spec in sorted(recipes.items()):
         if only and name not in only:
@@ -758,6 +1361,9 @@ def write_sources(recipes, out_dir, only=None):
         m = Model(name, seed=seed)
         fn(m)
         obj = m.finish()
+        if heavy and kind == "decor":
+            ident = discover.split_name(name, set(settings.DECOR))[0]
+            thicken(obj, settings.defaults("decor", ident).triangles)
         path = os.path.join(out_dir, kind, name + ".glb")
         gltf.export(path, [obj])
         written.append(path)
@@ -769,6 +1375,8 @@ def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     ap = argparse.ArgumentParser(prog="placeholders.py")
     ap.add_argument("--only", default=None)
+    ap.add_argument("--kind", default=None, choices=("buildings", "nodes", "decor"))
+    ap.add_argument("--heavy", action="store_true")
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--sheets", default=None)
     ap.add_argument("--fixtures", action="store_true")
@@ -795,8 +1403,9 @@ def main():
         unknown = only - {name for _, name in RECIPES}
         if unknown:
             raise SystemExit(f"--only: no recipe for {sorted(unknown)}")
+    recipes = {k: v for k, v in RECIPES.items() if args.kind in (None, k[0])}
     print(f"writing placeholder sources to {SOURCE}")
-    write_sources(RECIPES, SOURCE, only)
+    write_sources(recipes, SOURCE, only, heavy=args.heavy)
     if args.build:
         argv = ["--source", SOURCE, "--out-root", os.path.join(REPO, "assets", "models", "_placeholders"),
                 "--registry", os.path.join(REPO, "assets", "visuals-placeholders", "static.ron"),

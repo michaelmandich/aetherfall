@@ -185,8 +185,8 @@ Decor budgets: mountain pieces stand by the dozen on a map (a Huge map
 carries about 50 peaks, 20 ridges and 20 foothills) and cast shadows;
 small scenery by the hundred (reeds, ferns and shrubs, 100-400 each). With
 stand-ins subdivided to these budgets (`placeholders.py --heavy`), a Huge
-map's 1,000 or so pieces cost about a millisecond a frame (see
-`docs/art/static-models.md`, "Decor").
+map's 1,000 or so pieces cost about half a millisecond a frame at play
+zooms (see `docs/art/static-models.md`, "Decor").
 
 Why these budgets: about 900 trees are on a map at once, so a tree at 3000
 triangles is 2.7 M triangles for the forests; buildings are a few dozen.
