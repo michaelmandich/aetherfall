@@ -208,10 +208,11 @@ fn rebuild_spatial(
         index.reset(map.size);
     }
     index.clear();
-    // In entity order, not table order (which client-only components on a
-    // unit change): `SpatialIndex::nearest` breaks ties by insertion order.
+    // In entity (spawn) order, not table order (which client-only
+    // components on a unit change): `SpatialIndex::nearest` breaks ties by
+    // insertion order.
     let mut unit_rows: Vec<_> = units.iter().collect();
-    unit_rows.sort_unstable_by_key(|row| row.0);
+    unit_rows.sort_unstable_by_key(|row| row.0.index_u32());
     for (e, u, o, p, f, fp, alt, st, mob) in unit_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
@@ -232,7 +233,7 @@ fn rebuild_spatial(
         });
     }
     let mut building_rows: Vec<_> = buildings.iter().collect();
-    building_rows.sort_unstable_by_key(|row| row.0);
+    building_rows.sort_unstable_by_key(|row| row.0.index_u32());
     for (e, b, o, p, f, fp, st, building) in building_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
@@ -253,7 +254,7 @@ fn rebuild_spatial(
         });
     }
     let mut node_rows: Vec<_> = nodes.iter().collect();
-    node_rows.sort_unstable_by_key(|row| row.0);
+    node_rows.sort_unstable_by_key(|row| row.0.index_u32());
     for (e, n, p, f, fp, blocking) in node_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
