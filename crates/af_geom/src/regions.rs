@@ -374,33 +374,25 @@ impl RegionMap {
         };
 
         // Links across block borders and corners, each through the middle
-        // one of the cell pairs where the two parts touch.
+        // one of the cell pairs where the two parts touch: along a border,
+        // a run of touching pairs of the same two parts is one entry.
         let mut touching: Vec<(u32, u32, IVec2, IVec2)> = Vec::new();
-        let mut join = |ca: IVec2, cb: IVec2, map: &RegionMap| {
-            if let (Some(a), Some(b)) = (map.node_at(ca), map.node_at(cb)) {
-                touching.push(if a < b { (a, b, ca, cb) } else { (b, a, cb, ca) });
-            }
-        };
         for x in (BLOCK..w).step_by(BLOCK as usize) {
-            for y in 0..h {
-                join(IVec2::new(x - 1, y), IVec2::new(x, y), &map);
-            }
+            push_runs(&map, (0..h).map(|y| (IVec2::new(x - 1, y), IVec2::new(x, y))), &mut touching);
         }
         for y in (BLOCK..h).step_by(BLOCK as usize) {
-            for x in 0..w {
-                join(IVec2::new(x, y - 1), IVec2::new(x, y), &map);
-            }
+            push_runs(&map, (0..w).map(|x| (IVec2::new(x, y - 1), IVec2::new(x, y))), &mut touching);
         }
         for y in (BLOCK..h).step_by(BLOCK as usize) {
             for x in (BLOCK..w).step_by(BLOCK as usize) {
                 let (sw, ne, nw, se) = (IVec2::new(x - 1, y - 1), IVec2::new(x, y), IVec2::new(x - 1, y), IVec2::new(x, y - 1));
                 if [sw, ne, nw, se].iter().all(|c| map.open_cell(*c)) {
-                    join(sw, ne, &map);
-                    join(nw, se, &map);
+                    push_runs(&map, [(sw, ne)].into_iter(), &mut touching);
+                    push_runs(&map, [(nw, se)].into_iter(), &mut touching);
                 }
             }
         }
-        // Stable: each pair's touching cells stay in the order found.
+        // Stable: each pair's runs stay in the order found.
         touching.sort_by_key(|t| (t.0, t.1));
         let mut pairs: Vec<(u32, u32, IVec2, IVec2)> = Vec::new();
         for group in touching.chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)) {
@@ -860,6 +852,35 @@ impl RegionMap {
         out.dedup();
         out
     }
+}
+
+/// For each run of consecutive cell pairs (one cell either side of a block
+/// border) whose cells belong to the same two parts, the middle pair, as
+/// (lower node, higher node, its cell, the other's cell).
+fn push_runs(map: &RegionMap, cells: impl Iterator<Item = (IVec2, IVec2)>, out: &mut Vec<(u32, u32, IVec2, IVec2)>) {
+    let mut run: Vec<(u32, u32, IVec2, IVec2)> = Vec::new();
+    let flush = |run: &mut Vec<(u32, u32, IVec2, IVec2)>, out: &mut Vec<(u32, u32, IVec2, IVec2)>| {
+        if !run.is_empty() {
+            out.push(run[run.len() / 2]);
+            run.clear();
+        }
+    };
+    for (ca, cb) in cells {
+        let pair = match (map.node_at(ca), map.node_at(cb)) {
+            (Some(a), Some(b)) if a < b => Some((a, b, ca, cb)),
+            (Some(a), Some(b)) => Some((b, a, cb, ca)),
+            _ => None,
+        };
+        match pair {
+            Some(p) if run.last().is_some_and(|r| (r.0, r.1) == (p.0, p.1)) => run.push(p),
+            Some(p) => {
+                flush(&mut run, out);
+                run.push(p);
+            }
+            None => flush(&mut run, out),
+        }
+    }
+    flush(&mut run, out);
 }
 
 /// Open cells of `class` on `t`: the whole `(2k+1)^2` square round the
