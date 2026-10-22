@@ -116,6 +116,21 @@ cannot go.
 Full design: [docs/design/game-design.md](docs/design/game-design.md) and
 one doc per faction in [docs/design/factions/](docs/design/factions/).
 
+## Multiplayer
+
+**Multiplayer** on the menu (or `M`) joins a server: casual rooms for up
+to six friends (plus computer players), and ranked 1v1, 1v1v1 and 2v2
+with accounts, Elo ratings and a leaderboard. The server (`af_server`)
+runs on a Raspberry Pi; matches run in lockstep (everyone's game plays
+the same commands in the same ticks), and the server itself simulates and
+referees ranked matches. How it works, how to run the server, how to put
+it on a Pi and set up the accounts: [docs/multiplayer.md](docs/multiplayer.md).
+
+```bash
+cargo run -p af_server -- --ranked-memory     # a server on this machine
+cargo run -p aetherfall                        # Multiplayer, server 127.0.0.1
+```
+
 ## Content is data
 
 All units, buildings, weapons, techs, terrain and factions live in RON files
@@ -222,7 +237,9 @@ owner's colour. Every other unit is still boxes until its model is built.
 See [docs/architecture.md](docs/architecture.md). In short: `af_data`
 (content schema), `af_geom` (boxes, navigation grid, pathfinding), `af_core`
 (the shared ECS contract), one crate per subsystem (map, movement, behavior,
-combat, economy, fog, ai, input, ui, render) and the `aetherfall` binary.
+combat, economy, fog, ai, input, ui, render), `af_sim` (the simulation wired
+together, headless), `af_net` (the multiplayer client and protocol), the
+`aetherfall` binary and the `af_server` binary.
 The simulation is a deterministic 30 Hz fixed-step model, separate from
 rendering. [docs/bevy-0.19-notes.md](docs/bevy-0.19-notes.md) is a verified
 Bevy 0.19 API cheat sheet.

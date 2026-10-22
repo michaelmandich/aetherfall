@@ -19,3 +19,9 @@ linker = "rust-lld.exe"
 # from the working directory and from the executable's folder.
 [env]
 BEVY_ASSET_ROOT = { value = ".", relative = true }
+
+# Dev builds carry Bevy's full debug info by default: the game binary and
+# every test executable are about 2 GB each. Line tables are enough for
+# backtraces and shrink them several times over.
+# [profile.dev]
+# debug = "line-tables-only"
