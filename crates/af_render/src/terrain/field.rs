@@ -457,15 +457,8 @@ impl Field {
 
     fn corner_heights(&self) -> Vec<f32> {
         let w = self.cols + 1;
-        let mut h = vec![0.0; (w * (self.rows + 1)) as usize];
-        let mut bed = vec![false; h.len()];
-        for z in 0..=self.rows {
-            for x in 0..=self.cols {
-                let i = (z * w + x) as usize;
-                h[i] = self.corner_height(x, z);
-                bed[i] = self.corner_cells(x, z).iter().all(|c| self.cover[*c].is_water());
-            }
-        }
+        let corners = par_rows(self.rows + 1, |z| (0..=self.cols).map(|x| (self.corner_height(x, z), self.corner_cells(x, z).iter().all(|c| self.cover[*c].is_water()))).collect());
+        let (mut h, bed): (Vec<f32>, Vec<bool>) = corners.into_iter().unzip();
         // Water beds only show through the water's colour: smooth them, so
         // deep water fades into shallows without the cells' steps.
         for _ in 0..3 {
@@ -523,29 +516,59 @@ impl Field {
         }
     }
 
+    /// The paint channel of a field cell (clamped into the field): its
+    /// cover's, except that a crystal spire's massif is painted as the
+    /// site's scorched floor around the crystal.
+    fn paint_channel(&self, x: i32, z: i32) -> usize {
+        let cover = self.cover_at(x, z);
+        match self.spire {
+            Some((c, r)) if cover == Cover::Mountain && self.world_cell(x, z).distance(c) < r + 2.5 => Cover::Scar.channel(),
+            _ => cover.channel(),
+        }
+    }
+
     /// The class weights of every field cell for the terrain shader: two
     /// RGBA8 images (channels 0-3 and 4-7 of [`Cover::channel`]), one texel
     /// per cell, each a 3x3 blur of the cells' one-hot channels.
     pub fn class_texels(&self) -> [Vec<u8>; 2] {
-        let (w, h) = (self.cols, self.rows);
-        let mut out = [vec![0u8; (w * h * 4) as usize], vec![0u8; (w * h * 4) as usize]];
         const K: [f32; 3] = [1.0, 2.0, 1.0];
-        for z in 0..h {
-            for x in 0..w {
-                let mut acc = [0.0f32; 8];
-                for (dz, kz) in (-1..=1).zip(K) {
-                    for (dx, kx) in (-1..=1).zip(K) {
-                        acc[self.cover_at(x + dx, z + dz).channel()] += kx * kz;
+        let texels = par_rows(self.rows, |z| {
+            (0..self.cols)
+                .map(|x| {
+                    let mut acc = [0.0f32; 8];
+                    for (dz, kz) in (-1..=1).zip(K) {
+                        for (dx, kx) in (-1..=1).zip(K) {
+                            acc[self.paint_channel(x + dx, z + dz)] += kx * kz;
+                        }
                     }
-                }
-                let i = ((z * w + x) * 4) as usize;
-                for (ch, v) in acc.iter().enumerate() {
-                    out[ch / 4][i + ch % 4] = (v / 16.0 * 255.0).round() as u8;
-                }
-            }
+                    acc.map(|v| (v / 16.0 * 255.0).round() as u8)
+                })
+                .collect()
+        });
+        let mut out = [Vec::with_capacity(texels.len() * 4), Vec::with_capacity(texels.len() * 4)];
+        for t in texels {
+            out[0].extend_from_slice(&t[..4]);
+            out[1].extend_from_slice(&t[4..]);
         }
         out
     }
+}
+
+/// `row(z)` for every row `0..rows`, concatenated in order: bands of rows
+/// run on the compute task pool when there is one.
+fn par_rows<T: Send + 'static>(rows: i32, row: impl Fn(i32) -> Vec<T> + Sync) -> Vec<T> {
+    let pool = bevy::tasks::ComputeTaskPool::try_get().filter(|p| p.thread_num() > 1 && rows > 64);
+    let Some(pool) = pool else { return (0..rows).flat_map(&row).collect() };
+    let band = (rows / (pool.thread_num() as i32 * 4)).max(16);
+    let row = &row;
+    pool.scope(|s| {
+        for start in (0..rows).step_by(band as usize) {
+            s.spawn(async move { (start..(start + band).min(rows)).flat_map(row).collect::<Vec<T>>() });
+        }
+    })
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Which map edges a map cell lies beyond.

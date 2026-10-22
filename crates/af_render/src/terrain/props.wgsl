@@ -5,7 +5,7 @@
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
 }
-#import af_render::terrain_common::ground_veil
+#import af_render::terrain_common::{ground_veil, fog_at, unexplored}
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -14,7 +14,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr.material.emissive = vec4<f32>(in.color.rgb * in.color.a * 1.5, 0.0);
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr);
-    out.color = vec4<f32>(ground_veil(out.color.rgb, in.world_position.xz), out.color.a);
-    out.color = main_pass_post_lighting_processing(pbr, out.color);
+    let fog = fog_at(in.world_position.xz);
+    out.color = vec4<f32>(ground_veil(out.color.rgb, in.world_position.xz, fog), out.color.a);
+    out.color = unexplored(main_pass_post_lighting_processing(pbr, out.color), fog);
     return out;
 }

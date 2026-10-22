@@ -11,7 +11,7 @@
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::globals,
 }
-#import af_render::terrain_common::{ground, lin, hash12, hash22, vnoise, fbm, cells, luma, ground_veil, shallow_water, TAU}
+#import af_render::terrain_common::{ground, lin, hash12, hash22, vnoise, fbm, cells, luma, ground_veil, fog_at, unexplored, shallow_water, TAU}
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(103) var classes_a: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(104) var classes_a_sampler: sampler;
@@ -71,18 +71,23 @@ fn meadow(p: vec2<f32>, wet: f32) -> Paint {
     return paint(c, 0.92, clump * 0.05);
 }
 
-// Warm pale sand with wind ripples; beach sand by the water, damp at its
-// edge.
-fn sand(p: vec2<f32>, wet: f32) -> Paint {
+// Warm pale sand: broad swells, wind ripples, a few pebbles, and tufts of
+// grass where it borders meadow (`grassy`); beach sand by the water, damp
+// at its edge.
+fn sand(p: vec2<f32>, wet: f32, grassy: f32) -> Paint {
     let dune = lin(vec3<f32>(0.890, 0.827, 0.635));
     let beach = lin(vec3<f32>(0.847, 0.765, 0.557));
+    let swell = fbm(p * 0.07 + 2.0);
     let ripple = sin(dot(p, vec2<f32>(0.83, 0.55)) * 4.2 + vnoise(p * 0.4) * 8.0) * 0.5 + 0.5;
-    var c = mix(dune, beach, smoothstep(0.15, 0.7, wet)) * 0.88;
-    c *= 0.9 + 0.1 * ripple + 0.14 * (fbm(p * 0.25) - 0.5) + 0.06 * (vnoise(p * 4.0) - 0.5);
+    var c = mix(dune, beach, smoothstep(0.15, 0.7, wet)) * 0.84;
+    c *= 0.8 + 0.34 * swell;
+    c *= 0.92 + 0.09 * ripple + 0.05 * (vnoise(p * 4.0) - 0.5);
+    c = mix(c, c * 0.72, smoothstep(0.82, 0.92, vnoise(p * 5.3 + 2.0)) * 0.5);
+    let tuft = smoothstep(0.6, 0.72, vnoise(p * 3.3 + 8.0)) * smoothstep(0.08, 0.4, grassy) * (1.0 - wet);
+    c = mix(c, lin(vec3<f32>(0.42, 0.55, 0.25)), tuft * 0.8);
     c = mix(c, c * vec3<f32>(0.72, 0.7, 0.66), smoothstep(0.8, 1.0, wet) * 0.6);
-    return paint(c, 0.95, ripple * 0.02);
+    return paint(c, 0.95, ripple * 0.02 + swell * 0.08);
 }
-
 // Dark wet olive ground with puddles of dark water and rushy tufts.
 fn marsh(p: vec2<f32>) -> Paint {
     let ground_col = lin(vec3<f32>(0.333, 0.420, 0.227));
@@ -255,7 +260,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var acc = Paint(vec3<f32>(0.0), 0.0, vec3<f32>(0.0), 0.0);
     if (wa.x > 0.003) { acc = add(acc, wa.x, meadow(p, wet)); }
-    if (wa.y > 0.003) { acc = add(acc, wa.y, sand(p, wet)); }
+    if (wa.y > 0.003) { acc = add(acc, wa.y, sand(p, wet, ra.x)); }
     if (wa.z > 0.003) { acc = add(acc, wa.z, marsh(p)); }
     if (wa.w > 0.003) { acc = add(acc, wa.w, forest_floor(p)); }
     if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n)); }
@@ -273,7 +278,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let foot = in.color.g * (1.0 - wb.y) * smoothstep(0.75, 0.95, n.y);
     acc.color = mix(acc.color, acc.color * vec3<f32>(0.82, 0.8, 0.76), foot * 0.45);
     // Hollows a little darker, edges a little lighter (the vertex bulge).
-    acc.color *= clamp(1.0 + (in.color.b - 0.5) * 0.5, 0.8, 1.15);
+    acc.color *= clamp(1.0 + (in.color.b - 0.5) * 0.6, 0.78, 1.18);
 
     // The water's rim: the bank just above the water surface is painted as
     // the shallow water it borders, with a broken line of foam, so the
@@ -285,10 +290,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let rim = smoothstep(0.25, 0.29, rim_w) * step(y, 0.02);
     // Foam lapping at the line, drifting along it (period 20 s).
     let lap = vnoise(p * 2.6 + vec2<f32>(sin(globals.time * TAU / 20.0), cos(globals.time * TAU / 20.0)) * 0.8);
-    let foam = (1.0 - smoothstep(0.0, 0.05, abs(rim_w - 0.3))) * smoothstep(0.3, 0.6, lap);
+    let foam = (1.0 - smoothstep(0.0, 0.035, abs(rim_w - 0.3))) * smoothstep(0.3, 0.6, lap);
     let water_col = shallow_water(p);
     acc.color = mix(acc.color, water_col, rim);
-    acc.color = mix(acc.color, lin(vec3<f32>(0.9, 0.94, 0.95)), foam * rim * 0.7);
+    acc.color = mix(acc.color, lin(vec3<f32>(0.9, 0.94, 0.95)), foam * rim * 0.45);
     acc.rough = mix(acc.rough, 0.1, rim);
     acc.bump *= 1.0 - rim;
 
@@ -301,7 +306,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr);
-    out.color = vec4<f32>(ground_veil(out.color.rgb, p), out.color.a);
-    out.color = main_pass_post_lighting_processing(pbr, out.color);
+    let fog = fog_at(p);
+    out.color = vec4<f32>(ground_veil(out.color.rgb, p, fog), out.color.a);
+    out.color = unexplored(main_pass_post_lighting_processing(pbr, out.color), fog);
     return out;
 }

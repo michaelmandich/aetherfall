@@ -1,9 +1,10 @@
 # Aetherfall architecture
 
-Rust + Bevy 0.19.1. Everything visible is a box. The simulation is a 2D
-fixed-timestep model on the ground plane; rendering is a separate layer
-that turns sim state into boxes, so "real graphics" later means replacing
-`af_render` only.
+Rust + Bevy 0.19.1. The simulation is a 2D fixed-timestep model on the
+ground plane; rendering is a separate layer (`af_render`) that turns sim
+state into pictures: the land as a height field painted by its own
+shaders, units, buildings and nodes as glTF models where they have one and
+boxes where they do not, effects and markers as boxes.
 
 ## Crates
 
@@ -21,7 +22,7 @@ that turns sim state into boxes, so "real graphics" later means replacing
 | `af_ai` | computer players (only via `PlayerCommand`s) | af_core |
 | `af_input` | camera, picking, selection, control groups, commands, placement modes, hotkeys | af_core |
 | `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over | af_core |
-| `af_render` | box visuals for terrain, entities, weapons, FX, bars, selection, fog, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
+| `af_render` | the land (height field, water, props, the fog of war, light and camera look); box visuals for entities, weapons, FX, bars, selection, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
 | `aetherfall` | the binary: wiring, CLI, headless harness, screenshot mode | all |
 
 Crates never depend on each other sideways; they communicate only through
@@ -76,6 +77,48 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
 `Update`: `ClientSet::Pointer` (UI hit-test) -> `Input` -> `Ui` -> `Render`.
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 `CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
+
+## The land
+
+`af_render::terrain` draws the map from its terrain grid, once per match
+(design: `docs/design/maps-and-terrain.md` section 6; look:
+`docs/art/style-guide.md`, "Landscape").
+
+* **Field** (`terrain::field`): what every cell looks like and the height
+  of every cell corner, over the map and a 64 m off-map skirt that carries
+  the edge on (sea beyond a sea edge, water and mountains straight out,
+  else meadow, woodland and a frame of mountains). Every cell units walk on
+  is drawn exactly at `af_core::ext::render::ground_height` (corner
+  heights, interpolated on the drawn triangles); relief only rises in
+  mountains (a sharp crest, at most 10.5 m, below every flyer) and sinks in
+  water beds. A pure function of the map: the nav terrain, the seed and
+  `MapFeatures` when af_map publishes them (river lines give the water its
+  flow; without them rivers are still).
+* **Meshes** (`terrain::mesh`): chunks of 64 x 64 cells, normals from the
+  whole field so chunks meet without seams; flat chunks cast no shadows.
+  An opaque water surface at `WATER_LEVEL` covers water cells and reaches
+  under the banks; its depth look comes from per-vertex bed depth.
+* **Shaders** (`terrain/*.wgsl`, embedded in the crate and imported from
+  `common.wgsl`): `StandardMaterial` extended, so sun, shadows and haze
+  stay Bevy's. The ground blends the cells' covers with noise-warped
+  weights from two class images and paints each procedurally; it also
+  paints the water's rim on the bank, so shores curve. The water streams
+  ripples and foam down rivers in their own downstream/across coordinates.
+  All three draw the fog of war from `FogTexture` (and dark beyond the
+  map while it is shown) and grey the skirt; spectators and fog-off
+  matches see everything. Animation reads `globals.time` with periods
+  that divide an hour; materials change only when the fog binding does.
+* **Props** (`terrain::props`): brambles, reeds, scree, meteor rock and
+  the Starspire, from cell hashes, only on unbuildable ground, merged per
+  chunk.
+* **Published:** `TerrainSurface` (the drawn top of the map: ground, rock
+  or water surface) for markers on mountains and water, and for picking
+  with a ray later.
+* **Headless** apps (no `PbrPlugin`) get the same chunk entities with
+  plain `StandardMaterial`s, made once per match.
+* **Look of the light** (`scene`): a warm afternoon sun, sky-tinted
+  ambient light, a hazy sky with distance fog matched to it, colour grading
+  and soft bloom over glows only, put on the RTS camera by an observer.
 
 ## Visual models
 
@@ -154,14 +197,14 @@ whose source was deleted). Engine: `af_render::statics`.
   variant, and for `random_yaw` a turn, come from a hash of the position
   (`statics::place`): stable between runs, the same for every player,
   independent of the simulation. The `Team` material takes the owner's
-  colour. The model stands on the highest drawn flat terrain that its box
-  footprint overlaps (`entities::Ground::model_lift`: sand is drawn 5 cm
-  above the ground units walk on), while the entity stays on that ground.
+  colour. The model stands where its entity does: buildings and nodes only
+  stand on buildable ground, which is drawn flat at the ground units walk
+  on.
   Outlines, bars, fog, fog memory (live and of dead entities) and rally
   flags work as for boxes; placement ghosts stay boxes.
 * **Construction:** the foundation's pad and scaffold stay, and the model
   is drawn sunk by `(1 - progress) x height`, rising as it is built
-  (`height`: how high its top stands, banner and lift onto sand included,
+  (`height`: how high its top stands, banner included,
   so nothing shows at 0 %; the opaque terrain hides the buried part); a
   foundation drawn from fog memory rises as far as it was seen. Completion
   and upgrades rebuild the visual with the new type's model, or boxes if

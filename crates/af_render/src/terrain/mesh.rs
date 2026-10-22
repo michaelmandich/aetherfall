@@ -119,7 +119,7 @@ pub fn corner_data(field: &Field, x: i32, z: i32) -> [f32; 4] {
     let wet = 1.0 - smoothstep(0.5, 6.5, shore * field.cell);
     let foot = 1.0 - smoothstep(0.5, 4.5, rock * field.cell);
     let around = (field.height(x - 1, z) + field.height(x + 1, z) + field.height(x, z - 1) + field.height(x, z + 1)) * 0.25;
-    let bulge = ((field.height(x, z) - around) * 0.8 + 0.5).clamp(0.0, 1.0);
+    let bulge = ((field.height(x, z) - around) * 1.6 + 0.5).clamp(0.0, 1.0);
     [wet, foot, bulge, 1.0]
 }
 

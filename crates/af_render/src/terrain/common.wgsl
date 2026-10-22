@@ -104,24 +104,41 @@ fn shallow_water(p: vec2<f32>) -> vec3<f32> {
     return lin(vec3<f32>(0.4, 0.72, 0.88)) * (0.84 + 0.08 * vnoise(p * 0.6));
 }
 
-// The fog of war and the off-map skirt over a lit colour at world `p`:
-// out of sight darkened and greyed, unexplored near black; off the map
-// greyed and darkened, fading into the sky toward the skirt's far edge.
-fn ground_veil(color: vec3<f32>, p: vec2<f32>) -> vec3<f32> {
+// What never-explored ground looks like (linear): near black, the same as
+// `terrain::BEYOND_FOG`.
+const UNEXPLORED: vec3<f32> = vec3<f32>(0.0014, 0.0017, 0.0024);
+
+// How much of the fog of war lies over world `p`: x = out of sight
+// (explored), y = never explored. The texture's 2 m cells are sampled
+// through a little warp, so the fog's edge wanders instead of following
+// them.
+fn fog_at(p: vec2<f32>) -> vec2<f32> {
+    if (ground.fog.z < 0.5) {
+        return vec2<f32>(0.0);
+    }
+    let warp = vec2<f32>(vnoise(p * 0.3), vnoise(p * 0.3 + 7.7)) - 0.5;
+    let a = textureSampleLevel(fog_texture, fog_sampler, (p + warp * 2.4) * ground.fog.xy, 0.0).a;
+    return vec2<f32>(smoothstep(0.03, 0.5, a), smoothstep(0.52, 0.97, a));
+}
+
+// Over a lit colour at world `p`, before Bevy's post-lighting step: off
+// the map greyed and darkened, fading into the sky (or the dark, while the
+// fog of war is drawn) toward the skirt's far edge; out of sight darkened
+// and greyed (`fog` from `fog_at`; the fog grid is clamped at the
+// edge, so the skirt beyond an unexplored edge stays dark too).
+fn ground_veil(color: vec3<f32>, p: vec2<f32>, fog: vec2<f32>) -> vec3<f32> {
     var c = color;
-    // Off the map (the fog grid is clamped at the edge, so the skirt
-    // beyond an unexplored edge stays dark too).
     let out = max(max(ground.map.xy - p, p - ground.map.zw), vec2<f32>(0.0));
     let off = length(out);
     let k = smoothstep(0.0, 4.0, off);
     c = mix(c, vec3<f32>(luma(c)) * vec3<f32>(0.95, 0.98, 1.05), k * 0.45) * (1.0 - 0.3 * k);
-    if (ground.fog.z > 0.5) {
-        let a = textureSampleLevel(fog_texture, fog_sampler, p * ground.fog.xy, 0.0).a;
-        let explored = smoothstep(0.03, 0.5, a);
-        let hidden = smoothstep(0.52, 0.97, a);
-        c = mix(c, vec3<f32>(luma(c)) * vec3<f32>(0.9, 0.95, 1.08), explored * 0.65) * (1.0 - 0.5 * explored);
-        c = mix(c, vec3<f32>(0.006, 0.007, 0.01), hidden * 0.97);
-    }
+    c = mix(c, vec3<f32>(luma(c)) * vec3<f32>(0.9, 0.95, 1.08), fog.x * 0.6) * (1.0 - 0.6 * fog.x);
     let fade = smoothstep(ground.fog.w * 0.55, ground.fog.w, off);
     return mix(c, ground.sky.rgb, fade);
+}
+
+// After Bevy's post-lighting step (so neither the haze nor bloom shows
+// anything there): never-explored ground is dark.
+fn unexplored(color: vec4<f32>, fog: vec2<f32>) -> vec4<f32> {
+    return vec4<f32>(mix(color.rgb, UNEXPLORED, fog.y), color.a);
 }

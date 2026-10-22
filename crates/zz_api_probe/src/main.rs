@@ -9,6 +9,8 @@
 //! * `cargo run   -p zz_api_probe`            -> opens a window, takes a screenshot of the
 //!   primary window after ~60 frames, writes it to `zz_api_probe_screenshot.png`, then exits.
 
+mod custom_material;
+
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
@@ -165,7 +167,7 @@ fn windowed_app() -> App {
     )
     // Mesh picking is NOT part of DefaultPlugins; add it to get Pointer<..> events on meshes.
     .add_plugins(MeshPickingPlugin)
-    .add_plugins((SimPlugin, ProbeRenderPlugin));
+    .add_plugins((SimPlugin, ProbeRenderPlugin, custom_material::CustomMaterialPlugin));
     app
 }
 

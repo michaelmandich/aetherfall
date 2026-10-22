@@ -1,6 +1,7 @@
 # Bevy 0.19.1 API cheat sheet (compile-verified)
 
-Every code snippet below is copied from `crates/zz_api_probe/src/main.rs`, except section 15,
+Every code snippet below is copied from `crates/zz_api_probe/src/main.rs` (section 18 from its
+`custom_material.rs` and shaders), except section 15,
 which quotes Bevy's own source. Snippets are lightly trimmed (`/* .. */`). The probe compiles
 against bevy 0.19.1 with zero errors and zero warnings (`cargo check -p zz_api_probe`), and
 `cargo test -p zz_api_probe` passes.
@@ -1064,6 +1065,128 @@ impl SimRng {
 `bevy::platform::collections::HashMap` uses a fixed seed hasher (`FixedHasher`/foldhash,
 `bevy_platform-0.19.1/src/hash.rs:18-23`). Iteration order is therefore reproducible run to run
 for the same inserts, but sort before anything that must be order-independent.
+
+---
+
+## 18. Custom meshes, ExtendedMaterial, embedded WGSL and imports
+
+Copied from `crates/zz_api_probe/src/custom_material.rs` and its two shaders
+(`probe_common.wgsl`, `probe_ground.wgsl`); af_render's terrain
+(`crates/af_render/src/terrain/`) is the same pattern at full size.
+**[verified at runtime]**: `cargo run -p zz_api_probe` draws the grid with the custom
+material (no pipeline errors), and its unit test builds the plugin in a headless app.
+
+```rust
+use bevy::asset::RenderAssetUsages;
+use bevy::camera::primitives::Aabb;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::{Shader, ShaderRef};
+
+// embedded_asset!(app, "probe_ground.wgsl") called from src/custom_material.rs
+// serves the file at this path: crate name + the calling file's folder under src/.
+const GROUND_SHADER: &str = "embedded://zz_api_probe/probe_ground.wgsl";
+const COMMON_SHADER: &str = "embedded://zz_api_probe/probe_common.wgsl";
+
+pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundExt>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType, Reflect)]
+pub struct GroundParams { pub tint: Vec4 }          // Vec4s keep std140 simple
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct GroundExt {
+    #[uniform(100)] pub params: GroundParams,         // extension bindings from 100 up
+    #[texture(101)] #[sampler(102)] pub mask: Option<Handle<Image>>,  // None: white, alpha 1
+}
+impl MaterialExtension for GroundExt {
+    fn fragment_shader() -> ShaderRef { GROUND_SHADER.into() }
+}
+
+#[derive(Resource)]
+struct ImportedShaders(Handle<Shader>);   // keeps the #import-ed module loaded
+
+impl Plugin for CustomMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<bevy::pbr::PbrPlugin>() { return; }   // headless: skip
+        bevy::asset::embedded_asset!(app, "probe_common.wgsl");       // needs AssetPlugin first
+        bevy::asset::embedded_asset!(app, "probe_ground.wgsl");
+        app.add_plugins(MaterialPlugin::<GroundMaterial>::default());
+        let common = app.world().resource::<AssetServer>().load::<Shader>(COMMON_SHADER);
+        app.insert_resource(ImportedShaders(common));
+    }
+}
+
+// A custom mesh: attributes as Vec<[f32; N]>, u16 indices, counter-clockwise seen from the front.
+let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)   // Vec<[f32; 3]>
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)       // Vec<[f32; 3]>
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)         // Vec<[f32; 4]>, linear
+    .with_inserted_indices(Indices::U16(indices));
+commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Aabb::from_min_max(lo, hi), Transform::IDENTITY));
+```
+
+```wgsl
+// probe_common.wgsl
+#define_import_path zz_api_probe::common
+#import bevy_pbr::mesh_view_bindings::globals
+fn wave(p: vec2<f32>) -> f32 { return sin(p.x * 1.3 + globals.time * 6.2831853 / 4.0) * 0.5 + 0.5; }
+
+// probe_ground.wgsl
+#import bevy_pbr::{
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    forward_io::{VertexOutput, FragmentOutput},
+}
+#import zz_api_probe::common::wave
+struct GroundParams { tint: vec4<f32>, };
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> params: GroundParams;
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var mask_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(102) var mask_sampler: sampler;
+
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr = pbr_input_from_standard_material(in, is_front);   // vertex colour x base_color, ...
+    pbr.material.base_color = vec4<f32>(pbr.material.base_color.rgb * params.tint.rgb, 1.0);
+    var out: FragmentOutput;
+    out.color = apply_pbr_lighting(pbr);
+    out.color = main_pass_post_lighting_processing(pbr, out.color);   // distance fog, (tonemap if not HDR)
+    return out;
+}
+```
+
+* Sources: `ExtendedMaterial`/`MaterialExtension` `bevy_pbr-0.19.1/src/extended_material.rs:33-148`;
+  `forward_io::VertexOutput` (`world_position`, `world_normal`, `uv`, `uv_b`, `world_tangent`,
+  `color`, each under its `VERTEX_*` def) `bevy_pbr-0.19.1/src/render/forward_io.wgsl`;
+  `pbr_input_from_standard_material` `render/pbr_fragment.wgsl:75`; `apply_pbr_lighting` and
+  `main_pass_post_lighting_processing` `render/pbr_functions.wgsl:336, 995`; `globals` at
+  `@group(0) @binding(11)` `render/mesh_view_bindings.wgsl:41`; `embedded_asset!`
+  `bevy_asset-0.19.1/src/io/embedded/mod.rs:344`.
+* **Headless apps** (MinimalPlugins + AssetPlugin) have no `Shader` assets and no render app:
+  add `MaterialPlugin` only when `PbrPlugin` is there, and read the material assets as
+  `Option<ResMut<Assets<M>>>` in systems that also run headless.
+* **Imports:** a module with `#define_import_path a::b` is found by importers only while its
+  `Shader` asset is loaded; load it with the `AssetServer` and keep the handle. Imported modules
+  may declare bindings too (`@group(#{MATERIAL_BIND_GROUP})` is defined for them).
+* **Embedded paths:** `embedded_asset!(app, "x.wgsl")` from `src/foo/mod.rs` serves
+  `embedded://<crate>/foo/x.wgsl`, from any asset root (also examples and shipped exes);
+  without the `embedded_watcher` feature they do not hot-reload.
+* **Vertex data:** `ATTRIBUTE_COLOR` is linear and multiplies `base_color`; overwrite
+  `pbr.material.base_color` to use it as data. `ATTRIBUTE_TANGENT`'s xyz is normalised in the
+  vertex shader (unless all four are 0, then passed through), w kept: usable for a direction
+  plus a scalar. `RENDER_WORLD`-only meshes lose their CPU copy after upload: insert `Aabb`.
+* **WGSL gotchas:** `patch` (and many others: `filter`, `target`, `mod`, `ref`, `self`...) are
+  reserved words. `dpdx`/`textureSample` need uniform control flow (call them before any
+  data-dependent `if`, or use `textureSampleLevel`). `globals.time` wraps every 3600 s: use
+  animation periods that divide it.
+* **After post-processing:** with an `Hdr` camera (`Bloom` requires it) tonemapping is a later
+  pass, so colour changed after `main_pass_post_lighting_processing` is still linear HDR; af_render
+  darkens unexplored ground there so the distance fog cannot lighten it.
+* **Order:** `pbr.N` and `pbr.material.*` (`perceptual_roughness`, `reflectance` is a `vec3`,
+  `emissive` with `a = 0` is not exposure-scaled) can all be changed before lighting.
+* **Parallel CPU work in a system:** `ComputeTaskPool::try_get()` then
+  `pool.scope(|s| { s.spawn(async move { .. }); })` returns the results in spawn order
+  (`bevy::tasks`); `MinimalPlugins` and `DefaultPlugins` both create the pool.
 
 ---
 

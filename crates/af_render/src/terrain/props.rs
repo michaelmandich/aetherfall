@@ -19,13 +19,16 @@ use super::field::{Cover, Field};
 use super::mesh::ChunkRect;
 use super::noise::cell_hash;
 
-/// A merged prop mesh under construction (flat shading: three vertices per
-/// triangle). Vertex colour alpha is how much the colour glows.
+/// A merged prop mesh under construction: rock and crystal faces flat
+/// (their own three vertices), bushes smooth (shared vertices). The
+/// material draws both sides, so blades are single triangles. Vertex colour
+/// alpha is how much the colour glows.
 #[derive(Default)]
 pub struct PropMesh {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
+    pub indices: Vec<u32>,
 }
 
 /// An sRGB palette colour as linear vertex colour with a glow amount.
@@ -66,62 +69,64 @@ impl PropMesh {
         self.positions.is_empty()
     }
 
+    fn vertex(&mut self, p: Vec3, n: Vec3, color: [f32; 4]) -> u32 {
+        self.positions.push(p.to_array());
+        self.normals.push(n.to_array());
+        self.colors.push(color);
+        (self.positions.len() - 1) as u32
+    }
+
     /// One flat triangle (counter-clockwise seen from its front), one colour
     /// per corner.
     fn tri(&mut self, a: Vec3, b: Vec3, c: Vec3, colors: [[f32; 4]; 3]) {
         let n = (b - a).cross(c - a).normalize_or(Vec3::Y);
         for (p, col) in [a, b, c].into_iter().zip(colors) {
-            self.positions.push(p.to_array());
-            self.normals.push(n.to_array());
-            self.colors.push(col);
+            let i = self.vertex(p, n, col);
+            self.indices.push(i);
         }
-    }
-
-    /// A triangle seen from both sides (thin blades).
-    fn blade(&mut self, a: Vec3, b: Vec3, c: Vec3, colors: [[f32; 4]; 3]) {
-        self.tri(a, b, c, colors);
-        self.tri(a, c, b, [colors[0], colors[2], colors[1]]);
     }
 
     /// A lumpy low-poly dome: `segments` around, rings at a few heights,
     /// each vertex pushed in or out a little, sunk slightly into the
-    /// ground; face colours picked from `shades`.
+    /// ground; flat faces coloured from `shades` (darker low down: the
+    /// dome shades itself), like the trees' facets.
     fn lump(&mut self, base: Vec3, radius: Vec3, segments: usize, dice: &mut Dice, shades: &[[f32; 4]]) {
-        let rings = [(-0.15f32, 0.95f32), (0.35, 1.0), (0.75, 0.72), (1.0, 0.0)];
-        let mut verts: Vec<Vec<Vec3>> = Vec::new();
+        let rings = [(-0.15f32, 0.95f32), (0.45, 0.95), (0.85, 0.5)];
         let turn = dice.next() * std::f32::consts::TAU;
-        for (k, (h, r)) in rings.iter().enumerate() {
-            let ring = (0..segments)
-                .map(|s| {
-                    let a = turn + s as f32 / segments as f32 * std::f32::consts::TAU + if k % 2 == 1 { 0.5 / segments as f32 * std::f32::consts::TAU } else { 0.0 };
-                    let wobble = if *r > 0.0 { dice.range(0.75, 1.15) } else { 1.0 };
-                    base + Vec3::new(a.cos() * r * radius.x * wobble, h * radius.y * dice.range(0.85, 1.1), a.sin() * r * radius.z * wobble)
-                })
-                .collect();
-            verts.push(ring);
-        }
-        let pick = |dice: &mut Dice, k: usize| {
-            let c = shades[(dice.next() * shades.len() as f32) as usize % shades.len()];
-            // Lower faces darker: the dome shades itself.
-            scale_rgb(c, 0.7 + 0.12 * k as f32)
-        };
+        let verts: Vec<Vec<Vec3>> = rings
+            .iter()
+            .enumerate()
+            .map(|(k, (h, r))| {
+                (0..segments)
+                    .map(|s| {
+                        let a = turn + (s as f32 + 0.5 * (k % 2) as f32) / segments as f32 * std::f32::consts::TAU;
+                        let wobble = dice.range(0.75, 1.15);
+                        base + Vec3::new(a.cos() * r * wobble, h * dice.range(0.85, 1.1), a.sin() * r * wobble) * radius
+                    })
+                    .collect()
+            })
+            .collect();
+        let top = base + Vec3::Y * radius.y * dice.range(0.95, 1.1);
+        let mut pick = |k: usize| scale_rgb(shades[(dice.next() * shades.len() as f32) as usize % shades.len()], 0.7 + 0.15 * k as f32);
         for k in 0..rings.len() - 1 {
             for s in 0..segments {
                 let t = (s + 1) % segments;
-                let (a, b) = (verts[k][s], verts[k][t]);
-                let (c, d) = (verts[k + 1][s], verts[k + 1][t]);
-                let col = pick(dice, k);
-                if k + 2 == rings.len() {
-                    self.tri(a, c, b, [col; 3]);
+                let (a, b, c, d) = (verts[k][s], verts[k][t], verts[k + 1][s], verts[k + 1][t]);
+                // Odd rings are turned half a segment: zig-zag between them.
+                if k % 2 == 0 {
+                    self.tri(a, c, b, [pick(k); 3]);
+                    self.tri(b, c, d, [pick(k); 3]);
                 } else {
-                    self.tri(a, c, b, [col; 3]);
-                    let col = pick(dice, k);
-                    self.tri(b, c, d, [col; 3]);
+                    self.tri(a, d, b, [pick(k); 3]);
+                    self.tri(a, c, d, [pick(k); 3]);
                 }
             }
         }
+        let last = rings.len() - 1;
+        for s in 0..segments {
+            self.tri(verts[last][s], top, verts[last][(s + 1) % segments], [pick(last + 1); 3]);
+        }
     }
-
     /// An angular rock shard: a ground polygon rising to a ridge leaning
     /// along `lean`, sunk a little into the ground.
     fn shard(&mut self, base: Vec3, size: f32, height: f32, lean: Vec2, dice: &mut Dice, shades: &[[f32; 4]]) {
@@ -178,19 +183,19 @@ impl PropMesh {
     fn bramble(&mut self, at: Vec3, dice: &mut Dice) {
         let leaves = [lin(0x2c4a23, 0.0), lin(0x35562a, 0.0), lin(0x3e5f2b, 0.0), lin(0x263f1e, 0.0), lin(0x46652f, 0.0)];
         let thorn = lin(0x4a3a2a, 0.0);
-        let lumps = if dice.next() < 0.5 { 2 } else { 3 };
+        let lumps = if dice.next() < 0.6 { 1 } else { 2 };
         for k in 0..lumps {
             let off = if k == 0 { Vec3::ZERO } else { Vec3::new(dice.range(-0.45, 0.45), 0.0, dice.range(-0.45, 0.45)) };
-            let r = dice.range(0.38, 0.6) * if k == 0 { 1.0 } else { 0.75 };
+            let r = dice.range(0.45, 0.68) * if k == 0 { 1.0 } else { 0.75 };
             let base = at + off;
-            self.lump(base, Vec3::new(r, r * dice.range(1.0, 1.6), r), 6, dice, &leaves);
+            self.lump(base, Vec3::new(r, r * dice.range(1.0, 1.6), r), 5, dice, &leaves);
             // Thorny canes poking out of the top half.
-            for _ in 0..3 {
+            for _ in 0..2 {
                 let a = dice.range(0.0, std::f32::consts::TAU);
                 let from = base + Vec3::new(a.cos() * r * 0.6, r * dice.range(0.7, 1.2), a.sin() * r * 0.6);
                 let to = from + Vec3::new(a.cos() * 0.35, dice.range(0.05, 0.3), a.sin() * 0.35);
                 let w = Vec3::new(-a.sin(), 0.0, a.cos()) * 0.04;
-                self.blade(from - w, from + w, to, [thorn; 3]);
+                self.tri(from - w, from + w, to, [thorn; 3]);
             }
         }
     }
@@ -206,7 +211,7 @@ impl PropMesh {
             let lean = Vec3::new(a.cos(), 0.0, a.sin()) * dice.range(0.05, 0.35);
             let w = Vec3::new(-a.sin(), 0.0, a.cos()) * dice.range(0.04, 0.07);
             let tip = mix_rgb(low, high, dice.range(0.5, 1.0));
-            self.blade(foot - w, foot + w, foot + Vec3::Y * h + lean, [low, low, tip]);
+            self.tri(foot - w, foot + w, foot + Vec3::Y * h + lean, [low, low, tip]);
         }
         if dice.next() < 0.6 {
             let head = lin(0x5b4330, 0.0);
@@ -224,7 +229,7 @@ fn rock_shades() -> [[f32; 4]; 4] {
 
 /// Charred, ore-less meteor rock.
 fn char_shades() -> [[f32; 4]; 3] {
-    [lin(0x2a2527, 0.0), lin(0x1e1a1c, 0.0), lin(0x3a3436, 0.0)]
+    [lin(0x3a3436, 0.0), lin(0x2b2628, 0.0), lin(0x4a4446, 0.0)]
 }
 
 /// Is the cell next to (4-neighbourhood) a cell `pred` holds for?
@@ -266,13 +271,13 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
                 m.reeds(on(p, -0.3), &mut dice);
             }
             Cover::Mountain if in_spire => {}
-            Cover::Mountain | Cover::Highland if in_site && cell_hash(x, z, salt ^ 0x5c01) < 0.09 => {
+            Cover::Mountain | Cover::Highland if in_site && cell_hash(x, z, salt ^ 0x5c01) < 0.035 => {
                 let mut dice = Dice::new(x, z, salt ^ 0x5c02);
                 let p = jitter(&mut dice);
                 let lean = Vec2::new(dice.range(-1.0, 1.0), dice.range(-1.0, 1.0)).normalize_or(Vec2::X);
-                let size = dice.range(0.3, 0.7);
+                let size = dice.range(0.3, 0.6);
                 let y = field.height(x, z).min(field.height(x + 1, z + 1));
-                m.shard(on(p, y), size, size * dice.range(0.8, 1.6), lean, &mut dice, &char_shades());
+                m.shard(on(p, y), size, size * dice.range(0.5, 0.9), lean, &mut dice, &char_shades());
             }
             Cover::Mountain => {
                 if let Some(away) = next_to(field, x, z, Cover::is_land)
@@ -297,9 +302,14 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
             _ => {}
         }
     }
-    if let Some((c, radius)) = field.spire
-        && r.contains(field.cell_of(c).x, field.cell_of(c).y)
-    {
+    m
+}
+
+/// The Starspire of a `Spire` meteor site, if the map has one: its own
+/// mesh, so it can cast its tall shadow (other props do not).
+pub fn spire_props(field: &Field) -> PropMesh {
+    let mut m = PropMesh::default();
+    if let Some((c, radius)) = field.spire {
         spire(&mut m, Vec3::new(c.x, 0.9, c.y), radius, field.seed);
     }
     m
@@ -308,7 +318,7 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
 /// The Starspire: a giant pale crystal and its splinters on a rocky base,
 /// pale rather than the bright violet of an aether node, glowing faintly.
 pub fn spire(m: &mut PropMesh, at: Vec3, radius: f32, seed: u32) {
-    let (pale, tip) = (lin(0xd9d2ee, 0.18), lin(0xf4f0ff, 0.35));
+    let (pale, tip) = (lin(0xc4bbe0, 0.05), lin(0xe8e2fa, 0.14));
     let mut dice = Dice(seed ^ 0x5717);
     let top = af_core::ext::render::MAX_TERRAIN_HEIGHT - 0.3 - at.y;
     m.crystal(at, radius * 0.32, top, Vec3::new(0.04, 0.0, -0.03), pale, tip);
@@ -338,7 +348,7 @@ pub fn prop_mesh(props: PropMesh) -> Option<(Mesh, Aabb)> {
         hi = hi.max(Vec3::from(*p));
     }
     let n = props.positions.len();
-    let indices = if n <= u16::MAX as usize { Indices::U16((0..n as u16).collect()) } else { Indices::U32((0..n as u32).collect()) };
+    let indices = if n <= u16::MAX as usize { Indices::U16(props.indices.iter().map(|i| *i as u16).collect()) } else { Indices::U32(props.indices) };
     let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, props.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, props.normals)
@@ -367,8 +377,9 @@ mod tests {
             }
             let props = chunk_props(&f, r);
             total += props.positions.len();
-            for tri in props.positions.chunks(3) {
-                let centre = (Vec3::from(tri[0]) + Vec3::from(tri[1]) + Vec3::from(tri[2])) / 3.0;
+            assert!(props.indices.iter().all(|i| (*i as usize) < props.positions.len()));
+            for tri in props.indices.chunks(3) {
+                let centre = tri.iter().map(|i| Vec3::from(props.positions[*i as usize])).sum::<Vec3>() / 3.0;
                 // Every prop stands within reach of an unbuildable cell.
                 let c = f.cell_of(centre.xz());
                 let near_unbuildable = (-2..=2).any(|dz| {

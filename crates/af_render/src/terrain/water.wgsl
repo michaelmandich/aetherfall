@@ -10,7 +10,7 @@
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::globals,
 }
-#import af_render::terrain_common::{ground, lin, vnoise, fbm, ground_veil, shallow_water, TAU}
+#import af_render::terrain_common::{ground, lin, vnoise, fbm, ground_veil, fog_at, unexplored, shallow_water, TAU}
 
 // Ripple height around `q`.
 fn ripples(q: vec2<f32>) -> f32 {
@@ -107,7 +107,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // A touch of sky in the surface, more at grazing angles (Fresnel).
     let fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(pbr.N, pbr.V), 0.0), 5.0);
     out.color = vec4<f32>(mix(out.color.rgb, ground.sky.rgb * 0.8, fresnel * (1.0 - foam) * 0.5 * calm), out.color.a);
-    out.color = vec4<f32>(ground_veil(out.color.rgb, p), out.color.a);
-    out.color = main_pass_post_lighting_processing(pbr, out.color);
+    let fog = fog_at(p);
+    out.color = vec4<f32>(ground_veil(out.color.rgb, p, fog), out.color.a);
+    out.color = unexplored(main_pass_post_lighting_processing(pbr, out.color), fog);
     return out;
 }

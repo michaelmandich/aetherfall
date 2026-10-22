@@ -34,11 +34,17 @@ use bevy::ecs::system::SystemParam;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::shader::Shader;
+use bevy::tasks::ComputeTaskPool;
+use bevy::camera::primitives::Aabb;
 
 use self::field::{Field, FieldSource};
 use self::material::{GroundParams, PropExt, PropMaterial, TerrainExt, TerrainMaterial, WaterExt, WaterMaterial};
-use self::mesh::{SHADOW_HEIGHT, chunks, class_images, ground_mesh, water_mesh};
+use self::mesh::{ChunkMesh, ChunkRect, SHADOW_HEIGHT, chunks, class_images, ground_mesh, water_mesh};
 use crate::scene::{RenderScene, SKY};
+
+/// The world beyond the skirt while the fog of war is drawn: the dark of
+/// unexplored ground (`UNEXPLORED` in `common.wgsl`, in sRGB).
+pub const BEYOND_FOG: Color = Color::srgb(0.05, 0.055, 0.065);
 
 /// Marker on every terrain chunk entity.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,6 +214,34 @@ fn surface_of(field: &Field) -> TerrainSurface {
     TerrainSurface { origin: field.world_corner(field.skirt, field.skirt), cell: field.cell, width: w as u32, height: h as u32, top }
 }
 
+/// What one chunk of the field turns into.
+struct BuiltChunk {
+    on_map: bool,
+    ground: ChunkMesh,
+    water: Option<ChunkMesh>,
+    props: Option<(Mesh, Aabb)>,
+}
+
+/// Build every chunk's meshes, spread over the compute task pool (the
+/// results keep the chunks' order, so the scene is the same every time).
+fn build_chunks(field: &Field) -> Vec<BuiltChunk> {
+    let build = |(rect, on_map): (ChunkRect, bool)| BuiltChunk {
+        on_map,
+        ground: ground_mesh(field, rect),
+        water: water_mesh(field, rect),
+        props: if on_map { props::prop_mesh(props::chunk_props(field, rect)) } else { None },
+    };
+    let rects = chunks(field);
+    match ComputeTaskPool::try_get() {
+        Some(pool) if pool.thread_num() > 1 => pool.scope(|s| {
+            for r in rects {
+                s.spawn(async move { build(r) });
+            }
+        }),
+        _ => rects.into_iter().map(build).collect(),
+    }
+}
+
 /// (Re)build the terrain when a new map appears.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_terrain(
@@ -230,6 +264,7 @@ pub(crate) fn build_terrain(
     }
     let crater = (map.crater_radius > 0.0).then_some((map.crater_center, map.crater_radius));
     let field = Field::build(&FieldSource { data: &data, nav: &nav, seed: map.seed, features: features.as_deref(), crater });
+    let field_ms = started.elapsed().as_secs_f32() * 1000.0;
     let params = ground_params(&field);
     let mats = match state.materials.clone() {
         Some(mats) => {
@@ -238,9 +273,8 @@ pub(crate) fn build_terrain(
         }
         None => assets.materials(params, &field),
     };
-    let mut count = 0;
-    for (rect, on_map) in chunks(&field) {
-        let ground = ground_mesh(&field, rect);
+    let (mut count, mut prop_vertices) = (0, 0);
+    for BuiltChunk { on_map, ground, water, props } in build_chunks(&field) {
         let mut e = commands.spawn((
             Name::new("Terrain chunk"),
             Mesh3d(assets.meshes.add(ground.mesh)),
@@ -255,7 +289,7 @@ pub(crate) fn build_terrain(
             e.insert(NotShadowCaster);
         }
         count += 1;
-        if let Some(water) = water_mesh(&field, rect) {
+        if let Some(water) = water {
             let mut e = commands.spawn((
                 Name::new("Water chunk"),
                 Mesh3d(assets.meshes.add(water.mesh)),
@@ -269,14 +303,20 @@ pub(crate) fn build_terrain(
             mats.water.insert(&mut e);
             count += 1;
         }
-        if on_map && let Some((mesh, aabb)) = props::prop_mesh(props::chunk_props(&field, rect)) {
-            let mut e = commands.spawn((Name::new("Prop chunk"), Mesh3d(assets.meshes.add(mesh)), aabb, Transform::IDENTITY, Visibility::Inherited, TerrainChunk::Props, RenderScene));
+        if let Some((mesh, aabb)) = props {
+            prop_vertices += mesh.count_vertices();
+            let mut e = commands.spawn((Name::new("Prop chunk"), Mesh3d(assets.meshes.add(mesh)), aabb, Transform::IDENTITY, Visibility::Inherited, TerrainChunk::Props, RenderScene, NotShadowCaster));
             mats.props.insert(&mut e);
             count += 1;
         }
     }
+    if let Some((mesh, aabb)) = props::prop_mesh(props::spire_props(&field)) {
+        let mut e = commands.spawn((Name::new("Starspire"), Mesh3d(assets.meshes.add(mesh)), aabb, Transform::IDENTITY, Visibility::Inherited, TerrainChunk::Props, RenderScene));
+        mats.props.insert(&mut e);
+        count += 1;
+    }
     commands.insert_resource(surface_of(&field));
-    info!("af_render: built the terrain of a {}x{} map in {:.0} ms ({count} chunks)", nav.width(), nav.height(), started.elapsed().as_secs_f32() * 1000.0);
+    info!("af_render: built the terrain of a {}x{} map in {:.0} ms (field {field_ms:.0} ms; {count} chunks, {prop_vertices} prop vertices)", nav.width(), nav.height(), started.elapsed().as_secs_f32() * 1000.0);
     state.built_for = Some(key);
     state.materials = Some(mats);
     state.fog_bound = None;
@@ -284,8 +324,16 @@ pub(crate) fn build_terrain(
 
 /// Give the terrain materials the fog-of-war texture while one is shown
 /// (a player's view with fog on), and take it away for spectators and
-/// fog-off matches. Changes the materials only when that changes.
-pub(crate) fn bind_fog(texture: Option<Res<FogTexture>>, fog: Option<Res<FogOfWar>>, mut state: ResMut<TerrainState>, mut assets: TerrainAssets) {
+/// fog-off matches. Changes the materials only when that changes. While
+/// the fog is drawn, the world beyond the skirt is dark rather than sky,
+/// as unexplored ground is.
+pub(crate) fn bind_fog(
+    texture: Option<Res<FogTexture>>,
+    fog: Option<Res<FogOfWar>>,
+    clear: Option<ResMut<ClearColor>>,
+    mut state: ResMut<TerrainState>,
+    mut assets: TerrainAssets,
+) {
     let image = texture.map(|t| t.0.clone());
     let want = image.as_ref().map(|h| h.id());
     if state.fog_bound == Some(want) {
@@ -294,10 +342,16 @@ pub(crate) fn bind_fog(texture: Option<Res<FogTexture>>, fog: Option<Res<FogOfWa
     let Some(mats) = state.materials.clone() else { return };
     let extent = fog.as_ref().map_or(Vec2::ONE, |f| Vec2::new(f.width as f32, f.height as f32) * f.cell).max(Vec2::splat(1.0));
     let on = image.is_some();
+    let beyond = if on { BEYOND_FOG } else { SKY };
+    if let Some(mut clear) = clear {
+        clear.0 = beyond;
+    }
+    let beyond = beyond.to_linear();
     assets.each_params(&mats, |p| {
         p.fog.x = 1.0 / extent.x;
         p.fog.y = 1.0 / extent.y;
         p.fog.z = if on { 1.0 } else { 0.0 };
+        p.sky = Vec4::new(beyond.red, beyond.green, beyond.blue, 1.0);
     });
     if let (Mat::Shaded(h), Some(a)) = (&mats.ground, assets.ground.as_mut())
         && let Some(mut m) = a.get_mut(h)
