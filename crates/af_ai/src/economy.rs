@@ -222,8 +222,10 @@ impl Sources {
     }
 
     /// Add gatherable nodes (of `only`, if given) within `radius` of `center`
-    /// that are not listed yet and that a worker at `center` can get to
-    /// (not the trees across the river from home).
+    /// that are not listed yet and that a worker at `center` can get to over
+    /// the terrain: not the trees across water no ford crosses. Those over a
+    /// forded river are listed too, and a worker sent to one walks round by
+    /// the ford (rivers keep out of the start areas, so few are near home).
     fn push_near(&mut self, view: &AiView, center: Vec2, radius: f32, only: Option<ResourceId>, skip: &impl Fn(Entity) -> bool) {
         let home = only.is_none();
         let listed = self.nodes.len();

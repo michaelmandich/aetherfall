@@ -50,6 +50,24 @@ fn a_worker_moves_on_to_a_tree_on_its_own_bank() {
     assert_eq!(sim.current_order(worker), Some(Order::Gather { target: this_side }), "not {across}");
 }
 
+/// With a ford 30 m up the river the tree across is in reach, but it is
+/// the way round by the ford away: the worker still moves on to the tree on
+/// its own bank, a little farther in a straight line.
+#[test]
+fn a_worker_moves_on_to_a_tree_on_its_own_bank_though_a_ford_leads_over() {
+    let mut sim = Sim::new(&[("ironhold", 0)]);
+    river(&mut sim, Some(70..78));
+    sim.building(P0, "town_center", Vec2::new(40.0, 40.0), true);
+    let worker = sim.unit(P0, "peasant", Vec2::new(52.0, 40.0));
+    let first = sim.node("oak", Vec2::new(56.0, 40.0), Some(2.0));
+    let across = sim.node("oak", Vec2::new(69.0, 40.0), None);
+    let this_side = sim.node("oak", Vec2::new(50.0, 27.0), None);
+    sim.order(P0, &[worker], CommandKind::Gather(first));
+    sim.run_secs(12.0);
+    assert!(!sim.alive(first));
+    assert_eq!(sim.current_order(worker), Some(Order::Gather { target: this_side }), "not {across}");
+}
+
 /// A worker sent to a tree across the river takes one like it on its own
 /// bank instead of walking to the water and failing there.
 #[test]

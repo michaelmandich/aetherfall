@@ -73,6 +73,15 @@ impl Reach {
         map.distance(a, b).map(|d| d + self.pos.distance(a) + p.distance(b))
     }
 
+    /// How much longer than the straight line the way to `p` is: 0 when the
+    /// line is clear, nothing is known, or `p` lies out of the unit's
+    /// region (whatever `within` lets it work there is worked from the near
+    /// side). Costs a coarse search only when the line is blocked.
+    pub(crate) fn way_round(&self, p: Vec2) -> f32 {
+        let straight = self.pos.distance(p);
+        self.route_distance(p).map_or(0.0, |d| (d - straight).max(0.0))
+    }
+
     /// Is the way to the box `obb`, in the unit's region, a detour a chase
     /// should not take: more than [`CHASE_DETOUR`] times the straight
     /// distance (plus [`CHASE_DETOUR_SLACK`])? Not when the straight line
