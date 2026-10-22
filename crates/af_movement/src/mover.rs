@@ -191,6 +191,17 @@ impl Mover {
         self.fruitless_repaths = 0;
     }
 
+    /// The way left was measured anew without the unit moving: the path
+    /// of the next leg took the place of the coarse route's stretch it
+    /// covers (which leaves obstacles out, so the path is often longer),
+    /// and `grown` metres more of it is no step back. The best mark moves
+    /// up with it, and the count goes on: the unit must still get somewhere.
+    pub fn rebase_progress(&mut self, grown: f32) {
+        if grown > 0.0 && self.progress_best.is_finite() {
+            self.progress_best += grown;
+        }
+    }
+
     /// Length of the way left from `pos` (metres): along the path to its
     /// end (straight to where it led once past it), plus the route beyond
     /// it when the path ends at the end of a leg.

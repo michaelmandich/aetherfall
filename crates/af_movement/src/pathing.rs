@@ -15,7 +15,9 @@
 //!   `af_core::ext::movement::NavRegions`) is swapped for the reachable
 //!   point nearest it, with no search to find that out; the path leads
 //!   there and is partial, so the unit walks to the bank facing the goal
-//!   and af_behavior hears that it failed.
+//!   and af_behavior hears that it failed. A point on ground the mover
+//!   cannot use (a spot in the water) counts as out of its region when the
+//!   open ground nearest it is another region's.
 //! * Long ways: a goal farther than [`LONG_WAY`] that no straight line
 //!   reaches is planned on the coarse route graph of the mover's class
 //!   first. A route that bends round the terrain (a river crossed at a
@@ -275,6 +277,21 @@ impl PathQueue {
         shared
     }
 
+    /// Forget the match: its waiting units (despawned with it), whose turn
+    /// it was, how many lines it had, and its routes. The next match is
+    /// served as in a fresh game (as a replay of it, or a lockstep peer that
+    /// just started, serves it): the lines take turns from the first again.
+    /// The expansion counts run on.
+    fn start_over(&mut self) {
+        self.lines.clear();
+        self.turn = 0;
+        self.resume = None;
+        self.routes.clear();
+        self.coarse.clear();
+        self.spent = 0;
+        self.grid = 0;
+    }
+
     /// Drop the routes of another grid (the previous match's map), so a new
     /// map starts with none, as in a fresh game.
     fn follow_grid(&mut self, nav: &NavGrid) {
@@ -307,14 +324,15 @@ impl PathQueue {
 
     /// A coarse route planned lately on `map` from within
     /// [`COARSE_SHARE_START`] of `from` to within [`COARSE_SHARE_GOAL`] of
-    /// `to` (the newest such).
+    /// `to` (the newest such), whose start `from` sees and whose end sees
+    /// `to`, in straight lines over open ground: a groupmate across a river
+    /// or a ridge, however near, went another way, and so does one heading
+    /// for a spot across it.
     fn shared_route(&self, map: &RegionMap, from: Vec2, to: Vec2) -> Option<Arc<CoarseRoute>> {
         let (class, stamp) = (map.class(), map.stamp());
-        self.coarse
-            .iter()
-            .rev()
-            .find(|c| c.class == class && c.stamp == stamp && c.from.distance(from) <= COARSE_SHARE_START && c.to.distance(to) <= COARSE_SHARE_GOAL)
-            .map(|c| c.route.clone())
+        let near = |c: &&SharedCoarse| c.class == class && c.stamp == stamp && c.from.distance(from) <= COARSE_SHARE_START && c.to.distance(to) <= COARSE_SHARE_GOAL;
+        let in_sight = |c: &&SharedCoarse| c.route.points.first().is_some_and(|&s| map.line_open(from, s)) && map.line_open(c.route.end(), to);
+        self.coarse.iter().rev().filter(near).find(in_sight).map(|c| c.route.clone())
     }
 
     fn remember_route(&mut self, map: &RegionMap, from: Vec2, to: Vec2, route: Arc<CoarseRoute>) {
@@ -448,7 +466,13 @@ fn class_map(regions: Option<&NavRegions>, mob: &Mobile) -> Option<Arc<RegionMap
 
 /// Where the way to `ask`'s goal ends for the unit (at `ask.pos`): the goal
 /// itself, unless the regions say it is out of the unit's reach; then the
-/// reachable point nearest it, found without a search.
+/// reachable point nearest it, found without a search. A goal on ground
+/// the unit's class cannot use is in reach when the search could end by
+/// it on the unit's ground: an entity's box when some of that ground comes
+/// within reach of it; a point when the open ground nearest it is the
+/// unit's (the search heads for that ground, so ground of another region
+/// nearer the point, the far bank of a narrow river, puts it out of reach
+/// however near the unit's own comes).
 fn way_end(map: Option<&RegionMap>, ask: &Ask) -> Aim {
     let to_goal = Aim { goal: ask.target, reach: ask.follow.is_some(), last: true, unreachable: false, beyond: 0.0, extends: false };
     let Some(map) = map else { return to_goal };
@@ -458,7 +482,8 @@ fn way_end(map: Option<&RegionMap>, ask: &Ask) -> Aim {
         return to_goal;
     }
     let reachable = match map.region_at(ask.target) {
-        0 => map.touches(from, ask.target, ask.near()),
+        0 if ask.follow.is_some() => map.touches(from, ask.target, ask.near()),
+        0 => map.region_near(ask.target, ask.near()) == from,
         r => r == from,
     };
     if reachable {
@@ -492,9 +517,10 @@ fn leg_aim(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2
 
 /// The coarse route from `from` to `to`: the unit's own while it still
 /// leads there and the unit is near it, else a groupmate's planned lately,
-/// else a new one (its coarse search charged to `spent`). `None` when the
-/// ends have no open ground about or lie apart (`way_end` keeps the latter
-/// from happening).
+/// else a new one (its coarse search charged to `spent`), ending on the
+/// unit's ground nearest `to` when `to` is closed ground nearer another
+/// region's (an entity on the far bank of a narrow river, within reach of
+/// the near one). `None` when the ends have no open ground about.
 fn route_for(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Vec2, to: Vec2, spent: &mut u32) -> Option<Arc<CoarseRoute>> {
     if let Some(route) = mover.route.as_ref().filter(|r| mover.route_stamp == map.stamp() && r.end().distance(to) <= COARSE_SHARE_GOAL)
         && route.locate(from, mover.route_segment).2 <= OFF_ROUTE
@@ -504,7 +530,12 @@ fn route_for(queue: &mut PathQueue, map: &RegionMap, mover: &mut Mover, from: Ve
     let route = match queue.shared_route(map, from, to) {
         Some(r) => r,
         None => {
-            let (a, b) = (map.open_near(from, START_SEARCH_RADIUS)?, map.open_near(to, GOAL_SEARCH_RADIUS)?);
+            let a = map.open_near(from, START_SEARCH_RADIUS)?;
+            let region = map.region_at(a);
+            let b = match map.open_near(to, GOAL_SEARCH_RADIUS) {
+                Some(b) if map.region_at(b) == region => b,
+                _ => map.nearest_in(region, to)?,
+            };
             let planned = map.route(a, b)?;
             *spent += planned.expansions * COARSE_EXPANSION_COST;
             queue.coarse_expanded += u64::from(planned.expansions);
@@ -765,7 +796,8 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
     // goes on with the progress count: the same route again must not reset
     // it.
     let stuck = std::mem::take(&mut mover.stuck_repath);
-    if !std::mem::take(&mut mover.continuing) && !stuck {
+    let continuing = std::mem::take(&mut mover.continuing);
+    if !continuing && !stuck {
         mover.restart_progress();
     }
     let Some(&end) = result.waypoints.last() else {
@@ -779,6 +811,10 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
         path.status = PathStatus::Failed;
         return;
     }
+    // On along the same way, the next leg's path takes the place of what
+    // the route said was left from the end of the last (and of the stretch
+    // that leg fell short by): see `Mover::rebase_progress`.
+    let before = continuing.then(|| mover.way_left(ask.pos, path));
     path.waypoints = result.waypoints;
     path.next = 0;
     path.partial = partial(ask, aim, real, result.complete, end);
@@ -788,11 +824,16 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
     mover.beyond = aim.beyond;
     mover.path_start = ask.pos;
     mover.path_goal = real;
+    if let Some(before) = before {
+        let after = mover.way_left(ask.pos, path);
+        mover.rebase_progress(after - before);
+    }
 }
 
 /// Add the next leg (searched from the end of the path) to the path. A leg
 /// that gets nowhere is dropped: the unit walks to the end of its path and
-/// asks afresh from there.
+/// asks afresh from there. The leg's path takes the place of the route's
+/// stretch it covers in the way left (see `Mover::rebase_progress`).
 fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, path: &mut PathState, mover: &mut Mover) {
     mover.extend = false;
     let Some(&end) = result.waypoints.last() else {
@@ -803,7 +844,17 @@ fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pa
         mover.on_leg = false;
         return;
     }
+    let joined = path.waypoints.len();
     path.waypoints.extend(result.waypoints.iter().copied().filter(|w| w.distance(ask.pos) > 1e-3));
+    let added: f32 = path.waypoints[joined..]
+        .iter()
+        .scan(ask.pos, |at, &w| {
+            let step = at.distance(w);
+            *at = w;
+            Some(step)
+        })
+        .sum();
+    mover.rebase_progress(added + aim.beyond - mover.beyond);
     path.partial = partial(ask, aim, real, result.complete, end);
     mover.truncated = result.truncated || !aim.last;
     mover.on_leg = !aim.last;
@@ -882,6 +933,12 @@ pub(crate) fn prepare_regions(mut commands: Commands, nav: Option<Res<Nav>>, uni
 /// `OnExit(GameState::Playing)`: the map's regions go with it.
 pub(crate) fn drop_regions(mut commands: Commands) {
     commands.remove_resource::<NavRegions>();
+}
+
+/// `OnEnter` and `OnExit(GameState::Playing)`: the path queue starts over
+/// with every match (see [`PathQueue::start_over`]).
+pub(crate) fn reset_queue(mut queue: ResMut<PathQueue>) {
+    queue.start_over();
 }
 
 #[cfg(test)]
@@ -1557,5 +1614,279 @@ mod tests {
         let deep = data.terrain_id("deep_water").expect("deep water");
         assert!(trail.iter().all(|q| TerrainId(nav.terrain_at(nav.cell_of(*q))) != deep), "never in deep water");
         assert!(cells < 5_000, "{cells} cell expansions");
+    }
+
+    /// The slowest wheels on a long way whose second leg runs into a wall
+    /// the coarse route does not see (it leaves obstacles out): the leg's
+    /// search goes round by the wall's far end, some 130 m longer than the
+    /// route's stretch, a minute and a half of driving. The engine drives
+    /// round, crosses at the ford and arrives; the longer way is no lack of
+    /// progress.
+    #[test]
+    fn a_leg_round_a_wall_the_route_does_not_see_is_progress() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[(220, "ford")]);
+        // Across the way up the west bank to the ford, from 80 m west of
+        // the river to the river itself.
+        let wall = data.building_ids().find(|b| data.building(*b).wall && !data.building(*b).gate).expect("a wall");
+        for i in 0..28 {
+            let at = Vec2::new(40.0 + i as f32 * 3.0, 196.0);
+            with_commands(&mut app, |c, data, players| spawn_building(c, data, players.get(p[0]), wall, at, 0.0, true));
+        }
+        let engine = data
+            .unit_ids()
+            .filter(|u| data.unit(*u).locomotion == MoveFlag::Wheeled)
+            .min_by(|a, b| data.unit(*a).speed.total_cmp(&data.unit(*b).speed).then(a.cmp(b)))
+            .expect("an engine");
+        assert!(data.unit(engine).speed < 2.0, "a slow engine");
+        let (start, goal) = (Vec2::new(98.5, 128.5), Vec2::new(158.5, 128.5));
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), engine, start, 0.0));
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 20_000);
+        let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+        println!("wheels round a wall across a leg: {s:?} after {ticks} ticks, {walked:.0} m walked");
+        assert_eq!(s, PathStatus::Arrived, "{:?} at {:?}", app.world().get::<PathState>(e), trail.last());
+        assert!(trail.iter().any(|q| q.x < 40.0 && q.y > 190.0 && q.y < 202.0), "round the wall's far end");
+    }
+
+    /// At the end of a leg, the path to the next one replaces what the
+    /// route said was left (the route's straight stretch): a way round
+    /// obstacles longer than the stretch moves the best mark of the
+    /// progress count up by what it adds, so the unit does not have to
+    /// walk that much before anything counts as progress again. So does a
+    /// leg added to the path while the unit walks on.
+    #[test]
+    fn the_next_leg_moves_the_progress_mark_by_what_it_adds() {
+        let mob = walker();
+        let (pos, goal) = (Vec2::new(10.0, 10.0), Vec2::new(200.0, 10.0));
+        let order = MoveGoal::point(goal, 0.5);
+        // The last leg ended here: 100 m of route left beyond it.
+        let mut path = PathState { waypoints: vec![pos], next: 1, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let mut mover = Mover { on_leg: true, truncated: true, beyond: 100.0, progress_best: 100.0, wants_repath: true, continuing: true, ..Mover::default() };
+        assert_eq!(mover.way_left(pos, &path), 100.0);
+        // The next leg ends 20 m down the route (80 m beyond it), but its
+        // path goes 10 m aside and back: 2 x sqrt(10^2 + 10^2) = 28.3 m.
+        let aim = Aim { goal: pos + Vec2::new(20.0, 0.0), reach: false, last: false, unreachable: false, beyond: 80.0, extends: false };
+        let ask = Ask { goal: &order, mob: &mob, pos, team: 0, target: aim.goal, follow: None };
+        let result = af_geom::PathResult { waypoints: vec![pos + Vec2::new(10.0, 10.0), aim.goal], complete: true, truncated: false, expansions: 50 };
+        apply_path(&ask, &aim, goal, result, &mut path, &mut mover);
+        assert_eq!(path.status, PathStatus::Following);
+        let left = mover.way_left(pos, &path);
+        assert!((left - 108.28).abs() < 0.01, "{left}");
+        assert!(left <= mover.progress_best + 1e-3, "{left} m left, best mark {}", mover.progress_best);
+        assert!(mover.progress_best < 108.29, "no more than the leg added: {}", mover.progress_best);
+
+        // A leg added to the path while the unit, 15 m short of its end,
+        // walks on.
+        let end = pos + Vec2::new(20.0, 0.0);
+        let unit = pos + Vec2::new(5.0, 0.0);
+        let mut mover = Mover { on_leg: true, truncated: true, beyond: 80.0, progress_best: 95.0, extend: true, ..Mover::default() };
+        let mut path = PathState { waypoints: vec![end], next: 0, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let before = mover.way_left(unit, &path);
+        let aim = Aim { goal: end + Vec2::new(20.0, 0.0), extends: true, beyond: 60.0, ..aim };
+        let ask = Ask { pos: end, target: aim.goal, ..ask };
+        let result = af_geom::PathResult { waypoints: vec![end + Vec2::new(10.0, 10.0), aim.goal], complete: true, truncated: false, expansions: 50 };
+        apply_path(&ask, &aim, goal, result, &mut path, &mut mover);
+        let after = mover.way_left(unit, &path);
+        assert!((after - before - 8.28).abs() < 0.01, "{before} -> {after}");
+        assert!((mover.progress_best - 103.28).abs() < 0.01, "the mark moved by what the leg added: {}", mover.progress_best);
+    }
+
+    /// A rally point in a narrow river with no ford, nearer the far bank
+    /// than the near one: the near bank comes within the goal's reach, but
+    /// a search for a point in the water heads for the open ground nearest
+    /// it, which is across. So it is out of reach, answered without a
+    /// search: the unit walks to the near bank facing it and fails there.
+    #[test]
+    fn a_goal_in_the_water_nearer_the_far_bank_costs_no_search() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        paint_river(&mut app, 128, &[]);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        let e = with_commands(&mut app, |c, data, players| spawn_unit(c, data, players.get(p[0]), foot, Vec2::new(98.5, 128.5), 0.0));
+        // 8 m from the near bank's cells, 5 m from the far bank's.
+        app.world_mut().entity_mut(e).insert(MoveGoal::point(Vec2::new(129.5, 128.5), 0.5));
+        let (s, ticks, trail) = walk(&mut app, e, 1_200);
+        let end = *trail.last().expect("walked");
+        println!("a goal in the water nearer the far bank: {s:?} after {ticks} ticks at {end}, {:?} expansions", expanded(&app));
+        assert_eq!(s, PathStatus::Failed);
+        assert!(end.x > 119.0 && end.x < 122.5 && (end.y - 128.5).abs() < 2.0, "on the near bank facing it: {end}");
+        assert_eq!(expanded(&app), (0, 0), "no search");
+    }
+
+    /// Paint mountain along y = 120..128 over a 256 m map, but for a pass
+    /// at x = 220..226.
+    fn ridge(app: &mut App) {
+        paint(app, "mountain", |x, y| (120..128).contains(&y) && !(220..226).contains(&x));
+    }
+
+    /// A groupmate's coarse route serves a mover only in a straight line
+    /// over open ground from where the route starts, and to where it leads:
+    /// a mover a few metres off but across a ridge, or heading for a spot
+    /// just across the ridge from the route's end, plans its own.
+    #[test]
+    fn coarse_routes_are_shared_only_in_sight_of_their_ends() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        ridge(&mut app);
+        let mob = walker();
+        let map = RegionMap::build(&app.world().resource::<Nav>().terrain_snapshot(), mob.mobility.0, mob.radius);
+        let mut queue = PathQueue::default();
+        let mut plan = |from: Vec2, to: Vec2| {
+            let route = Arc::new(map.route(from, to).expect("by the pass"));
+            assert!(route.points.iter().any(|q| q.x > 200.0), "by the pass: {route:?}");
+            queue.remember_route(&map, from, to, route.clone());
+            route
+        };
+        // North across the ridge, and to just across it.
+        let (a, goal, across) = (Vec2::new(60.5, 114.5), Vec2::new(60.5, 240.5), Vec2::new(60.5, 135.5));
+        let north = plan(a, goal);
+        let short = plan(a, across);
+        let shared = |from: Vec2, to: Vec2, route: &Arc<CoarseRoute>| queue.shared_route(&map, from, to).is_some_and(|r| Arc::ptr_eq(&r, route));
+        assert!(shared(Vec2::new(75.5, 108.5), Vec2::new(70.5, 236.5), &north), "a groupmate beside it");
+        assert!(shared(Vec2::new(75.5, 108.5), Vec2::new(66.5, 140.5), &short), "a groupmate beside it");
+        assert!(queue.shared_route(&map, Vec2::new(60.5, 133.5), goal).is_none(), "across the ridge, 19 m off");
+        assert!(queue.shared_route(&map, Vec2::new(70.5, 110.5), Vec2::new(60.5, 119.5)).is_none(), "heading for a spot across the ridge, 16 m off");
+    }
+
+    /// Played through: a rider 19 m from a groupmate's start, but across a
+    /// ridge from it, is not handed the groupmate's route by the pass 160 m
+    /// off: it goes its own way (round a few trees in its way) and never
+    /// near the pass.
+    #[test]
+    fn a_mover_across_a_ridge_goes_its_own_way() {
+        let data = test_data();
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let p = flat_world(&mut app, 256.0, &[("ironhold", 0)]);
+        ridge(&mut app);
+        let tree = data.node_ids().filter(|n| data.node(*n).blocking).min_by(|a, b| data.node(*a).size[0].total_cmp(&data.node(*b).size[0])).expect("a tree");
+        for x in 48..74 {
+            let at = Vec2::new(x as f32 + 0.5, 160.5);
+            with_commands(&mut app, |c, data, _| spawn_node(c, data, tree, at, 0.0, None));
+        }
+        let rider = unit_of(&data, MoveFlag::Mounted);
+        let goal = Vec2::new(60.5, 240.5);
+        let send = |app: &mut App, at: Vec2| {
+            let e = with_commands(app, |c, data, players| spawn_unit(c, data, players.get(p[0]), rider, at, 0.0));
+            app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+            e
+        };
+        let planner = send(&mut app, Vec2::new(60.5, 114.5));
+        for _ in 0..30 {
+            run_ticks(&mut app, 1);
+            if status(&app, planner) == PathStatus::Following {
+                break;
+            }
+        }
+        assert_eq!(status(&app, planner), PathStatus::Following);
+        assert!(!app.world().resource::<PathQueue>().coarse.is_empty(), "the planner's route is kept for groupmates");
+        let mate = send(&mut app, Vec2::new(60.5, 133.5));
+        let (s, ticks, trail) = walk(&mut app, mate, 3_000);
+        let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+        println!("a mover across a ridge from its groupmate: {s:?} after {ticks} ticks, {walked:.0} m walked");
+        assert_eq!(s, PathStatus::Arrived);
+        assert!(trail.iter().all(|q| q.x < 100.0), "never off toward the pass");
+        assert!(walked < 150.0, "{walked:.0} m for 107 m");
+    }
+
+    /// The forest map for `players`; each of `orders` (owner, start, goal)
+    /// sends a foot unit. Returns them in order.
+    fn forest_match(app: &mut App, players: &[(&str, u8)], orders: &[(usize, Vec2, Vec2)]) -> Vec<Entity> {
+        let data = app.world().resource::<Data>().0.clone();
+        let p = flat_world(app, 160.0, players);
+        forest(app, &data);
+        let foot = unit_of(&data, MoveFlag::Foot);
+        orders
+            .iter()
+            .map(|&(owner, at, goal)| {
+                let e = with_commands(app, |c, data, players| spawn_unit(c, data, players.get(p[owner]), foot, at, 0.0));
+                app.world_mut().entity_mut(e).insert(MoveGoal::point(goal, 0.5));
+                e
+            })
+            .collect()
+    }
+
+    /// Leave the match as the game does: everything of it despawned, then
+    /// out of `Playing`. A test world keeps Bevy's ids, which hand the
+    /// freed slots out again last freed first; the slots are taken up here,
+    /// so the next match's entities are numbered in the order they are
+    /// spawned, as in a fresh app (in a real match af_core's sim ids see to
+    /// that).
+    fn leave_match(app: &mut App) {
+        let world = app.world_mut();
+        let doomed: Vec<Entity> = world.query_filtered::<Entity, Or<(With<Unit>, With<Building>, With<ResourceNode>)>>().iter(world).collect();
+        for e in doomed {
+            world.despawn(e);
+        }
+        world.flush();
+        while world.spawn_empty().id().generation() != bevy::ecs::entity::EntityGeneration::FIRST {}
+        world.resource_mut::<NextState<GameState>>().set(GameState::Menu);
+        app.update();
+    }
+
+    /// Every unit's path status, position and facing, bit for bit, after
+    /// each of `ticks` ticks.
+    fn trace(app: &mut App, units: &[Entity], ticks: u32) -> Vec<Vec<(PathStatus, [u32; 3])>> {
+        (0..ticks)
+            .map(|_| {
+                run_ticks(app, 1);
+                units
+                    .iter()
+                    .map(|&e| {
+                        let (pos, facing) = (app.world().get::<Position>(e).expect("position").0, app.world().get::<Facing>(e).expect("facing").0);
+                        (status(app, e), [pos.x.to_bits(), pos.y.to_bits(), facing.to_bits()])
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A match played in an app that played one before goes as it does in
+    /// a fresh app (as a headless replay of it, or a lockstep peer that
+    /// just started, plays it): the path queue starts over, so the players'
+    /// lines take turns from the first again, whatever the last match's
+    /// player count, whose turn it was and who was still waiting when it
+    /// ended.
+    #[test]
+    fn a_second_match_in_one_app_replays_as_in_a_fresh_one() {
+        let data = test_data();
+        // Two players each send six units across the forest, scattered so
+        // that no two share a search: more searching than a tick's budget.
+        let orders: Vec<(usize, Vec2, Vec2)> = (0..12)
+            .map(|i| {
+                let (owner, j) = (i % 2, (i / 2) as f32);
+                (owner, Vec2::new(10.0 + owner as f32 * 20.0, 10.0 + j * 28.0), Vec2::new(110.0 + owner as f32 * 30.0, 150.0 - j * 28.0))
+            })
+            .collect();
+        let two = [("ironhold", 0), ("ironhold", 1)];
+
+        let mut fresh = sim_app(data.clone());
+        fresh.add_plugins(crate::MovementPlugin);
+        let units = forest_match(&mut fresh, &two, &orders);
+        let first = trace(&mut fresh, &units, 90);
+
+        // The last match: three players, the third sending a crowd across
+        // the forest, some of it still in line when the match ends.
+        let mut app = sim_app(data.clone());
+        app.add_plugins(crate::MovementPlugin);
+        let crowd: Vec<(usize, Vec2, Vec2)> =
+            (0..30).map(|i| (2, Vec2::new(10.0 + (i % 6) as f32 * 4.0, 10.0 + (i / 6) as f32 * 30.0), Vec2::new(100.0 + (i % 6) as f32 * 9.0, 8.0 + (i / 6) as f32 * 30.0))).collect();
+        forest_match(&mut app, &[("ironhold", 0), ("ironhold", 1), ("ironhold", 2)], &crowd);
+        run_ticks(&mut app, 2);
+        assert!(queued(&app) > 0, "the last match ends with units waiting");
+        leave_match(&mut app);
+        assert_eq!(queued(&app), 0, "nobody of the last match waits in line");
+        let units = forest_match(&mut app, &two, &orders);
+        app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Playing);
+        let second = trace(&mut app, &units, 90);
+        let agree = first.iter().zip(&second).take_while(|(a, b)| a == b).count();
+        assert!(first == second, "the second match diverges from a fresh one at tick {}", agree + 1);
     }
 }

@@ -151,9 +151,9 @@ pub struct RegionMap {
     /// Links of node `i`: `links[link_first[i]..link_first[i + 1]]`.
     link_first: Vec<u32>,
     links: Vec<Link>,
-    /// Nodes of region `r`: `region_nodes[region_first[r - 1]..region_first[r]]`.
-    region_first: Vec<u32>,
-    region_nodes: Vec<u32>,
+    /// Per region (`r - 1`): the box of blocks holding its nodes, as
+    /// `[min x, min y, max x, max y]` (block coordinates, inclusive).
+    region_blocks: Vec<[i32; 4]>,
 }
 
 /// A coarse route: straight legs over open cells (for the class) from
@@ -369,8 +369,7 @@ impl RegionMap {
             nodes,
             link_first: Vec::new(),
             links: Vec::new(),
-            region_first: Vec::new(),
-            region_nodes: Vec::new(),
+            region_blocks: Vec::new(),
         };
 
         // Links across block borders and corners, each through the middle
@@ -450,26 +449,13 @@ impl RegionMap {
             }
             map.nodes[i].region = id_of[r];
         }
-        let mut sizes = vec![0u32; regions as usize + 1];
+        let mut region_blocks = vec![[i32::MAX, i32::MAX, i32::MIN, i32::MIN]; regions as usize];
         for node in &map.nodes {
-            sizes[node.region as usize] += 1;
+            let (bx, by) = (node.block as i32 % blocks_w, node.block as i32 / blocks_w);
+            let b = &mut region_blocks[node.region as usize - 1];
+            *b = [b[0].min(bx), b[1].min(by), b[2].max(bx), b[3].max(by)];
         }
-        let mut region_first = Vec::with_capacity(regions as usize + 1);
-        let mut acc = 0u32;
-        region_first.push(0);
-        for s in &sizes[1..] {
-            acc += s;
-            region_first.push(acc);
-        }
-        let mut fill = region_first.clone();
-        let mut region_nodes = vec![0u32; count];
-        for (i, node) in map.nodes.iter().enumerate() {
-            let r = node.region as usize - 1;
-            region_nodes[fill[r] as usize] = i as u32;
-            fill[r] += 1;
-        }
-        map.region_first = region_first;
-        map.region_nodes = region_nodes;
+        map.region_blocks = region_blocks;
         map
     }
 
@@ -485,7 +471,7 @@ impl RegionMap {
 
     /// Number of regions.
     pub fn region_count(&self) -> u32 {
-        self.region_first.len().saturating_sub(1) as u32
+        self.region_blocks.len() as u32
     }
 
     /// Number of coarse nodes.
@@ -608,10 +594,12 @@ impl RegionMap {
     }
 
     /// The point of `region` nearest `p`: `p` itself when its cell belongs
-    /// to it, else the centre of its nearest cell (`None` for no region).
-    /// Coarse blocks are visited nearest first and the search stops once
-    /// no block left can hold anything nearer, so it costs about the cells
-    /// of the few blocks round the answer.
+    /// to it, else the centre of its nearest cell, of equally near cells
+    /// the first by row, then column (`None` for no region). Blocks are
+    /// visited in square rings round `p`'s (kept within the box of blocks
+    /// holding the region) and the search stops once no ring left can hold
+    /// a nearer cell, so it costs about the blocks within the answer's
+    /// distance of `p`, however large the region.
     pub fn nearest_in(&self, region: RegionId, p: Vec2) -> Option<Vec2> {
         if region == 0 || region > self.region_count() {
             return None;
@@ -619,41 +607,64 @@ impl RegionMap {
         if self.region_at(p) == region {
             return Some(p);
         }
-        let list = &self.region_nodes[self.region_first[region as usize - 1] as usize..self.region_first[region as usize] as usize];
+        let [x0, y0, x1, y1] = self.region_blocks[region as usize - 1];
         let size = self.cell * BLOCK as f32;
-        let mut candidates: Vec<(f32, u32)> = list
-            .iter()
-            .map(|&n| {
-                let b = self.nodes[n as usize].block as i32;
-                let lo = self.origin + IVec2::new(b % self.blocks_w, b / self.blocks_w).as_vec2() * size;
-                let hi = lo + Vec2::splat(size);
-                let gap = (lo - p).max(p - hi).max(Vec2::ZERO);
-                (gap.length(), n)
-            })
-            .collect();
-        candidates.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let at = (p - self.origin) / size;
+        let c = IVec2::new((at.x.floor() as i32).clamp(x0, x1), (at.y.floor() as i32).clamp(y0, y1));
+        let rings = (c.x - x0).max(x1 - c.x).max(c.y - y0).max(y1 - c.y);
         let mut best: Option<(f32, IVec2)> = None;
-        for (bound, n) in candidates {
+        for r in 0..=rings {
+            // Every block of ring r and beyond is more than r - 1 blocks
+            // from `p` along x or y (`p` lies in block `c`, or beyond the
+            // box on its side).
+            let bound = (r - 1).max(0) as f32 * size;
             if best.is_some_and(|(d, _)| bound * bound > d) {
                 break;
             }
-            let node = self.nodes[n as usize];
-            let local = (n - self.first[node.block as usize] + 1) as u8;
-            let (bx, by) = (node.block as i32 % self.blocks_w, node.block as i32 / self.blocks_w);
-            for y in by * BLOCK..((by + 1) * BLOCK).min(self.height) {
-                for x in bx * BLOCK..((bx + 1) * BLOCK).min(self.width) {
-                    let c = IVec2::new(x, y);
-                    if self.part[(y * self.width + x) as usize] != local {
-                        continue;
+            for by in (c.y - r).max(y0)..=(c.y + r).min(y1) {
+                if (by - c.y).abs() == r {
+                    for bx in (c.x - r).max(x0)..=(c.x + r).min(x1) {
+                        self.nearest_in_block(region, IVec2::new(bx, by), p, &mut best);
                     }
-                    let d = self.cell_center(c).distance_squared(p);
-                    if best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, c));
+                } else {
+                    for bx in [c.x - r, c.x + r].into_iter().filter(|bx| (x0..=x1).contains(bx)) {
+                        self.nearest_in_block(region, IVec2::new(bx, by), p, &mut best);
                     }
                 }
             }
         }
         best.map(|(_, c)| self.cell_center(c))
+    }
+
+    /// Fold the cells of `region` in block `b` into `best` (squared
+    /// distance to `p` and cell, see [`RegionMap::nearest_in`]); a block
+    /// farther than `best` is passed over.
+    fn nearest_in_block(&self, region: RegionId, b: IVec2, p: Vec2, best: &mut Option<(f32, IVec2)>) {
+        let size = self.cell * BLOCK as f32;
+        let lo = self.origin + b.as_vec2() * size;
+        let gap = (lo - p).max(p - lo - Vec2::splat(size)).max(Vec2::ZERO);
+        if best.is_some_and(|(d, _)| gap.length_squared() > d) {
+            return;
+        }
+        let block = (b.y * self.blocks_w + b.x) as usize;
+        for n in self.first[block]..self.first[block + 1] {
+            if self.nodes[n as usize].region != region {
+                continue;
+            }
+            let local = (n - self.first[block] + 1) as u8;
+            for y in b.y * BLOCK..((b.y + 1) * BLOCK).min(self.height) {
+                for x in b.x * BLOCK..((b.x + 1) * BLOCK).min(self.width) {
+                    if self.part[(y * self.width + x) as usize] != local {
+                        continue;
+                    }
+                    let c = IVec2::new(x, y);
+                    let d = self.cell_center(c).distance_squared(p);
+                    if best.is_none_or(|(bd, bc)| d < bd || (d == bd && (y, x) < (bc.y, bc.x))) {
+                        *best = Some((d, c));
+                    }
+                }
+            }
+        }
     }
 
     /// The first cell of `region` on the way from `to` back to `from` (its
@@ -1077,6 +1088,78 @@ mod tests {
                 .fold(f32::INFINITY, f32::min);
             assert!((p.distance(goal) - best).abs() < 1e-3, "{goal}: {p} at {} vs {best}", p.distance(goal));
         }
+    }
+
+    /// The point of a region nearest a goal agrees with a look at every
+    /// cell, of equally near cells the first by row, then column: goals in
+    /// the water, on rock, in another region, on the region itself and off
+    /// the map, for every region of a map cut in four with a pocket.
+    #[test]
+    fn nearest_in_agrees_with_every_cell() {
+        let mut g = grid(100);
+        river_x(&mut g, 50, &[]);
+        river_y(&mut g, 70, &[20]);
+        // A rock pocket in the south-west, closed all round.
+        for i in 10..30 {
+            for (x, y) in [(i, 10), (i, 29), (10, i), (29, i)] {
+                g.set_terrain(IVec2::new(x, y), ROCK);
+            }
+        }
+        let m = map(&g, FOOT, 0.4);
+        assert!(m.region_count() >= 4, "{} regions", m.region_count());
+        let cells: Vec<IVec2> = (0..100 * 100).map(|i| IVec2::new(i % 100, i / 100)).collect();
+        for region in 1..=m.region_count() {
+            let mine: Vec<IVec2> = cells.iter().copied().filter(|c| m.region_at(m.cell_center(*c)) == region).collect();
+            for i in 0..300 {
+                let p = Vec2::new((i * 37 % 130) as f32 - 15.0 + 0.3, (i * 53 % 130) as f32 - 15.0 + 0.7);
+                let got = m.nearest_in(region, p);
+                if m.region_at(p) == region {
+                    assert_eq!(got, Some(p));
+                    continue;
+                }
+                let want = mine
+                    .iter()
+                    .map(|c| (m.cell_center(*c).distance_squared(p), *c))
+                    .min_by(|a, b| a.0.total_cmp(&b.0).then((a.1.y, a.1.x).cmp(&(b.1.y, b.1.x))))
+                    .map(|(_, c)| m.cell_center(c));
+                assert_eq!(got, want, "region {region}, goal {p}");
+            }
+        }
+        assert_eq!(m.nearest_in(0, Vec2::new(5.5, 5.5)), None);
+        assert_eq!(m.nearest_in(m.region_count() + 1, Vec2::new(5.5, 5.5)), None);
+    }
+
+    /// The point of a region nearest a goal costs about the blocks within
+    /// the answer's distance of the goal, not the region: on a 1,400 m map
+    /// (30,000 coarse nodes in its land), 2,000 lookups from a lake in the
+    /// middle, as many units ordered into it, take milliseconds. (Sorting
+    /// the region's nodes for each took seconds.)
+    #[test]
+    fn nearest_in_costs_the_blocks_round_the_answer() {
+        let mut g = grid(1400);
+        // A round lake of radius 120 m in the middle.
+        for y in 570..830 {
+            for x in 570..830 {
+                if (x - 700) * (x - 700) + (y - 700) * (y - 700) < 120 * 120 {
+                    g.set_terrain(IVec2::new(x, y), DEEP);
+                }
+            }
+        }
+        let m = map(&g, FOOT, 0.4);
+        let land = m.region_at(Vec2::new(10.5, 10.5));
+        assert_eq!(m.region_count(), 1);
+        let centre = Vec2::splat(700.0);
+        let t = std::time::Instant::now();
+        for i in 0..2_000 {
+            let (a, r) = (i as f32 * 2.399, (i % 100) as f32 * 1.15);
+            let p = centre + Vec2::new(a.cos(), a.sin()) * r;
+            let q = m.nearest_in(land, p).expect("the shore");
+            let shore = q.distance(centre);
+            assert!(shore > 119.0 && shore < 122.0, "{p}: {q} is {shore} m from the centre");
+        }
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!("nearest_in: 2,000 lookups from a lake on a 1,400 m map ({} coarse nodes) in {ms:.1} ms", m.node_count());
+        assert!(ms < 250.0, "{ms:.1} ms for 2,000 lookups");
     }
 
     /// The coarse route round a river by a ford far off the straight line

@@ -35,6 +35,11 @@
 //! [`af_core::ext::movement::NavRegions`] tells everyone what ground movers
 //! can reach and how far it is by the way round (made on entering a match,
 //! and again whenever the terrain changes).
+//!
+//! Nothing of a match reaches the next: the path queue (its players' lines,
+//! whose turn it is, the routes kept for sharing) starts over on entering
+//! and on leaving `Playing`, so a second match in one app plays as it does
+//! in a fresh one.
 
 mod bodies;
 mod collision;
@@ -56,8 +61,8 @@ impl Plugin for MovementPlugin {
             .init_resource::<pathing::PathQueue>()
             .init_resource::<af_core::ext::movement::CollisionStats>()
             .add_observer(obstacles::forget_removed)
-            .add_systems(OnEnter(GameState::Playing), pathing::prepare_regions.after(MapSetupSet))
-            .add_systems(OnExit(GameState::Playing), pathing::drop_regions)
+            .add_systems(OnEnter(GameState::Playing), (pathing::prepare_regions.after(MapSetupSet), pathing::reset_queue))
+            .add_systems(OnExit(GameState::Playing), (pathing::drop_regions, pathing::reset_queue))
             .add_systems(
                 FixedUpdate,
                 (
