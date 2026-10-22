@@ -30,7 +30,9 @@ Concept first (units, weapon props, buildings and resource nodes):
    <key>_walking.glb and <key>_running.glb), props in
    art/units/source/props/<key>.glb, buildings and nodes in
    art/static/source/<kind>/<key>.glb. Every download is also kept in
-   art/meshy/out/<key>/. Assets with no pick are listed and skipped.
+   art/meshy/out/<key>/. Assets with no pick are listed and skipped, and
+   so is a picked asset already installed by another tool (its file is
+   there and Meshy never modelled it: art/tripo/studio_imports.json).
 
 Text to 3D (batch 1's nodes and buildings; units and props are concept only):
 
@@ -1229,14 +1231,23 @@ def plan_concepts(assets: list[Asset], style: dict, ledger: Ledger, budget: Budg
     return jobs, skipped
 
 
+def made_elsewhere(asset: Asset, ledger: Ledger) -> bool:
+    """Installed, though Meshy never made a model of it (another tool did,
+    from its picked concept: art/tripo/studio_imports.json)."""
+    return asset.target().exists() and not any(t["asset"] == asset.key and t["stage"] != "concept" for t in ledger.tasks)
+
+
 def plan_models(assets: list[Asset], style: dict, ledger: Ledger, budget: Budget) -> tuple[list[ModelJob], list[str], list[str]]:
     """Models (and rigs) of picked concepts not made yet; and the assets
-    with no pick."""
+    with no pick. A picked asset made outside Meshy is left alone."""
     jobs, skipped, unpicked = [], [], []
     for a in assets:
         pick = ledger.picked(a.key)
         if pick is None:
             unpicked.append(a.key)
+            continue
+        if made_elsewhere(a, ledger):
+            print(f"{a.key}: already made outside Meshy ({rel(a.target())}); left alone")
             continue
         job = model_job(a, pick, style, ledger)
         if job.made():
@@ -1272,6 +1283,9 @@ def cmd_plan(assets: list[Asset], style: dict, ledger: Ledger, http: Http | None
         steps: list[tuple[str, int, str]] = []  # stage, credits still to pay, words
         note = ""
         pick = ledger.picked(a.key)
+        if pick is not None and made_elsewhere(a, ledger):
+            print(f"  {a.key:<24}       done ({rel(a.target())}, made outside Meshy)")
+            continue
         if pick is not None:
             job = model_job(a, pick, style, ledger)
             if job.made():

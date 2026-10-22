@@ -624,6 +624,22 @@ class MeshyTest(unittest.TestCase):
         # A polycount of its own wins over the kind's.
         self.assertEqual(meshy.model_body(dataclasses.replace(wolf, polycount=20000), NEW_STYLE, "c")["target_polycount"], 20000)
 
+    def test_a_picked_asset_made_outside_meshy_is_left_alone(self):
+        wolf, bear = self.unit("wolf"), self.unit("bear")
+        self.picked_concept(wolf)
+        self.picked_concept(bear)
+        wolf.target().parent.mkdir(parents=True, exist_ok=True)
+        wolf.target().write_bytes(b"made in another tool")
+        api = FakeApi()
+        self.models(api, 30, [wolf, bear])
+        self.assertEqual(api.posts().count("image-to-3d"), 1)
+        self.assertEqual(api.body("image-to-3d")["input_task_id"], "bear_concept")
+        self.assertIn("wolf: already made outside Meshy (units/wolf.glb); left alone", self.out)
+        self.assertEqual(wolf.target().read_bytes(), b"made in another tool")
+        self.out = ""
+        self.quietly(meshy.cmd_plan, [wolf], NEW_STYLE, self.ledger, None)
+        self.assertRegex(self.out, r"wolf +done \(units/wolf.glb, made outside Meshy\)")
+
     def test_pick_takes_only_a_finished_concept_of_the_asset(self):
         wolf = self.unit("wolf")
         add = self.ledger.add
