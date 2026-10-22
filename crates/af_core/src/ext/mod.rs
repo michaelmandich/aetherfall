@@ -9,5 +9,6 @@ pub mod fog;
 pub mod input;
 pub mod map;
 pub mod movement;
+pub mod net;
 pub mod render;
 pub mod ui;

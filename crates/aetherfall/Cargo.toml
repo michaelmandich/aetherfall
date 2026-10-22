@@ -18,3 +18,5 @@ af_ai = { workspace = true }
 af_input = { workspace = true }
 af_ui = { workspace = true }
 af_render = { workspace = true }
+af_sim = { workspace = true }
+af_net = { workspace = true }

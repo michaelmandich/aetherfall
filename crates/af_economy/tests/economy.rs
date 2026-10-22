@@ -765,6 +765,51 @@ fn defeated_players_are_not_revealed_and_reveals_reset_with_the_match() {
     assert!(app.world().resource::<RevealedPlayers>().is_empty(), "forgotten when the match ends");
 }
 
+/// Ranked 2v2: a team is out once both of its halls are gone, whatever
+/// else it still holds; one teammate's hall keeps the other in.
+#[test]
+fn under_the_town_halls_rule_a_team_falls_with_its_last_hall() {
+    let mut app = new_match(&[("starborn", 0), ("sylvan", 0), ("tide", 1), ("dune", 1)]);
+    app.insert_resource(MatchSetup { rule: VictoryRule::TownHalls, ..default() });
+    let (p2, p3) = (PlayerId(2), PlayerId(3));
+    spawn_building_at(&mut app, P0, "town_center", Vec2::new(20.0, 20.0), true);
+    spawn_building_at(&mut app, P1, "town_center", Vec2::new(60.0, 20.0), true);
+    let hall2 = spawn_building_at(&mut app, p2, "town_center", Vec2::new(20.0, 100.0), true);
+    let hall3 = spawn_building_at(&mut app, p3, "town_center", Vec2::new(60.0, 100.0), true);
+    spawn_building_at(&mut app, p2, "barracks", Vec2::new(40.0, 110.0), true);
+    spawn_unit_at(&mut app, p2, "peasant", Vec2::new(30.0, 90.0));
+    seconds(&mut app, 12.0);
+    assert!(!app.world().resource::<GameOutcome>().ended);
+
+    app.world_mut().entity_mut(hall2).insert(Dead);
+    seconds(&mut app, 2.0);
+    assert!(!player(&app, p2).defeated, "a teammate still holds a hall");
+    assert!(!app.world().resource::<GameOutcome>().ended);
+
+    app.world_mut().entity_mut(hall3).insert(Dead);
+    seconds(&mut app, 2.0);
+    assert!(player(&app, p2).defeated && player(&app, p3).defeated, "the team's last hall fell: barracks and workers do not matter");
+    assert!(!player(&app, P0).defeated && !player(&app, P1).defeated);
+    let outcome = app.world().resource::<GameOutcome>().clone();
+    assert!(outcome.ended);
+    assert_eq!(outcome.winning_team, Some(0));
+    assert!(notices(&app, P0).iter().any(|(k, t)| *k == NoticeKind::Alert && t.contains("Team 2 has lost its last town hall")));
+}
+
+/// The default rule does not care about halls: units keep a player in.
+#[test]
+fn under_the_default_rule_losing_the_hall_is_not_defeat() {
+    let mut app = new_match(&[("starborn", 0), ("sylvan", 1)]);
+    spawn_building_at(&mut app, P0, "town_center", Vec2::new(30.0, 30.0), true);
+    let hall = spawn_building_at(&mut app, P1, "town_center", Vec2::new(90.0, 90.0), true);
+    spawn_unit_at(&mut app, P1, "peasant", Vec2::new(100.0, 100.0));
+    seconds(&mut app, 12.0);
+    app.world_mut().entity_mut(hall).insert(Dead);
+    seconds(&mut app, 2.0);
+    assert!(!player(&app, P1).defeated);
+    assert!(!app.world().resource::<GameOutcome>().ended);
+}
+
 #[test]
 fn a_one_player_match_never_ends() {
     let mut app = new_match(&[("starborn", 0)]);

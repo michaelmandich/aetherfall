@@ -11,6 +11,7 @@
 
 mod clearance;
 pub mod grid;
+pub mod dmath;
 pub mod obb;
 pub mod path;
 

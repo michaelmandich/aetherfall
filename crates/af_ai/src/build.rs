@@ -51,7 +51,7 @@ pub fn find_build_spot(view: &AiView, q: &SpotQuery, extra: &[Obb], avoid: &[(Ve
         for k in 0..n {
             // 0, +1, -1, +2, -2, ... steps round from the preferred direction.
             let j = if k % 2 == 1 { (k + 1) / 2 } else { -(k / 2) };
-            let pos = q.anchor + Vec2::from_angle(j as f32 * dtheta).rotate(toward) * r;
+            let pos = q.anchor + af_geom::dmath::from_angle(j as f32 * dtheta).rotate(toward) * r;
             if avoid.iter().any(|(p, rad)| p.distance_squared(pos) < rad * rad) {
                 continue;
             }

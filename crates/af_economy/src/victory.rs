@@ -1,10 +1,15 @@
 //! Defeat, reveal and victory (`SimSet::Economy`, once per sim second).
 //!
-//! * **Defeat**: a player with no living unit and no complete building that
-//!   matters is out. Walls, gates and pure resource fields (farms) do not
-//!   matter, and neither do foundations (see
+//! * **Defeat** (`VictoryRule::LastStanding`, the default): a player with no
+//!   living unit and no complete building that matters is out. Walls, gates
+//!   and pure resource fields (farms) do not matter, and neither do
+//!   foundations (see
 //!   [`keeps_player_alive`](af_core::ext::economy::keeps_player_alive)), so
 //!   a beaten player cannot linger behind a few walls and fields.
+//! * **Town halls** (`VictoryRule::TownHalls`, ranked 2v2): a whole team is
+//!   out once none of its players owns a complete main hall (a
+//!   `TownCenter`-tagged building). A player whose own hall fell stays in
+//!   while a teammate holds one.
 //! * **Reveal**: a player still in the game who owns no complete
 //!   [production building](af_core::ext::economy::is_production_building)
 //!   has every remaining building revealed to all other teams
@@ -26,6 +31,7 @@ const CHECK_EVERY: u64 = SIM_HZ as u64;
 pub(crate) fn check_victory(
     data: Res<Data>,
     clock: Res<SimClock>,
+    setup: Option<Res<MatchSetup>>,
     mut players: ResMut<Players>,
     mut notices: ResMut<Notices>,
     mut outcome: ResMut<GameOutcome>,
@@ -34,10 +40,30 @@ pub(crate) fn check_victory(
     if outcome.ended || clock.elapsed < GRACE_SECONDS || !clock.tick.is_multiple_of(CHECK_EVERY) {
         return;
     }
-    for p in players.list.iter_mut().filter(|p| !p.defeated) {
-        if !holds_anything(&data, p) {
-            p.defeated = true;
-            notices.push(None, NoticeKind::Alert, format!("{} has been defeated", p.name), None, clock.elapsed);
+    match setup.as_deref().map_or(VictoryRule::LastStanding, |s| s.rule) {
+        VictoryRule::LastStanding => {
+            for p in players.list.iter_mut().filter(|p| !p.defeated) {
+                if !holds_anything(&data, p) {
+                    p.defeated = true;
+                    notices.push(None, NoticeKind::Alert, format!("{} has been defeated", p.name), None, clock.elapsed);
+                }
+            }
+        }
+        VictoryRule::TownHalls => {
+            let mut fallen: Vec<u8> = Vec::new();
+            for p in players.list.iter().filter(|p| !p.defeated) {
+                let team_holds_hall = players.list.iter().any(|q| q.team == p.team && !q.defeated && holds_hall(&data, q));
+                if !team_holds_hall && !fallen.contains(&p.team) {
+                    fallen.push(p.team);
+                }
+            }
+            for team in fallen {
+                notices.push(None, NoticeKind::Alert, format!("Team {} has lost its last town hall", team + 1), None, clock.elapsed);
+                for p in players.list.iter_mut().filter(|p| p.team == team && !p.defeated) {
+                    p.defeated = true;
+                    notices.push(None, NoticeKind::Alert, format!("{} has been defeated", p.name), None, clock.elapsed);
+                }
+            }
         }
     }
     update_reveals(&data, &players, &clock, &mut notices, &mut revealed);
@@ -76,6 +102,11 @@ fn update_reveals(data: &GameData, players: &Players, clock: &SimClock, notices:
 /// Uses the counts af_core takes in Prepare (living units, complete buildings).
 fn holds_anything(data: &GameData, p: &PlayerState) -> bool {
     p.units_owned.iter().any(|n| *n > 0) || owns_complete(data, p, |kind| keeps_player_alive(data, p.faction, kind))
+}
+
+/// Does `p` own a complete main hall (`TownCenter`-tagged building)?
+fn holds_hall(data: &GameData, p: &PlayerState) -> bool {
+    owns_complete(data, p, |kind| data.building(kind).has_tag(Tag::TownCenter))
 }
 
 fn holds_production(data: &GameData, p: &PlayerState) -> bool {

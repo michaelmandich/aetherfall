@@ -12,6 +12,12 @@ bevy = "0.19"
 bevy_math = "0.19"
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
+# Multiplayer: compact wire encoding, HTTPS for the account service.
+postcard = { version = "1.1", features = ["use-std"] }
+ureq = { version = "3.5", features = ["json"] }
+serde_json = "1"
+# Trigonometry that gives the same bits on every platform (lockstep).
+libm = "0.2"
 
 af_data = { path = "crates/af_data" }
 af_geom = { path = "crates/af_geom" }
@@ -26,6 +32,8 @@ af_ai = { path = "crates/af_ai" }
 af_input = { path = "crates/af_input" }
 af_ui = { path = "crates/af_ui" }
 af_render = { path = "crates/af_render" }
+af_sim = { path = "crates/af_sim" }
+af_net = { path = "crates/af_net" }
 
 # --- Dev iteration speed (Bevy's recommended profile) ---
 # Our own crates stay lightly optimized so rebuilds are fast, while
@@ -40,3 +48,13 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The multiplayer server on a Raspberry Pi: optimised, but no link-time
+# optimisation and several codegen units, so the build fits an 8 GB Pi and
+# finishes in reasonable time (`cargo build --profile server -p af_server`).
+[profile.server]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = false
+strip = true

@@ -46,6 +46,11 @@ pub enum CommandKind {
     SetStance(Stance),
     /// Kill the listed own entities.
     Delete,
+    /// Give up: every unit and building the player owns dies, and the
+    /// victory rule takes it from there (`entities` is ignored). What a
+    /// player who leaves a networked match sends, or the server sends for
+    /// one who dropped out.
+    Resign,
     /// Place a foundation; `entities` are the builders sent to it.
     PlaceBuilding { kind: BuildingTypeId, pos: Vec2, facing: f32 },
     /// Place a line of wall segments from `from` to `to`; builders = `entities`.

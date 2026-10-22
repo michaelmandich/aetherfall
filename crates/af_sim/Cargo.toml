@@ -1,0 +1,16 @@
+[package]
+name = "af_sim"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall simulation wiring: every sim plugin in one call, the headless match runner, skirmish setup, match reports and the SimSet profiler. No window, no renderer: what the game binary, the tests and the multiplayer server share."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }
+af_map = { workspace = true }
+af_movement = { workspace = true }
+af_behavior = { workspace = true }
+af_combat = { workspace = true }
+af_economy = { workspace = true }
+af_fog = { workspace = true }
+af_ai = { workspace = true }

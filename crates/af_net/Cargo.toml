@@ -1,0 +1,14 @@
+[package]
+name = "af_net"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall multiplayer: the wire protocol shared with the server, TCP framing, the lockstep client plugin (server-paced turns, state hashes, rooms and ranked lobbies) and the account service client."
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
+ureq = { workspace = true }
+serde_json = { workspace = true }
+ron = { workspace = true }

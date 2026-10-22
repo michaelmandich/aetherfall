@@ -205,7 +205,7 @@ pub(crate) fn steer(data: Res<Data>, nav: Res<Nav>, mut scratch: Local<SteerScra
             turned = s.room_to_turn(entity, pos.0, fp.half, facing.0, turned);
         }
         let off = wrap_angle(want - turned).abs();
-        let factor = if off >= FRAC_PI_2 { 0.0 } else { off.cos() };
+        let factor = if off >= FRAC_PI_2 { 0.0 } else { af_geom::dmath::cos(off) };
         let mut step = speed * factor * SIM_DT;
         if leg.last {
             step = step.min(dist);

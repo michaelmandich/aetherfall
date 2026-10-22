@@ -8,3 +8,5 @@ description = "Aetherfall shared ECS contract: components, resources, messages, 
 bevy = { workspace = true }
 af_data = { workspace = true }
 af_geom = { workspace = true }
+# The network session types in `ext/net.rs` travel over the wire.
+serde = { workspace = true }

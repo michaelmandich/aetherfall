@@ -96,7 +96,7 @@ impl FxSpawner<'_, '_> {
     fn random_dir(&mut self, up_bias: f32) -> Vec3 {
         let a = self.rand(0.0, TAU);
         let up = self.rand(0.1, 1.0) + up_bias;
-        Vec3::new(a.cos(), up, a.sin()).normalize_or(Vec3::Y)
+        Vec3::new(af_geom::dmath::cos(a), up, af_geom::dmath::sin(a)).normalize_or(Vec3::Y)
     }
 
     /// Small fast boxes flung from a hit point.
@@ -140,7 +140,7 @@ impl FxSpawner<'_, '_> {
         const LIFE: f32 = 0.35;
         for _ in 0..count {
             let a = self.rand(-half_angle, half_angle);
-            let d2 = Vec2::from_angle(a).rotate(dir);
+            let d2 = af_geom::dmath::from_angle(a).rotate(dir);
             let d = Vec3::new(d2.x, self.rand(-0.05, 0.15), d2.y).normalize_or(Vec3::Z);
             let mut fx = Fx::new(LIFE * self.rand(0.8, 1.0));
             fx.vel = d * reach / LIFE;
@@ -159,7 +159,7 @@ impl FxSpawner<'_, '_> {
         let size = Vec3::from_array(look.size);
         for i in 0..n {
             let a = i as f32 / n as f32 * TAU;
-            let out = Vec2::from_angle(a);
+            let out = af_geom::dmath::from_angle(a);
             let mut fx = Fx::new(LIFE);
             fx.vel = lift(out, 0.0) * speed;
             // Tangential length keeps pace with the circumference.

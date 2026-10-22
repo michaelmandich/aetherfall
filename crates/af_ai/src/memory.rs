@@ -113,7 +113,7 @@ impl EnemyIntel {
         if self.pop.len() < seen.len() {
             self.pop.resize(seen.len(), 0.0);
         }
-        let fade = 0.5f32.powf((now - self.at).max(0.0) / INTEL_HALF_LIFE);
+        let fade = af_geom::dmath::powf(0.5, (now - self.at).max(0.0) / INTEL_HALF_LIFE);
         for (have, s) in self.pop.iter_mut().zip(seen.iter().chain(std::iter::repeat(&0.0))) {
             *have = (*have * fade).max(*s);
         }

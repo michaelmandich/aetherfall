@@ -79,7 +79,7 @@ impl Think<'_, '_> {
         let q = SpotQuery {
             kind,
             anchor: self.plan.home,
-            toward: Vec2::from_angle(side).rotate(self.plan.front),
+            toward: af_geom::dmath::from_angle(side).rotate(self.plan.front),
             min_r: self.plan.hall_radius + self.radius(kind) + 3.0,
             max_r: self.plan.hall_radius + 30.0,
             gap: 2.0,

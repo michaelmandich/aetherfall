@@ -16,6 +16,7 @@
 //! * [`rng`] — deterministic RNG.
 //! * [`sim_ids`] — entity ids for sim spawns that client spawns cannot shift
 //!   (sim code orders and staggers by `Entity`).
+//! * [`hash`] — a digest of the match state, for lockstep desync checks.
 //!
 //! Apps should call `app.set_error_handler(bevy::ecs::error::warn)` before
 //! adding plugins, and sim code should prefer `try_insert`/`try_despawn` on
@@ -24,6 +25,7 @@
 pub mod commands;
 pub mod components;
 pub mod ext;
+pub mod hash;
 pub mod messages;
 pub mod placement;
 pub mod resources;
