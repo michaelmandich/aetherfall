@@ -123,7 +123,11 @@ impl Gen<'_> {
             for (c, class) in CLASSES.into_iter().enumerate() {
                 let seen = self.flood(&mut nav, class);
                 let missing: Vec<usize> = (0..targets.len())
-                    .filter(|k| !hopeless[*k][c] && !(targets[*k].foot_only && class.flag != MoveFlag::Foot) && !self.reached(&nav, &seen, &targets[*k]))
+                    .filter(|k| {
+                        let t = &targets[*k];
+                        let needed = !t.foot_only || class.flag == MoveFlag::Foot;
+                        needed && !hopeless[*k][c] && !self.reached(&nav, &seen, t)
+                    })
                     .collect();
                 missed_any |= !missing.is_empty();
                 for k in missing {

@@ -419,8 +419,8 @@ fn every_ground_class_reaches_every_start_spot_and_site() {
         }
     }
     // Crossings, gaps, passes and ramps are planned wide and open enough:
-    // carving is rare (about one map in eighty over the full sweep).
-    assert!(carved * 20 <= sample().len(), "{carved} of {} maps needed a route carved", sample().len());
+    // carving is rare (12 maps of 4200 over the full sweep).
+    assert!(carved * 50 <= sample().len(), "{carved} of {} maps needed a route carved", sample().len());
 }
 
 #[test]

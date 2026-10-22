@@ -299,10 +299,10 @@ centre is the spire itself at the Starspire); every site is in
   thicket, marsh and rock become grass, water a ford; ocean is never carved
   and no layout node (start resources, spots, sites, highland ore) is ever
   deleted, only scattered trees and dune nodes. Carved routes are listed in
-  `GeneratedMap::carved` (rare: about one map in six hundred over the full
-  sweep needs one, for a highland ramp or a contested spot hemmed in by
-  woods); what stays cut off is listed in `GeneratedMap::cut_off`, which
-  tests assert is empty.
+  `GeneratedMap::carved` (rare: 12 maps of the full sweep's 4200 need one,
+  for a highland ramp or a contested spot hemmed in by woods); what stays
+  cut off is listed in `GeneratedMap::cut_off`, which tests assert is
+  empty.
 * Every player gets the same start template (rotated), as today; each
   template node goes in at every start or at none, so a coast, the map edge
   or a crowded neighbour never leaves one start short. Rivers, lakes, coasts
@@ -473,7 +473,7 @@ found, and the unit stops on the near bank). So:
   water level x site kind, with 2-8 players and one or two rivers cycling
   through it: the reachability above for every ground class, checked by the
   test's own flood as well as the generator's report, and carving on at most
-  one map in twenty; the requested river count, each river's course away from
+  one map in fifty; the requested river count, each river's course away from
   its ends at least 8 m inside the land edges, fords no more than 36 m apart
   and no deep river stretch over 40 m, and no tree, thicket or marsh in a
   ford's ways out; starts and start discs on clear

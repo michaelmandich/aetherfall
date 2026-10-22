@@ -346,12 +346,15 @@ impl Gen<'_> {
         // Up to about 60 degrees of bend end to end, and a slow wave.
         let bend = rng.range(-1.1, 1.1) / steps.max(1) as f32;
         let (amp, wave, phase) = (rng.range(0.08, 0.26), rng.range(60.0, 120.0), rng.range(0.0, TAU));
+        // The planned heading of step `k` out along either arm.
         let heading = |i: f32| best.1 + bend * i + amp * ops::sin(i * SPINE_STEP / wave * TAU + phase);
-        let mut back = self.grow_arm(rock, start, &heading, -1.0, 0, steps / 2, thin);
-        let forward = self.grow_arm(rock, start, &heading, 1.0, 0, steps - back.len(), thin);
+        let ahead = |k: usize| heading(k as f32 + 0.5);
+        let behind = |k: usize| heading(-(k as f32 + 0.5)) + PI;
+        let mut back = self.grow_arm(rock, start, &behind, 0..steps / 2, thin);
+        let forward = self.grow_arm(rock, start, &ahead, 0..steps - back.len(), thin);
         if back.len() == steps / 2 && back.len() + forward.len() < steps {
             let from = back.last().copied().unwrap_or(start);
-            let more = self.grow_arm(rock, from, &heading, -1.0, back.len(), steps - back.len() - forward.len(), thin);
+            let more = self.grow_arm(rock, from, &behind, back.len()..steps - forward.len(), thin);
             back.extend(more);
         }
         let points: Vec<Vec2> = back.into_iter().rev().chain(std::iter::once(start)).chain(forward).collect();
@@ -373,15 +376,15 @@ impl Gen<'_> {
         Some(Spine { points, half })
     }
 
-    /// Up to `steps` spine points on from `from`, which lies `done` steps
-    /// out along the arm: forward (`sign` 1) or backward (-1) along
-    /// `heading` (the spine's planned heading by step), steering away from
-    /// whatever is in the way and easing back onto the plan.
-    fn grow_arm(&self, rock: &Rock, from: Vec2, heading: &impl Fn(f32) -> f32, sign: f32, done: usize, steps: usize, thin: f32) -> Vec<Vec2> {
+    /// The spine points of `steps` (steps out along one arm, the first
+    /// from `from`), each heading as `plan` says for its step, steering
+    /// away from whatever is in the way and easing back onto the plan;
+    /// fewer when the way closes.
+    fn grow_arm(&self, rock: &Rock, from: Vec2, plan: &impl Fn(usize) -> f32, steps: std::ops::Range<usize>, thin: f32) -> Vec<Vec2> {
         let mut out = Vec::new();
         let (mut p, mut dev) = (from, 0.0f32);
-        for k in done..done + steps {
-            let planned = heading(sign * (k as f32 + 0.5)) + if sign < 0.0 { PI } else { 0.0 };
+        for k in steps {
+            let planned = plan(k);
             let clear = |h: f32| [1.0, 3.0, 5.0].into_iter().all(|ahead| self.rock_fits(rock, p + polar(h) * ahead * SPINE_STEP, thin, false));
             let Some(d) = TURNS.into_iter().map(|t| dev * 0.9 + t).find(|d| d.abs() <= 1.2 && clear(planned + d)) else { break };
             dev = d;
