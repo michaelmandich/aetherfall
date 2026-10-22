@@ -10,8 +10,9 @@
 //!   inside the fog stay hidden;
 //! * buildings and nodes that died out of sight stay drawn from
 //!   [`FogGhosts`] until the team looks again;
-//! * a dark overlay from `FogOfWar` (black unexplored, half dark explored,
-//!   clear in sight).
+//! * the land itself darkened by the terrain, water and prop shaders from
+//!   a texture of `FogOfWar` ([`FogTexture`]: near black unexplored,
+//!   darkened and greyed explored, clear in sight).
 //!
 //! Spectators and fog-off matches see everything.
 
@@ -25,7 +26,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::assets::{BoxAssets, Painter, no_shadows};
+use crate::assets::Painter;
 use crate::entities::{BoxVisual, Ground, owner_color};
 use crate::fx::FxDrawn;
 use crate::model::rig::TeamTints;
@@ -33,12 +34,9 @@ use crate::motion::ground_transform;
 use crate::parts::{building_layout, node_layout};
 use crate::scene::RenderScene;
 use crate::statics::{StaticLibrary, rest_transform, spawn_instance};
-use crate::terrain::max_terrain_top;
 
-/// Seconds between overlay texture refreshes.
+/// Seconds between fog texture refreshes.
 const OVERLAY_PERIOD: f32 = 0.1;
-/// Height of the overlay above the tallest terrain top.
-const OVERLAY_CLEARANCE: f32 = 0.15;
 
 /// The team whose sight hides things, or `None` when everything is shown
 /// (spectating, or fog disabled).
@@ -276,8 +274,7 @@ pub(crate) fn update_fog_memories(
         let root = commands.spawn((ground_transform(g.pos, ground.at(g.pos), g.facing), Visibility::Inherited, FogMemory, RenderScene)).id();
         match model.and_then(|(_, m)| m.variant_at(g.pos).map(|(_, mesh)| (m, mesh))) {
             Some((m, mesh)) => {
-                let lift = ground.model_lift(&Obb::from_size(g.pos, size, g.facing));
-                spawn_instance(&mut commands, &mut painter, &mut tints, mesh, rest_transform(m, mesh, size, g.pos, lift), owner, ChildOf(root));
+                spawn_instance(&mut commands, &mut painter, &mut tints, mesh, rest_transform(m, mesh, size, g.pos), owner, ChildOf(root));
             }
             None => {
                 for p in &parts {
@@ -289,10 +286,12 @@ pub(crate) fn update_fog_memories(
     }
 }
 
-/// The overlay entity and its texture.
+/// The fog-of-war texture ([`FogTexture`]) and when it was last written.
+/// The terrain, water and prop shaders darken the world with it
+/// (`terrain::bind_fog`); there is no overlay plane, which could not lie on
+/// mountains.
 #[derive(Resource, Default)]
 pub struct FogOverlay {
-    entity: Option<Entity>,
     image: Option<Handle<Image>>,
     dims: (u32, u32),
     since: f32,
@@ -327,14 +326,12 @@ pub fn write_fog_pixels(pixels: &mut [u8], team: &TeamFog) {
     }
 }
 
-/// Keep the overlay's texture in step with `FogOfWar` about 10 times a second.
-#[allow(clippy::too_many_arguments)]
+/// Keep the fog-of-war texture in step with `FogOfWar` about 10 times a
+/// second while the local team's fog is shown (none for spectators and
+/// fog-off matches).
 pub(crate) fn update_fog_overlay(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    assets: Res<BoxAssets>,
-    data: Res<Data>,
     fog: Res<FogOfWar>,
     local: Res<LocalPlayer>,
     players: Res<Players>,
@@ -343,9 +340,8 @@ pub(crate) fn update_fog_overlay(
 ) {
     let team = viewing_team(&fog, &local, &players).filter(|_| fog.width > 0 && fog.height > 0);
     let Some(team) = team else {
-        // Nothing hidden: drop the overlay and its shared texture.
-        if let Some(e) = overlay.entity {
-            commands.entity(e).try_despawn();
+        // Nothing hidden: drop the shared texture.
+        if overlay.image.is_some() {
             commands.remove_resource::<FogTexture>();
             overlay.reset();
         }
@@ -354,33 +350,10 @@ pub(crate) fn update_fog_overlay(
     if fog.is_changed() {
         overlay.dirty = true;
     }
-    if overlay.dims != (fog.width, fog.height) || overlay.entity.is_none() {
-        if let Some(old) = overlay.entity {
-            commands.entity(old).try_despawn();
-        }
+    if overlay.dims != (fog.width, fog.height) || overlay.image.is_none() {
         let image = images.add(fog_image(fog.width, fog.height));
-        let material = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(image.clone()),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        });
-        let size = Vec2::new(fog.width as f32, fog.height as f32) * fog.cell;
-        let top = max_terrain_top(&data) + OVERLAY_CLEARANCE;
-        let entity = commands
-            .spawn((
-                Name::new("Fog overlay"),
-                Mesh3d(assets.cube.clone()),
-                MeshMaterial3d(material),
-                Transform::from_xyz(size.x * 0.5, top, size.y * 0.5).with_scale(Vec3::new(size.x, 0.02, size.y)),
-                Visibility::Inherited,
-                no_shadows(),
-                RenderScene,
-            ))
-            .id();
         commands.insert_resource(FogTexture(image.clone()));
-        *overlay = FogOverlay { entity: Some(entity), image: Some(image), dims: (fog.width, fog.height), since: OVERLAY_PERIOD, dirty: true };
+        *overlay = FogOverlay { image: Some(image), dims: (fog.width, fog.height), since: OVERLAY_PERIOD, dirty: true };
     }
     overlay.since += time.delta_secs();
     if !overlay.dirty || overlay.since < OVERLAY_PERIOD {

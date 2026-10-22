@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 
 use af_core::CorePlugin;
+use af_core::ext::input::RtsCamera;
 use af_core::prelude::*;
 use af_core::testing::{flat_world, with_commands};
 use af_render::motion::combat_slot_state;
@@ -83,7 +84,7 @@ fn main() -> AppExit {
     }
     // From where the game's RTS camera looks (af_input's view yaw and pitch).
     let cam = Vec3::new(args.focus.x, 0.0, args.focus.y) + Vec3::new(0.41, 0.81, 0.41).normalize() * args.distance;
-    app.world_mut().spawn((Camera3d::default(), Transform::from_translation(cam).looking_at(Vec3::new(args.focus.x, 0.0, args.focus.y), Vec3::Y)));
+    app.world_mut().spawn((RtsCamera, Camera3d::default(), Transform::from_translation(cam).looking_at(Vec3::new(args.focus.x, 0.0, args.focus.y), Vec3::Y)));
     app.run()
 }
 

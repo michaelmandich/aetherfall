@@ -117,14 +117,6 @@ pub fn health_color(fraction: f32) -> Rgb {
     if f >= 0.5 { mix(YELLOW, GREEN, (f - 0.5) * 2.0) } else { mix(RED, YELLOW, f * 2.0) }
 }
 
-/// Deterministic brightness factor in about 0.955..=1.045 for a seed, in five
-/// discrete steps (so terrain variation costs at most five materials per
-/// terrain type).
-pub fn variation(seed: u32) -> f32 {
-    const STEPS: [f32; 5] = [0.955, 0.978, 1.0, 1.022, 1.045];
-    STEPS[(hash32(seed) % STEPS.len() as u32) as usize]
-}
-
 /// Small integer hash (lowbias32); deterministic across runs and platforms.
 pub fn hash32(mut x: u32) -> u32 {
     x ^= x >> 16;
@@ -205,16 +197,5 @@ mod tests {
         }
         assert_eq!(health_color(-1.0), empty);
         assert_eq!(health_color(2.0), full);
-    }
-
-    #[test]
-    fn variation_is_deterministic_and_small() {
-        for s in 0..200 {
-            let v = variation(s);
-            assert_eq!(v, variation(s));
-            assert!((0.9..=1.1).contains(&v));
-        }
-        let distinct: std::collections::HashSet<u32> = (0..200).map(|s| (variation(s) * 1000.0) as u32).collect();
-        assert!(distinct.len() > 1);
     }
 }

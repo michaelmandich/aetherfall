@@ -2,7 +2,7 @@
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy, team_bit};
 use af_core::ext::input::{PlacementGhost, PlacementPreview};
-use af_core::ext::render::{MAX_GROUND_OFFSET, terrain_ground};
+use af_core::ext::render::{FogTexture, MAX_GROUND_OFFSET, MAX_TERRAIN_HEIGHT, TerrainSurface, WATER_LEVEL, ground_height, terrain_ground};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use af_render::BoxRenderPlugin;
@@ -12,7 +12,7 @@ use af_render::fog::{FogMemory, MemoryPool};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
 use af_render::scene::RenderScene;
-use af_render::terrain::{TerrainBox, terrain_top};
+use af_render::terrain::{TerrainChunk, TerrainState};
 use bevy::prelude::*;
 
 struct World {
@@ -27,11 +27,17 @@ struct World {
 const MAP: f32 = 64.0;
 
 fn setup() -> World {
+    setup_on(|_, _| {})
+}
+
+/// The world, on a map `paint` changes before the terrain is built.
+fn setup_on(paint: impl FnOnce(&GameData, &mut NavGrid)) -> World {
     let data = test_data();
     let mut app = sim_app(data.clone());
     app.add_plugins(AssetPlugin::default()).init_asset::<Mesh>().init_asset::<StandardMaterial>().init_asset::<Image>();
     app.add_plugins(BoxRenderPlugin);
     let ids = flat_world(&mut app, MAP, &[("ironhold", 0), ("dune", 1)]);
+    paint(&data, &mut app.world_mut().resource_mut::<Nav>());
     app.world_mut().insert_resource(LocalPlayer(Some(ids[0])));
     let peasant = data.unit_id("peasant").unwrap();
     let house = data.building_id("house").unwrap();
@@ -71,9 +77,17 @@ fn box_count(app: &mut App, root: Entity) -> usize {
 fn builds_scene_terrain_and_entity_visuals() {
     let mut w = setup();
     let app = &mut w.app;
-    let terrain = app.world_mut().query_filtered::<(), With<TerrainBox>>().iter(app.world()).count();
-    // 64 m of grass in 32-cell patches = 4, plus the slab and the frame.
-    assert_eq!(terrain, 4 + 1 + 4);
+    let chunks: Vec<TerrainChunk> = app.world_mut().query::<&TerrainChunk>().iter(app.world()).copied().collect();
+    // 64 m of grass is one chunk, ringed by eight chunks of off-map
+    // skirt; no water, nothing for props to grow on.
+    assert_eq!(chunks.iter().filter(|c| **c == TerrainChunk::Ground { on_map: true }).count(), 1);
+    assert_eq!(chunks.iter().filter(|c| **c == TerrainChunk::Ground { on_map: false }).count(), 8);
+    assert_eq!(chunks.len(), 9, "{chunks:?}");
+    // Headless: plain stand-in materials, and the drawn surface published.
+    assert!(app.world().resource::<TerrainState>().materials().is_some_and(|m| matches!(m.ground, af_render::terrain::Mat::Plain(_))));
+    let surface = app.world().resource::<TerrainSurface>();
+    assert_eq!((surface.width, surface.height), (65, 65));
+    assert_eq!(surface.top_at(Vec2::new(31.3, 7.9)), 0.0);
     let lights = app.world_mut().query_filtered::<(), (With<DirectionalLight>, With<RenderScene>)>().iter(app.world()).count();
     assert_eq!(lights, 1);
     for e in [w.own_unit, w.house, w.foundation, w.tree] {
@@ -297,8 +311,7 @@ fn ground_units_stand_on_highlands_where_the_sim_picks_them() {
     let data = test_data();
     let cliff = data.terrain_id("cliff").unwrap();
     let highland = terrain_ground(data.terrain_def(cliff));
-    assert_eq!(highland, terrain_top(data.terrain_def(cliff)), "the ground units stand on is the drawn top");
-    assert!(highland > 0.0 && highland <= MAX_GROUND_OFFSET);
+    assert!(highland > 0.0 && highland <= MAX_GROUND_OFFSET, "a low plateau");
     {
         let mut nav = app.world_mut().resource_mut::<Nav>();
         for y in 0..20 {
@@ -504,4 +517,72 @@ fn rally_flags_on_enemy_units_show_what_the_team_saw() {
     app.world_mut().resource_mut::<FogOfWar>().enabled = false;
     run_ticks(app, 1);
     assert_eq!(flags(app), vec![Vec3::new(50.0, 0.0, 30.0)]);
+}
+
+#[test]
+fn markers_lie_on_water_and_mountains_and_the_land_grows_props() {
+    // A mountain block, a river (deep middle, shallow sides), a thicket.
+    let mut w = setup_on(|data, nav| {
+        let t = |id: &str| data.terrain_id(id).unwrap().0;
+        for z in 0..64 {
+            for x in 0..64 {
+                let id = if (40..56).contains(&x) && (20..44).contains(&z) {
+                    Some(t("mountain"))
+                } else if (4..12).contains(&x) {
+                    Some(if (7..10).contains(&x) { t("deep_water") } else { t("shallow_water") })
+                } else if (20..26).contains(&x) && (50..58).contains(&z) {
+                    Some(t("thicket"))
+                } else {
+                    None
+                };
+                if let Some(id) = id {
+                    nav.set_terrain(IVec2::new(x, z), id);
+                }
+            }
+        }
+    });
+    let app = &mut w.app;
+    let chunks: Vec<(TerrainChunk, bool)> =
+        app.world_mut().query::<(&TerrainChunk, Has<bevy::light::NotShadowCaster>)>().iter(app.world()).map(|(c, flat)| (*c, flat)).collect();
+    assert!(chunks.contains(&(TerrainChunk::Ground { on_map: true }, false)), "the mountain's chunk casts shadows: {chunks:?}");
+    assert!(chunks.iter().any(|c| c.0 == TerrainChunk::Water), "a water surface");
+    assert!(chunks.iter().any(|c| c.0 == TerrainChunk::Props), "brambles, reeds, scree");
+    let surface = app.world().resource::<TerrainSurface>().clone();
+    let peak = surface.top_at(Vec2::new(48.0, 32.0));
+    assert!(peak > 4.0 && peak <= MAX_TERRAIN_HEIGHT, "{peak}");
+    assert_eq!(surface.top_at(Vec2::new(8.5, 30.0)), WATER_LEVEL, "the river's surface");
+    let data = test_data();
+    assert!(ground_height(&data, app.world().resource::<Nav>(), Vec2::new(8.5, 30.0)) < WATER_LEVEL, "units wade below it");
+
+    // Pings lie on the water surface and on the rock.
+    let pings: Vec<Entity> = [Vec2::new(8.5, 30.0), Vec2::new(48.0, 32.0), Vec2::new(30.0, 30.0)]
+        .into_iter()
+        .map(|pos| app.world_mut().spawn(ClickPing { pos, time_left: 1.0, color: [1.0; 3] }).id())
+        .collect();
+    let flyer = UnitTypeId(data.units.iter().position(|u| u.is_flying()).expect("content has a flyer") as u16);
+    let plane = with_commands(app, |c, d, p| spawn_unit(c, d, p.get(PlayerId(0)), flyer, Vec2::new(48.0, 32.0), 0.0));
+    run_ticks(app, 2);
+    let y = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation.y;
+    assert!((y(app, pings[0]) - (WATER_LEVEL + 0.08)).abs() < 1e-4);
+    assert!((y(app, pings[1]) - (peak + 0.08)).abs() < 1e-4);
+    assert!((y(app, pings[2]) - 0.08).abs() < 1e-4);
+    let shadow = visual(app, plane).shadow.expect("flyers cast a ground shadow");
+    let local = app.world().get::<Transform>(shadow).unwrap().translation.y;
+    assert!((y(app, plane) + local - (peak + 0.04)).abs() < 1e-4, "the flyer's shadow lies on the mountain");
+    assert!(y(app, plane) > MAX_TERRAIN_HEIGHT, "and the flyer above it");
+}
+
+#[test]
+fn the_fog_texture_is_kept_for_players_only() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(FogOfWar { enabled: true, cell: 2.0, width: 32, height: 32, teams: vec![TeamFog::default(); 2] });
+    run_ticks(app, 2);
+    assert!(app.world().get_resource::<FogTexture>().is_some(), "a player's view keeps the texture (the minimap reads it)");
+    // No overlay plane floats over the map any more.
+    let planes = app.world_mut().query_filtered::<&Name, With<RenderScene>>().iter(app.world()).filter(|n| n.as_str() == "Fog overlay").count();
+    assert_eq!(planes, 0);
+    app.world_mut().insert_resource(LocalPlayer(None));
+    run_ticks(app, 2);
+    assert!(app.world().get_resource::<FogTexture>().is_none(), "spectators see everything");
 }

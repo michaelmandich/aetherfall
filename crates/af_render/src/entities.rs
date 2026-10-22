@@ -12,7 +12,7 @@
 //! [`crate::model`]); buildings and nodes whose type has a static model
 //! likewise (see [`crate::statics`]).
 
-use af_core::ext::render::ground_height;
+use af_core::ext::render::{TerrainSurface, WATER_LEVEL, ground_height, is_water_terrain};
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -34,10 +34,6 @@ use crate::statics::{StaticLibrary, StaticVisual, rest_transform, spawn_instance
 const NO_OWNER: Rgb = [0.6, 0.6, 0.6];
 /// Seconds a shield stays bright after a hit.
 const SHIELD_FLASH: f32 = 0.35;
-/// How far into a neighbouring cell a footprint must reach before that
-/// cell's terrain counts as under it ([`Ground::model_lift`]): footprints
-/// flush with a cell edge only touch the next cell.
-const CELL_TOUCH: f32 = 0.02;
 
 /// What a visual was built for; a mismatch rebuilds it (unit and building
 /// upgrades, finished construction, a shield granted by a tech, a model
@@ -84,6 +80,7 @@ pub struct BoxVisual {
 pub struct Ground<'w> {
     data: Res<'w, Data>,
     nav: Option<Res<'w, Nav>>,
+    drawn: Option<Res<'w, TerrainSurface>>,
 }
 
 impl Ground<'_> {
@@ -92,28 +89,15 @@ impl Ground<'_> {
     }
 
     /// Where flat markers (selection outlines, flyer shadows, click pings,
-    /// rally flags) lie: on the drawn terrain, which can stand a little
-    /// proud of the ground units walk on (sand), so it never hides them.
+    /// rally flags) lie: on top of what is drawn there, which is the ground
+    /// units walk on, the water surface over water (above a wading unit's
+    /// feet), or a mountain's rock.
     pub fn surface(&self, p: Vec2) -> f32 {
         let Some(nav) = self.nav.as_ref() else { return 0.0 };
-        self.drawn(nav, nav.cell_of(p)).max(self.at(p))
-    }
-
-    /// How far above the ground under its centre ([`Ground::at`], where its
-    /// entity is drawn) a static model on `footprint` stands: on the
-    /// highest drawn terrain the footprint overlaps, as for markers
-    /// ([`Ground::surface`]), so sand never buries a town centre's paving
-    /// or a farm's field, even where the footprint only straddles it.
-    pub fn model_lift(&self, footprint: &Obb) -> f32 {
-        let Some(nav) = self.nav.as_ref() else { return 0.0 };
-        let base = self.at(footprint.center);
-        let overlap = (nav.cell_size() * 0.5 - CELL_TOUCH).max(0.0);
-        nav.cells_covered(footprint, overlap).into_iter().map(|c| self.drawn(nav, c)).fold(base, f32::max) - base
-    }
-
-    /// The drawn top of the flat terrain in cell `c` (see `terrain::flat_top`).
-    fn drawn(&self, nav: &NavGrid, c: IVec2) -> f32 {
-        self.data.terrain.get(nav.terrain_at(c) as usize).map_or(0.0, crate::terrain::flat_top)
+        let ground = self.at(p);
+        let water = self.data.terrain.get(nav.terrain_at(nav.cell_of(p)) as usize).is_some_and(is_water_terrain);
+        let top = self.drawn.as_ref().map_or(ground, |d| d.top_at(p));
+        ground.max(top).max(if water { WATER_LEVEL } else { f32::MIN })
     }
 
     /// Where a unit's base is drawn: flyers at their altitude, everything
@@ -299,10 +283,9 @@ pub(crate) fn attach_buildings(
                 if progress.is_some() {
                     b.parts(root, &layout.parts);
                 }
-                // On the drawn terrain; buried whole at first, the banner too.
-                let lift = ground.model_lift(&Obb::from_size(pos.0, def.size, facing.0));
-                let rest = rest_transform(m, mesh, def.size, pos.0, lift);
-                let height = lift + rest.scale.y * mesh.full_height();
+                // Buried whole at first, the banner too.
+                let rest = rest_transform(m, mesh, def.size, pos.0);
+                let height = rest.scale.y * mesh.full_height();
                 let at = sunk(rest, construction_sink(progress.unwrap_or(1.0), height));
                 let instance = spawn_instance(b.commands, b.painter, &mut tints, mesh, at, Some(color), ChildOf(root));
                 b.commands.entity(e).try_insert(StaticVisual { model: id, variant, instance, rest, height, shrinks: false });
@@ -365,10 +348,9 @@ pub(crate) fn attach_nodes(
         let root = b.root(e, old, Transform::from_scale(Vec3::splat(scale)));
         match model {
             Some((id, m, variant, mesh)) => {
-                let lift = ground.model_lift(&Obb::from_size(n.pos.0, def.size, n.facing.0));
-                let rest = rest_transform(m, mesh, def.size, n.pos.0, lift);
+                let rest = rest_transform(m, mesh, def.size, n.pos.0);
                 let instance = spawn_instance(b.commands, b.painter, &mut tints, mesh, rest, None, ChildOf(root));
-                let height = lift + rest.scale.y * mesh.full_height();
+                let height = rest.scale.y * mesh.full_height();
                 b.commands.entity(e).try_insert(StaticVisual { model: id, variant, instance, rest, height, shrinks });
             }
             None => {

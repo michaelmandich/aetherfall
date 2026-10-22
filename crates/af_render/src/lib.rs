@@ -1,8 +1,12 @@
-//! Aetherfall renderer: terrain, units, buildings, nodes, weapons,
+//! Aetherfall renderer: the land, units, buildings, nodes, weapons,
 //! projectiles/FX, health bars, selection, fog, ghosts; animated glTF
 //! models for the unit types that have one ([`model`]) and static glTF
 //! models for the building and node types that have one ([`statics`]),
 //! both listed in the visual registry ([`registry`]).
+//!
+//! The land ([`terrain`]) is a height field cut into chunk meshes, painted
+//! by its own shaders (ground, water, props), with the fog of war drawn
+//! into it; the light and the camera's look are in [`scene`].
 //!
 //! Everything else visible is a box: one shared unit cube mesh, scaled and
 //! placed per box, with materials from a cache keyed by quantised colour,
@@ -17,14 +21,14 @@
 //!
 //! | step | what |
 //! |---|---|
-//! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/pings; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
+//! | `Build` | the land once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/pings; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
 //! | `Animate` | tick interpolation (`Prev* -> *` by `Time<Fixed>::overstep_fraction`), weapon animation, shields, cargo, flyer shadows, foundations (boxes or models rising), node shrink, FX, pings; model clips and props, corpses; felled trees and stumps |
 //! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, placement ghosts |
-//! | `Fog` | hide what the local team cannot see; the fog overlay texture; remembered dead buildings and nodes |
+//! | `Fog` | hide what the local team cannot see; the fog-of-war texture and handing it to the land's shaders; remembered dead buildings and nodes |
 //!
 //! Sim entities get `Transform` + `Visibility` and a child "visual root"
 //! with their boxes (or model), so despawning a sim entity removes its
-//! visuals. Scene entities (light, terrain, overlay, ghosts, markers,
+//! visuals. Scene entities (light, terrain chunks, ghosts, markers,
 //! corpses, felled trees, stumps) carry [`scene::RenderScene`] and are
 //! despawned on leaving `Playing`.
 
@@ -59,16 +63,18 @@ pub enum RenderStep {
 }
 
 /// Draws the match (see the crate docs). A client plugin: it needs Bevy's
-/// render and asset plugins (`DefaultPlugins`) and the af_core
-/// `CorePlugin`; it never touches sim state beyond `ClickPing`. Models are
-/// used only when the app has the glTF loader (or a [`model::ModelLibrary`]
-/// or [`statics::StaticLibrary`] was inserted); otherwise everything is
-/// boxes.
+/// render and asset plugins (`DefaultPlugins`, added before it) and the
+/// af_core `CorePlugin`; it never touches sim state beyond `ClickPing`.
+/// Models are used only when the app has the glTF loader (or a
+/// [`model::ModelLibrary`] or [`statics::StaticLibrary`] was inserted);
+/// otherwise everything is boxes. Without the render stack (headless
+/// tests) the land is built all the same, with plain materials.
 pub struct BoxRenderPlugin;
 
 impl Plugin for BoxRenderPlugin {
     fn build(&self, app: &mut App) {
         let has_statics = resource_exists::<statics::StaticLibrary>;
+        terrain::add_terrain_materials(app);
         app.init_resource::<terrain::TerrainState>()
             .init_resource::<ghost::GhostPool>()
             .init_resource::<overlay::RallyPool>()
@@ -96,6 +102,7 @@ impl Plugin for BoxRenderPlugin {
             .add_observer(model::rig::mark_scene_ready)
             .add_observer(model::rig::keep_corpse)
             .add_observer(statics::fall::fell_tree)
+            .add_observer(scene::dress_camera)
             .add_systems(OnEnter(GameState::Playing), scene::setup_scene)
             .add_systems(OnExit(GameState::Playing), scene::teardown_scene)
             .add_systems(
@@ -137,8 +144,11 @@ impl Plugin for BoxRenderPlugin {
             )
             .add_systems(
                 Update,
-                (fog::fog_units, fog::fog_structures, fog::fog_fx, fog::update_fog_overlay, fog::update_fog_memories.run_if(resource_exists::<FogGhosts>))
-                    .run_if(resource_exists::<Players>)
+                (
+                    (fog::fog_units, fog::fog_structures, fog::fog_fx, fog::update_fog_overlay, fog::update_fog_memories.run_if(resource_exists::<FogGhosts>))
+                        .run_if(resource_exists::<Players>),
+                    terrain::bind_fog.after(fog::update_fog_overlay),
+                )
                     .in_set(RenderStep::Fog),
             );
     }
