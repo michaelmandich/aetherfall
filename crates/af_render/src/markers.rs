@@ -100,6 +100,15 @@ const DOT: f32 = 0.4;
 const DOT_LINES: f32 = 2.5;
 /// Opacity a queued hug lingers at once its pulses are over.
 const HUG_LINGER: f32 = 0.45;
+/// Each arrow's shadow: its silhouette flat on the ground under it, dark,
+/// at this opacity once the arrow lands (fainter while it is high up), so
+/// the arrows stand out from any ground (green arrows on grass) and read
+/// as coming down onto the spot.
+const SHADOW_ALPHA: f32 = 0.5;
+const SHADOW: Rgb = [0.02, 0.03, 0.02];
+/// Height of the shadows (under the ring) and their thickness.
+const SHADOW_Y: f32 = 0.015;
+const SHADOW_FLAT: f32 = 0.004;
 
 /// What a marker hugs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -146,6 +155,8 @@ pub struct Layer<const N: usize> {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MarkerPose {
     pub arrows: Option<Layer<4>>,
+    /// The arrows' shadows on the ground ([`arrow_shadow`]).
+    pub shadows: Option<Layer<4>>,
     /// A point's contracting ring, or the ring hugging a unit.
     pub ring: Option<Layer<1>>,
     pub flash: Option<Layer<1>>,
@@ -260,6 +271,16 @@ pub fn arrow_transform(dir: Vec3, reach: f32, u: f32, size: f32) -> Transform {
     Transform::from_translation(tip - dir * length * 0.5).with_rotation(rotation_for_dir(dir)).with_scale(Vec3::splat(length))
 }
 
+/// The shadow on the ground of the arrow at `arrow` ([`arrow_transform`])
+/// pointing along `dir`: its silhouette as the sun straight above would
+/// cast it, pointing in at the spot.
+pub fn arrow_shadow(arrow: &Transform, dir: Vec3) -> Transform {
+    let level = Vec3::new(dir.x, 0.0, dir.z).length();
+    Transform::from_xyz(arrow.translation.x, SHADOW_Y, arrow.translation.z)
+        .with_rotation(rotation_for_dir(inward(dir)))
+        .with_scale(Vec3::new(arrow.scale.x, SHADOW_FLAT, arrow.scale.z * level))
+}
+
 /// Side width of a hugging frame: like a selection outline's, never
 /// thinner than `line`.
 fn frame_width(half: Vec2, line: f32) -> f32 {
@@ -325,8 +346,11 @@ pub fn marker_pose(spec: &MarkerSpec, t: f32) -> MarkerPose {
             let v = (w / ARROW_FADE).min(1.0);
             (1.0, 1.0 - v, 1.0 - 0.4 * v)
         };
-        let arrow = |dir: Vec3| arrow_transform(dir, reach(spec, inward(dir)), u, size * shrink);
-        pose.arrows = Some(Layer { transforms: arrow_dirs(spec.view, spec.screen_right).map(arrow), alpha });
+        let dirs = arrow_dirs(spec.view, spec.screen_right);
+        let arrows = dirs.map(|dir| arrow_transform(dir, reach(spec, inward(dir)), u, size * shrink));
+        let shadows = [0, 1, 2, 3].map(|i| arrow_shadow(&arrows[i], dirs[i]));
+        pose.arrows = Some(Layer { transforms: arrows, alpha });
+        pose.shadows = Some(Layer { transforms: shadows, alpha: alpha * SHADOW_ALPHA * (0.35 + 0.65 * ease_in(u)) });
     }
     let hug = (t / tl.settle).min(1.0);
     match spec.hug {
@@ -368,12 +392,14 @@ pub struct Marker {
     /// The entity it hugs and follows; dropped once gone or out of sight.
     target: Option<Entity>,
     arrows: Option<[Entity; 4]>,
+    shadows: Option<[Entity; 4]>,
     ring: Option<Entity>,
     flash: Option<Entity>,
     dot: Option<Entity>,
     frame: Option<[Entity; 4]>,
-    /// The material each layer is drawn with: arrows, ring, flash, dot, frame.
-    keys: [Option<MatKey>; 5],
+    /// The material each layer is drawn with: arrows, ring, flash, dot,
+    /// frame, shadows.
+    keys: [Option<MatKey>; 6],
 }
 
 impl Marker {
@@ -471,20 +497,21 @@ fn spawn_layer<const N: usize>(commands: &mut Commands, painter: &mut Painter, r
 fn spawn_marker(commands: &mut Commands, painter: &mut Painter, root: Entity, spec: MarkerSpec, life: f32, color: Rgb, target: Option<Entity>) -> Marker {
     let pose = marker_pose(&spec, 0.0);
     let (arrow, ring, disc, cube) = (painter.arrow(), painter.ring(), painter.disc(), painter.cube());
-    let mut keys = [None; 5];
-    let [ka, kr, kf, kd, kfr] = &mut keys;
+    let mut keys = [None; 6];
+    let [ka, kr, kf, kd, kfr, ks] = &mut keys;
+    let shadows = pose.shadows.map(|l| spawn_layer(commands, painter, root, &arrow, SHADOW, &l, ks));
     let arrows = pose.arrows.map(|l| spawn_layer(commands, painter, root, &arrow, arrow_color(color), &l, ka));
     let ring = pose.ring.map(|l| spawn_layer(commands, painter, root, &ring, color, &l, kr)[0]);
     let flash = pose.flash.map(|l| spawn_layer(commands, painter, root, &disc, flash_color(color), &l, kf)[0]);
     let dot = pose.dot.map(|l| spawn_layer(commands, painter, root, &disc, color, &l, kd)[0]);
     let frame = pose.frame.map(|l| spawn_layer(commands, painter, root, &cube, color, &l, kfr));
-    Marker { spec, life, color, target, arrows, ring, flash, dot, frame, keys }
+    Marker { spec, life, color, target, arrows, shadows, ring, flash, dot, frame, keys }
 }
 
-/// The arrows: the marker's colour lighter, so they stand out from the
-/// ground (green arrows on grass).
+/// The arrows: the marker's colour a touch lighter (their shadows set
+/// them off the ground).
 fn arrow_color(color: Rgb) -> Rgb {
-    lighten(color, 0.3)
+    lighten(color, 0.12)
 }
 
 /// The flash where a point marker's arrows meet: its colour, near white.
@@ -573,7 +600,10 @@ pub(crate) fn animate_markers(
         }
         let pose = marker_pose(&m.spec, m.age(&ping) / m.life);
         let color = m.color;
-        let [ka, kr, kf, kd, kfr] = &mut m.keys;
+        let [ka, kr, kf, kd, kfr, ks] = &mut m.keys;
+        if let (Some(ids), Some(l)) = (m.shadows, pose.shadows) {
+            draw(&mut painter, &mut parts, Look::marker(SHADOW, l.alpha), ks, ids.into_iter().zip(l.transforms));
+        }
         if let (Some(ids), Some(l)) = (m.arrows, pose.arrows) {
             draw(&mut painter, &mut parts, Look::marker(arrow_color(color), l.alpha), ka, ids.into_iter().zip(l.transforms));
         }
@@ -923,6 +953,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn arrow_shadows_lie_under_their_arrows_and_darken_as_they_land() {
+        let spec = point(false);
+        let tl = Timeline::of(false);
+        let dirs = arrow_dirs(spec.view, spec.screen_right);
+        for t in [0.1, tl.land * 0.5, tl.land * 0.99] {
+            let pose = marker_pose(&spec, t);
+            let (arrows, shadows) = (pose.arrows.unwrap(), pose.shadows.unwrap());
+            for i in 0..4 {
+                let (a, s) = (arrows.transforms[i], shadows.transforms[i]);
+                assert_eq!(s.translation.xz(), a.translation.xz(), "straight under its arrow");
+                assert_eq!(s.translation.y, SHADOW_Y);
+                // Flat, pointing in at the spot along the arrow's way in.
+                let along = s.rotation * Vec3::Z;
+                assert!(along.y.abs() < 1e-4 && along.dot(inward(dirs[i])) > 0.999, "{along}");
+                assert!(s.scale.z <= a.scale.z + 1e-6, "never longer than the arrow");
+            }
+        }
+        let alpha = |t: f32| marker_pose(&spec, t).shadows.unwrap().alpha;
+        assert!(alpha(tl.land * 0.3) < alpha(tl.land * 0.95), "darker as the arrows come down");
+        assert!(alpha(tl.land * 0.95) <= SHADOW_ALPHA + 1e-6);
+        assert_eq!(alpha(tl.land + 0.25), 0.0, "gone with the arrows");
+        assert!(marker_pose(&MarkerSpec { arrows: false, ..spec }, 0.2).shadows.is_none(), "no arrows, no shadows");
     }
 
     #[test]

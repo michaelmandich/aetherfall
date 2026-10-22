@@ -40,11 +40,11 @@ const LABEL_SIZES: [f32; 4] = [FONT_SMALL, 12.0, 11.0, 10.0];
 const LABEL_LINES: usize = 3;
 /// Centres of the slot frame's hotkey and queued-count plaques (logical
 /// px from the slot's top-left corner: the art's 2x positions halved).
-const HOTKEY_PLAQUE: Vec2 = Vec2::new(11.0, 10.0);
-const COUNT_PLAQUE: Vec2 = Vec2::new(73.0, 10.0);
+const HOTKEY_PLAQUE: Vec2 = Vec2::new(10.0, 9.75);
+const COUNT_PLAQUE: Vec2 = Vec2::new(74.0, 9.75);
 /// Height of a line of `FONT_SMALL` text (Bevy's default line height).
 const SMALL_LINE: f32 = FONT_SMALL * 1.2;
-/// Hotkeys and counts in the plaques: light and warm on the dark gems.
+/// Hotkeys and counts in the plaques: light and warm in the dark wells.
 const PLAQUE_TEXT: Color = Color::srgb(0.95, 0.88, 0.7);
 
 /// What the card shows and which page is open.

@@ -355,14 +355,13 @@ fn slicer(border: BorderRect, sides: SliceScaleMode) -> NodeImageMode {
     NodeImageMode::Sliced(TextureSlicer { border, center_scale_mode: SliceScaleMode::Stretch, sides_scale_mode: sides, max_corner_scale: 0.5 })
 }
 
-/// A button texture (or the glow) sliced, everything but the corners
-/// stretched. The corners are cut 40 px deep, not at the frame's 32: the
-/// hotkey plaques (centred at 22, 20 and up to 30 px across) reach a few
-/// px past 32, and a stretched button would smear them along its edges. A
-/// command card slot is drawn at exactly half the texture's size, where
-/// the cut makes no difference.
+/// A button texture (or the glow) sliced at its 32 px corners, everything
+/// else stretched. The art keeps the plaques and corner ornaments inside
+/// those corners (`art/ui/README.md`), so a stretched button never smears
+/// them along its edges; a command card slot is drawn at exactly half the
+/// texture's size.
 fn button_mode() -> NodeImageMode {
-    slicer(BorderRect::all(40.0), SliceScaleMode::Stretch)
+    slicer(BorderRect::all(32.0), SliceScaleMode::Stretch)
 }
 
 /// A frame sliced with its sides tiled at the textures' 2x.
