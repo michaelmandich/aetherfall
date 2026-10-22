@@ -19,7 +19,7 @@ const BEACH: (f32, f32) = (2.0, 4.0);
 const SHALLOWS: (f32, f32) = (3.0, 8.0);
 /// Where the coastline may lie, as fractions of the ocean band beyond the
 /// land square: from a bay right at the square's edge out to a headland.
-const COAST_REACH: (f32, f32) = (0.04, 0.55);
+const COAST_REACH: (f32, f32) = (0.02, 0.62);
 /// The sea keeps this far (beyond its beach) from reserved ground.
 const COAST_CLEARANCE: f32 = 2.0;
 /// Smallest lake radius worth painting.
@@ -46,13 +46,16 @@ impl Gen<'_> {
         }
         let mut coasts = Vec::new();
         for edge in land.ocean.clone() {
-            let shape = Noise::new(rng, self.size, (land.band * 1.6).max(24.0));
+            let shape = Noise::new(rng, self.size, (land.band * 1.1).max(24.0));
             let row = rng.range(0.0, self.size);
             let along = |t: f32| match edge {
                 MapEdge::West | MapEdge::East => Vec2::new(row, t),
                 MapEdge::South | MapEdge::North => Vec2::new(t, row),
             };
-            let mut offset: Vec<f32> = (0..w).map(|t| land.band * (COAST_REACH.0 + (COAST_REACH.1 - COAST_REACH.0) * shape.at(along(t as f32 + 0.5)))).collect();
+            // Value noise bunches round the middle: stretch it so bays and
+            // headlands both show.
+            let wobble = |t: f32| ((shape.at(along(t)) - 0.5) * 2.2 + 0.5).clamp(0.0, 1.0);
+            let mut offset: Vec<f32> = (0..w).map(|t| land.band * (COAST_REACH.0 + (COAST_REACH.1 - COAST_REACH.0) * wobble(t as f32 + 0.5))).collect();
             // Reserved ground (start areas reaching past the square on small
             // maps) keeps its beach: push the coast out beyond it, smoothly.
             let mut need = vec![f32::NEG_INFINITY; w];
