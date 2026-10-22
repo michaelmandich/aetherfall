@@ -50,11 +50,12 @@ cannot go.
 
 Every order you give is marked where it lands, in the order's colour (green
 move, red attack, orange attack-move, gold gather, amber build, blue repair,
-cyan patrol, pale gold rally): four arrows swoop down onto the spot, or press
-in on a ring or frame around the unit, building or resource it targets, which
-follows it while you can see it. Shift-queued orders leave a small dot that
-lingers, so a chain of them reads. A building you place stamps down: its
-footprint flashes, a shockwave and dust roll out and chips fly.
+cyan patrol, pale gold rally), in fog too: four arrows swoop in onto the spot,
+or press in on a ring or frame around the unit, building or resource it
+targets, which follows it while you can see it. Shift-queued orders leave a
+dot (or a faint ring or frame on what they target) that lingers, so a chain of
+them reads. A building you place stamps down: its footprint flashes, a
+shockwave and dust roll out and chips fly.
 
 ### Controls
 

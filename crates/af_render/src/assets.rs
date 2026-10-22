@@ -34,6 +34,9 @@ pub struct BoxAssets {
     pub ring: Handle<Mesh>,
     /// A flat disc of radius 1 lying in the ground plane, facing up.
     pub disc: Handle<Mesh>,
+    /// A ball one metre across: unlit, it reads as a soft round blot from
+    /// any side (the placement slam's dust).
+    pub puff: Handle<Mesh>,
     materials: HashMap<MatKey, Handle<StandardMaterial>>,
 }
 
@@ -55,6 +58,7 @@ pub(crate) fn init_box_assets(mut commands: Commands, mut meshes: ResMut<Assets<
         arrow: meshes.add(arrow_mesh()),
         ring: meshes.add(Mesh::from(Annulus::new(RING_INNER, 1.0).mesh().resolution(40)).rotated_by(flat)),
         disc: meshes.add(Mesh::from(Circle::new(1.0).mesh().resolution(32)).rotated_by(flat)),
+        puff: meshes.add(Sphere::new(0.5).mesh().uv(16, 10)),
         materials: HashMap::default(),
     });
 }
@@ -86,6 +90,13 @@ pub const BOX_ROUGHNESS: f32 = 0.85;
 /// drawn with it too (`statics::library::flatten`).
 pub const BOX_REFLECTANCE: f32 = 0.25;
 
+/// How much nearer than they are [`Shade::Marker`] materials sort among
+/// blended things (metres): more than any two things in view can differ
+/// by (the camera sees 2 km at most), so they are drawn after the rest,
+/// the fog overlay included. It nudges their depth only by a hair (Bevy
+/// also applies it as a constant depth-buffer bias).
+pub const MARKER_SORT_BIAS: f32 = 2000.0;
+
 /// The `StandardMaterial` for a key.
 pub fn material_for(key: MatKey) -> StandardMaterial {
     let [r, g, b] = key.color();
@@ -98,11 +109,15 @@ pub fn material_for(key: MatKey) -> StandardMaterial {
     } else {
         color
     };
+    let marker = key.shade() == Shade::Marker;
     StandardMaterial {
         base_color: lit,
         emissive: if glow { Color::srgb(r, g, b).to_linear() * GLOW_STRENGTH } else { LinearRgba::BLACK },
-        unlit: key.shade() == Shade::Unlit,
-        alpha_mode: if key.is_opaque() { AlphaMode::Opaque } else { AlphaMode::Blend },
+        unlit: matches!(key.shade(), Shade::Unlit | Shade::Marker),
+        // Markers blend even when solid, so they sort with (after) the
+        // blended fog overlay rather than being drawn before it.
+        alpha_mode: if key.is_opaque() && !marker { AlphaMode::Opaque } else { AlphaMode::Blend },
+        depth_bias: if marker { MARKER_SORT_BIAS } else { 0.0 },
         perceptual_roughness: BOX_ROUGHNESS,
         reflectance: BOX_REFLECTANCE,
         ..default()
@@ -146,6 +161,10 @@ impl Painter<'_> {
 
     pub fn disc(&self) -> Handle<Mesh> {
         self.assets.disc.clone()
+    }
+
+    pub fn puff(&self) -> Handle<Mesh> {
+        self.assets.puff.clone()
     }
 
     /// The cached material for a look.
@@ -233,6 +252,13 @@ mod tests {
         let ghost = material_for(MatKey::new(Look::unlit([0.2, 1.0, 0.2], 0.4)));
         assert!(ghost.unlit && ghost.alpha_mode == AlphaMode::Blend && ghost.emissive == LinearRgba::BLACK);
         let lit = material_for(MatKey::new(Look::lit([0.5, 0.5, 0.5])));
-        assert!(!lit.unlit && lit.emissive == LinearRgba::BLACK);
+        assert!(!lit.unlit && lit.emissive == LinearRgba::BLACK && lit.depth_bias == 0.0);
+        // Click markers blend even when solid, and sort after everything
+        // else blended (the fog overlay).
+        for alpha in [0.4, 1.0] {
+            let marker = material_for(MatKey::new(Look::marker([0.3, 1.0, 0.35], alpha)));
+            assert!(marker.unlit && marker.alpha_mode == AlphaMode::Blend && marker.depth_bias >= 1000.0, "{alpha}");
+        }
+        assert_eq!(ghost.depth_bias, 0.0);
     }
 }

@@ -83,14 +83,20 @@ colour, life) and a `ClickMark` (`af_core::ext::input`: the `OrderMark`
 kind, the entity it targets, whether it was shift-queued), both made by
 `ClickMark::ping`. af_input writes them for right-click `Smart` (the kind
 guessed from what is pointed at and what the selection can do, as the sim
-resolves it per unit; buildings alone mark a rally), targeted commands,
+resolves it per unit; cargo carried to an own drop site that takes it
+marks `Gather`; buildings alone mark a rally), targeted commands,
 placements (`Place`: the snapped footprint and facing; a wall line marks
 its last segment) and af_ui for minimap commands. af_render
 (`markers`) dresses each ping with its parts as children, plays it in real
 time (also while paused), follows a targeted entity while the local team
 sees it, keeps at most 16 alive and despawns the ping when its life runs
 out; a ping without a `ClickMark` is drawn as a plain point marker in its
-colour. af_input and af_map also despawn leftover pings when a match ends.
+colour. Its arrows come in along the screen's diagonals, each at the same
+angle to the camera's line of sight (so none is seen tail-on from the
+pitched camera), and its materials (`Shade::Marker`) sort after
+everything else blended, the fog overlay included: a click into fog or
+unexplored black shows in full. af_input and af_map also despawn leftover
+pings when a match ends.
 A foundation of the local player (`Added<UnderConstruction>`, seen in an
 `Update` system, never inside the sim tick) gets a placement slam, a
 top-level `RenderScene` effect.

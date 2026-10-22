@@ -8,28 +8,34 @@
 //! real time (they keep playing while the game is paused), then despawns
 //! the ping:
 //!
-//! * on a point, four arrows high above the spot swoop down and in,
-//!   pointing down at it and speeding up; where they meet, a ground ring
-//!   contracts and a flash pops;
+//! * on a point, four arrows swoop in along the screen's diagonals, down
+//!   and in onto the spot, speeding up; where they meet, a ground ring
+//!   contracts and a flash pops. Each arrow makes the same angle with the
+//!   line of sight ([`arrow_dirs`]), so all four read as arrows from the
+//!   fixed, pitched camera: those from the top of the screen dive
+//!   steeply, those from the bottom skim in low (one diving away from the
+//!   camera at its own pitch would be seen tail-on);
 //! * on an entity (a unit attacked or followed, a node gathered, a
 //!   foundation built, ...), the arrows press in on a ring (units) or a
 //!   frame (buildings, nodes) hugging its footprint, which pulses twice
 //!   and follows it while the local team sees it;
 //! * a building placed flashes its footprint on the ground;
-//! * shift-queued orders are smaller and quicker and leave a dot that
-//!   lingers, so a chain of them reads.
+//! * shift-queued orders are smaller and quicker and leave a dot (or, on
+//!   an entity, a faint hug) that lingers, so a chain of them reads.
 //!
-//! Colours are the order's (`OrderMark::color`, also the ping's). Arrows,
-//! rings and flashes grow with the camera distance so they read at any
-//! zoom ([`marker_size`]); frames and hugging rings keep the footprint's
-//! size and a readable line width. At most [`MAX_MARKERS`] play at once: a
-//! burst of clicks drops the oldest.
+//! Colours are the order's (`OrderMark::color`, also the ping's). Markers
+//! are drawn over the fog overlay ([`Shade::Marker`]), so a click into
+//! unexplored black shows in full. Arrows, rings, flashes and dots grow
+//! with the camera distance so they read at any zoom ([`marker_size`]);
+//! frames and hugging rings keep the footprint's size and a readable line
+//! width. At most [`MAX_MARKERS`] play at once: a burst of clicks drops
+//! the oldest.
 //!
 //! **Placement slam.** When a foundation of the local player appears, a
 //! stamp ([`SLAM_SECS`]): its footprint flashes, a shockwave the shape of
-//! the footprint runs outward, dust puffs roll out and rise, and chips of
-//! wood and stone are thrown up and fall back spinning. Each slam is a
-//! top-level `RenderScene` entity; at most [`MAX_SLAMS`] play at once.
+//! the footprint runs outward, soft puffs of dust roll out and rise, and
+//! chips of wood and stone are thrown up and fall back spinning. Each slam
+//! is a top-level `RenderScene` entity; at most [`MAX_SLAMS`] play at once.
 //!
 //! Every fading layer switches material only when its quantised
 //! [`MatKey`] changes, so nothing is created per frame. The curves are
@@ -46,6 +52,7 @@ use crate::assets::{BoxPart, Painter, PartQuery, RING_INNER};
 use crate::entities::Ground;
 use crate::look::{Look, MatKey, Shade, hash32, lighten};
 use crate::motion::rotation_for_dir;
+use crate::overlay::{Cameras, rts_camera};
 use crate::parts::{frame_boxes, min_line_width};
 use crate::scene::RenderScene;
 
@@ -60,8 +67,11 @@ const QUEUED_SIZE: f32 = 0.7;
 const LIFT: f32 = 0.05;
 /// Arrow length (metres at size 1).
 const ARROW_LENGTH: f32 = 0.9;
-/// How steeply the arrows dive (radians below the horizontal, about 57 degrees).
-const DIVE_ANGLE: f32 = 1.0;
+/// The angle every arrow makes with the line of sight (radians, about 50
+/// degrees): all four show the same length, and none is seen tail-on.
+const VIEW_ANGLE: f32 = 0.87;
+/// Least an arrow dives below the horizontal (radians, about 7 degrees).
+const MIN_DIVE: f32 = 0.12;
 /// How far the arrows travel along their own axis (metres at size 1).
 const DIVE: f32 = 2.4;
 /// Height of a landed arrow's tip above the ground (metres at size 1).
@@ -84,10 +94,12 @@ const FLASH_FROM: f32 = 0.15;
 const FLASH_TO: f32 = 0.8;
 /// Share of the landing (land..settle) the flash lasts.
 const FLASH_SHARE: f32 = 0.35;
-/// Radius of a queued marker's lingering dot (size 1).
-const DOT: f32 = 0.16;
-/// Where the four arrows come from, in the marker's frame.
-const SIDES: [Vec3; 4] = [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z];
+/// Radius of a queued point's lingering dot (size 1).
+const DOT: f32 = 0.4;
+/// The dot's radius is never below this many of the thinnest line.
+const DOT_LINES: f32 = 2.5;
+/// Opacity a queued hug lingers at once its pulses are over.
+const HUG_LINGER: f32 = 0.45;
 
 /// What a marker hugs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +125,11 @@ pub struct MarkerSpec {
     pub size: f32,
     /// Thinnest line drawn (`parts::min_line_width`).
     pub line: f32,
+    /// The camera's line of sight to the marker (a unit vector, in the
+    /// marker's frame): the arrows come in across it ([`arrow_dirs`]).
+    pub view: Vec3,
+    /// The screen's right (the camera's +X, in the marker's frame).
+    pub screen_right: Vec3,
 }
 
 /// Parts of one kind at one moment: their transforms in the marker's frame
@@ -186,15 +203,57 @@ pub fn pulses(f: f32) -> f32 {
     s * s
 }
 
-/// The arrow coming from `side` (a unit vector in the ground plane) at `u`
-/// of its dive (0: start, 1: landed). It points down and in,
-/// [`DIVE_ANGLE`] below the horizontal, and lands with its tip `reach`
-/// metres out from the centre, just above the ground; it starts [`DIVE`]
-/// back along its own axis (up and out) and speeds up as it comes.
-/// `size` scales the arrow and its dive.
-pub fn arrow_transform(side: Vec3, reach: f32, u: f32, size: f32) -> Transform {
-    let dir = -side * DIVE_ANGLE.cos() - Vec3::Y * DIVE_ANGLE.sin();
-    let landed = side * reach + Vec3::Y * TIP_Y * size;
+/// Which way the four arrows of a marker seen along `view` (the line of
+/// sight, a unit vector pointing at the ground) point, with
+/// `screen_right` the camera's right: down and in, each coming in along a
+/// diagonal of the screen (from the top left, top right, bottom left,
+/// bottom right) and making [`VIEW_ANGLE`] with the line of sight. So all
+/// four show the same length and none is seen tail-on, whatever the
+/// camera's pitch: the arrows from the top of the screen dive steeply,
+/// those from the bottom skim in low. Where one from the bottom would have
+/// to climb to keep that angle (a shallow view), it comes in flatter
+/// across the screen instead, still diving at least [`MIN_DIVE`].
+pub fn arrow_dirs(view: Vec3, screen_right: Vec3) -> [Vec3; 4] {
+    let ahead = view.normalize_or(Vec3::NEG_Y);
+    // The screen's axes at the marker, square to the line of sight: off
+    // the middle of the screen, perspective turns them away from the
+    // horizontal there.
+    let level = ahead.cross(Vec3::Y).normalize_or(Vec3::X);
+    let right = (screen_right - ahead * screen_right.dot(ahead)).normalize_or(level);
+    let up = right.cross(ahead);
+    let (sin_v, cos_v) = VIEW_ANGLE.sin_cos();
+    // Most the part across the line of sight may rise for the arrow to
+    // still dive MIN_DIVE.
+    let most_rise = (-MIN_DIVE.sin() - cos_v * ahead.y) / sin_v;
+    // (x, y): where on the screen the arrow comes from (right, up).
+    [(-1.0, 1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)].map(|(x, y): (f32, f32)| {
+        let (sideways, upward) = (right * -x, up * -y);
+        // How steeply it crosses the screen: 45 degrees, unless rising up
+        // the screen that steeply would make it climb in the world. Its
+        // rise at `slope` is m cos(slope - peak), falling away from the peak.
+        let rise = |slope: f32| sideways.y * slope.cos() + upward.y * slope.sin();
+        let mut slope = FRAC_PI_4;
+        if rise(slope) > most_rise {
+            let (m, peak) = (sideways.y.hypot(upward.y), upward.y.atan2(sideways.y));
+            slope = (peak - (most_rise / m).clamp(-1.0, 1.0).acos()).clamp(0.0, FRAC_PI_4);
+        }
+        let across = sideways * slope.cos() + upward * slope.sin();
+        (ahead * cos_v + across * sin_v).normalize()
+    })
+}
+
+/// The ground-plane direction an arrow pointing along `dir` comes in along.
+fn inward(dir: Vec3) -> Vec3 {
+    Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::NEG_X)
+}
+
+/// The arrow pointing along `dir` (down and in, [`arrow_dirs`]) at `u` of
+/// its dive (0: start, 1: landed). It lands with its tip `reach` metres
+/// out from the centre, on the side it comes from, just above the ground;
+/// it starts [`DIVE`] back along its own axis (up and out) and speeds up as
+/// it comes. `size` scales the arrow and its dive.
+pub fn arrow_transform(dir: Vec3, reach: f32, u: f32, size: f32) -> Transform {
+    let landed = -inward(dir) * reach + Vec3::Y * TIP_Y * size;
     let tip = landed - dir * DIVE * size * (1.0 - ease_in(u.clamp(0.0, 1.0)));
     let length = ARROW_LENGTH * size;
     // The arrow mesh is one metre long with its tip at +0.5 along +Z.
@@ -213,14 +272,18 @@ fn hug_radius(radius: f32, line: f32) -> f32 {
     radius.max(line / (1.0 - RING_INNER))
 }
 
-/// How far out from the centre the arrow from `side` lands.
-fn reach(spec: &MarkerSpec, side: Vec3) -> f32 {
+/// How far out from the centre the arrow coming in along `inward` (a unit
+/// vector in the ground plane) lands: near a point, on a hugging ring, or
+/// on a hugging frame's outer edge.
+fn reach(spec: &MarkerSpec, inward: Vec3) -> f32 {
     match spec.hug {
         Hug::Point => POINT_REACH * spec.size,
         Hug::Ring(r) => hug_radius(r, spec.line),
         Hug::Frame(half) => {
-            let along = if side.x != 0.0 { half.x } else { half.y };
-            along + HUG_GAP + frame_width(half, spec.line)
+            let edge = half + Vec2::splat(HUG_GAP + frame_width(half, spec.line));
+            // Where the line out from the centre leaves the frame.
+            let out = inward.xz().abs();
+            (edge.x / out.x).min(edge.y / out.y)
         }
     }
 }
@@ -230,10 +293,19 @@ fn flat(radius: f32, y: f32) -> Transform {
     Transform::from_xyz(0.0, y, 0.0).with_scale(Vec3::splat(radius.max(0.001)))
 }
 
+/// What is left of a queued marker's lingering part (its dot, or its faint
+/// hug) at `t` = 0..1 of its life.
+fn linger(t: f32) -> f32 {
+    1.0 - smoothstep(0.75, 1.0, t)
+}
+
 /// A hug's opacity at `f` = 0..1 of its pulses: brightest at each pulse,
-/// fading out over the last part.
-fn hug_alpha(f: f32) -> f32 {
-    (0.5 + 0.5 * pulses(f)) * (1.0 - smoothstep(0.7, 1.0, f))
+/// fading out over the last part. A queued hug then stays on faintly
+/// until the end of its life (`t`), as a queued point's dot does, so every
+/// link of a chain of queued orders is still marked.
+fn hug_alpha(f: f32, t: f32, queued: bool) -> f32 {
+    let pulse = (0.5 + 0.5 * pulses(f)) * (1.0 - smoothstep(0.7, 1.0, f));
+    if queued { pulse.max(HUG_LINGER * linger(t)) } else { pulse }
 }
 
 /// The marker described by `spec` at `t` = 0..1 of its life.
@@ -253,7 +325,8 @@ pub fn marker_pose(spec: &MarkerSpec, t: f32) -> MarkerPose {
             let v = (w / ARROW_FADE).min(1.0);
             (1.0, 1.0 - v, 1.0 - 0.4 * v)
         };
-        pose.arrows = Some(Layer { transforms: SIDES.map(|side| arrow_transform(side, reach(spec, side), u, size * shrink)), alpha });
+        let arrow = |dir: Vec3| arrow_transform(dir, reach(spec, inward(dir)), u, size * shrink);
+        pose.arrows = Some(Layer { transforms: arrow_dirs(spec.view, spec.screen_right).map(arrow), alpha });
     }
     let hug = (t / tl.settle).min(1.0);
     match spec.hug {
@@ -267,17 +340,19 @@ pub fn marker_pose(spec: &MarkerSpec, t: f32) -> MarkerPose {
             pose.flash = Some(Layer { transforms: [flat(r * size, 0.04)], alpha });
             if spec.queued {
                 let grown = ((t - tl.land) / 0.05).clamp(0.0, 1.0);
-                let alpha = if t >= tl.land { 0.9 * (1.0 - smoothstep(0.75, 1.0, t)) } else { 0.0 };
-                pose.dot = Some(Layer { transforms: [flat(DOT * size * grown, 0.06)], alpha });
+                let alpha = if t >= tl.land { 0.9 * linger(t) } else { 0.0 };
+                let radius = (DOT * size).max(DOT_LINES * spec.line);
+                pose.dot = Some(Layer { transforms: [flat(radius * grown, 0.06)], alpha });
             }
         }
         Hug::Ring(r) => {
             let r = hug_radius(r, spec.line) * (1.0 + RING_SWELL * pulses(hug));
-            pose.ring = Some(Layer { transforms: [flat(r, 0.02)], alpha: hug_alpha(hug) });
+            pose.ring = Some(Layer { transforms: [flat(r, 0.02)], alpha: hug_alpha(hug, t, spec.queued) });
         }
         Hug::Frame(half) => {
             let boxes = frame_boxes(half, HUG_GAP + FRAME_SWELL * pulses(hug), frame_width(half, spec.line), 0.03);
-            pose.frame = Some(Layer { transforms: boxes.map(|(c, s)| Transform::from_translation(c).with_scale(s)), alpha: hug_alpha(hug) });
+            let transforms = boxes.map(|(c, s)| Transform::from_translation(c).with_scale(s));
+            pose.frame = Some(Layer { transforms, alpha: hug_alpha(hug, t, spec.queued) });
         }
     }
     pose
@@ -308,14 +383,29 @@ impl Marker {
     }
 }
 
-/// What a marker for `mark` hugs and which way it is turned, given what
-/// its target is (`footprint`, `facing`, whether it is a unit).
-fn marker_hug(data: &GameData, mark: &ClickMark, target: Option<(&Footprint, Option<&Facing>, bool)>, view_yaw: f32) -> (Hug, bool, f32) {
+/// What a marker for `mark` hugs, whether arrows dive in, and which way it
+/// is turned, given what its target is (`footprint`, `facing`, whether it
+/// is a unit). Only frames are turned (with the footprint): points and
+/// rings are round, and the arrows come in across the line of sight.
+fn marker_hug(data: &GameData, mark: &ClickMark, target: Option<(&Footprint, Option<&Facing>, bool)>) -> (Hug, bool, f32) {
     match (mark.kind, target) {
         (OrderMark::Place { kind, facing }, _) => (Hug::Frame(Footprint::from_size(data.building(kind).size).half), false, facing),
-        (_, Some((fp, _, true))) => (Hug::Ring(fp.half.length() + HUG_GAP), true, view_yaw),
+        (_, Some((fp, _, true))) => (Hug::Ring(fp.half.length() + HUG_GAP), true, 0.0),
         (_, Some((fp, facing, false))) => (Hug::Frame(fp.half), true, facing.map_or(0.0, |f| f.0)),
-        (_, None) => (Hug::Point, true, view_yaw),
+        (_, None) => (Hug::Point, true, 0.0),
+    }
+}
+
+/// How the camera sees `at`: the line of sight to it (a unit vector) and
+/// the screen's right. From af_input's RTS camera (else any 3D camera),
+/// or from the rig when there is none (headless), looking along it as
+/// af_input's `rig_transform` places the camera.
+fn sight(cameras: &Cameras, rig: &CameraRig, at: Vec3) -> (Vec3, Vec3) {
+    let (sin, cos) = rig.pitch.sin_cos();
+    let along_rig = Vec3::new(rig.yaw.sin() * cos, -sin, rig.yaw.cos() * cos);
+    match rts_camera(cameras) {
+        Some(camera) => ((at - camera.translation()).normalize_or(along_rig), camera.right().into()),
+        None => (along_rig, along_rig.cross(Vec3::Y).normalize_or(Vec3::X)),
     }
 }
 
@@ -372,7 +462,7 @@ fn first_key(look: Look) -> Option<MatKey> {
 
 /// Spawn one layer of `mesh` parts under `root` at their first transforms.
 fn spawn_layer<const N: usize>(commands: &mut Commands, painter: &mut Painter, root: Entity, mesh: &Handle<Mesh>, color: Rgb, layer: &Layer<N>, key: &mut Option<MatKey>) -> [Entity; N] {
-    let look = Look::unlit(color, layer.alpha);
+    let look = Look::marker(color, layer.alpha);
     *key = first_key(look);
     layer.transforms.map(|tf| spawn_part(commands, painter, root, mesh, look, tf))
 }
@@ -391,10 +481,10 @@ fn spawn_marker(commands: &mut Commands, painter: &mut Painter, root: Entity, sp
     Marker { spec, life, color, target, arrows, ring, flash, dot, frame, keys }
 }
 
-/// The arrows: the marker's colour a little lighter, so they stand out
-/// from the ground (green arrows on grass).
+/// The arrows: the marker's colour lighter, so they stand out from the
+/// ground (green arrows on grass).
 fn arrow_color(color: Rgb) -> Rgb {
-    lighten(color, 0.12)
+    lighten(color, 0.3)
 }
 
 /// The flash where a point marker's arrows meet: its colour, near white.
@@ -411,6 +501,7 @@ pub(crate) fn attach_markers(
     ground: Ground,
     data: Res<Data>,
     rig: Res<CameraRig>,
+    cameras: Cameras,
     fresh: Query<(Entity, &ClickPing, Option<&ClickMark>), Without<Marker>>,
     playing: Query<(Entity, &ClickPing, &Marker)>,
     targets: Query<(&Position, &Footprint, Option<&Facing>, Has<Unit>)>,
@@ -428,8 +519,6 @@ pub(crate) fn attach_markers(
     }
     let size = marker_size(rig.distance);
     let line = min_line_width(rig.distance);
-    // Arrows come in diagonally across the view, so none hides behind another.
-    let view_yaw = rig.yaw + FRAC_PI_4;
     for (n, (e, ping, mark)) in fresh.iter().enumerate() {
         if n >= MAX_MARKERS {
             commands.entity(e).try_despawn();
@@ -437,17 +526,17 @@ pub(crate) fn attach_markers(
         }
         let mark = mark.copied().unwrap_or(ClickMark::new(OrderMark::Move, None, false));
         let target = mark.target.and_then(|t| targets.get(t).ok().map(|found| (t, found)));
-        let (hug, arrows, yaw) = marker_hug(&data, &mark, target.map(|(_, (_, fp, facing, unit))| (fp, facing, unit)), view_yaw);
+        let (hug, arrows, yaw) = marker_hug(&data, &mark, target.map(|(_, (_, fp, facing, unit))| (fp, facing, unit)));
         // Only an entity hug follows its target (a placement has none).
         let follow = target.filter(|_| arrows && hug != Hug::Point);
         let centre = follow.map_or(ping.pos, |(_, (pos, ..))| pos.0);
-        let spec = MarkerSpec { hug, arrows, queued: mark.queued, size: size * if mark.queued { QUEUED_SIZE } else { 1.0 }, line };
+        let at = Vec3::new(centre.x, ground.surface(centre) + LIFT, centre.y);
+        let turn = Quat::from_rotation_y(yaw);
+        let (view, screen_right) = sight(&cameras, &rig, at);
+        let size = size * if mark.queued { QUEUED_SIZE } else { 1.0 };
+        let spec = MarkerSpec { hug, arrows, queued: mark.queued, size, line, view: turn.inverse() * view, screen_right: turn.inverse() * screen_right };
         let marker = spawn_marker(&mut commands, &mut painter, e, spec, ping.time_left.max(0.01), ping.color, follow.map(|(t, _)| t));
-        commands.entity(e).try_insert((
-            Transform::from_xyz(centre.x, ground.surface(centre) + LIFT, centre.y).with_rotation(Quat::from_rotation_y(yaw)),
-            Visibility::Inherited,
-            marker,
-        ));
+        commands.entity(e).try_insert((Transform::from_translation(at).with_rotation(turn), Visibility::Inherited, marker));
     }
 }
 
@@ -486,19 +575,19 @@ pub(crate) fn animate_markers(
         let color = m.color;
         let [ka, kr, kf, kd, kfr] = &mut m.keys;
         if let (Some(ids), Some(l)) = (m.arrows, pose.arrows) {
-            draw(&mut painter, &mut parts, Look::unlit(arrow_color(color), l.alpha), ka, ids.into_iter().zip(l.transforms));
+            draw(&mut painter, &mut parts, Look::marker(arrow_color(color), l.alpha), ka, ids.into_iter().zip(l.transforms));
         }
         if let (Some(id), Some(l)) = (m.ring, pose.ring) {
-            draw(&mut painter, &mut parts, Look::unlit(color, l.alpha), kr, [(id, l.transforms[0])]);
+            draw(&mut painter, &mut parts, Look::marker(color, l.alpha), kr, [(id, l.transforms[0])]);
         }
         if let (Some(id), Some(l)) = (m.flash, pose.flash) {
-            draw(&mut painter, &mut parts, Look::unlit(flash_color(color), l.alpha), kf, [(id, l.transforms[0])]);
+            draw(&mut painter, &mut parts, Look::marker(flash_color(color), l.alpha), kf, [(id, l.transforms[0])]);
         }
         if let (Some(id), Some(l)) = (m.dot, pose.dot) {
-            draw(&mut painter, &mut parts, Look::unlit(color, l.alpha), kd, [(id, l.transforms[0])]);
+            draw(&mut painter, &mut parts, Look::marker(color, l.alpha), kd, [(id, l.transforms[0])]);
         }
         if let (Some(ids), Some(l)) = (m.frame, pose.frame) {
-            draw(&mut painter, &mut parts, Look::unlit(color, l.alpha), kfr, ids.into_iter().zip(l.transforms));
+            draw(&mut painter, &mut parts, Look::marker(color, l.alpha), kfr, ids.into_iter().zip(l.transforms));
         }
     }
 }
@@ -518,10 +607,15 @@ const WAVE_SECS: f32 = 0.55;
 /// land within the slam.
 const SLAM_GRAVITY: f32 = 20.0;
 /// One dust puff per this many metres of the footprint's edge.
-const PUFF_SPACING: f32 = 1.4;
+const PUFF_SPACING: f32 = 2.0;
 /// One chip per this many metres of the footprint's edge.
 const CHIP_SPACING: f32 = 2.5;
-const DUST: Rgb = [0.47, 0.38, 0.27];
+/// Pale warm dust, unlit and see-through: soft against grass and sand.
+const DUST: Rgb = [0.84, 0.77, 0.64];
+/// The dust's opacity at its thickest.
+const DUST_ALPHA: f32 = 0.5;
+/// A dust puff's height against its width (a flattened ball).
+const PUFF_SQUASH: f32 = 0.65;
 const SHOCKWAVE: Rgb = [0.96, 0.89, 0.72];
 const WOOD: Rgb = [0.55, 0.37, 0.2];
 const STONE: Rgb = [0.63, 0.61, 0.57];
@@ -545,9 +639,9 @@ impl SlamSpec {
         4.0 * (self.half.x + self.half.y)
     }
 
-    /// Number of dust puffs: by the footprint's edge, 8 to 20.
+    /// Number of dust puffs: by the footprint's edge, 6 to 14.
     pub fn puffs(&self) -> usize {
-        ((self.perimeter() / PUFF_SPACING).round() as usize).clamp(8, 20)
+        ((self.perimeter() / PUFF_SPACING).round() as usize).clamp(6, 14)
     }
 
     /// Number of chips: by the footprint's edge, 4 to 10.
@@ -588,24 +682,24 @@ pub fn slam_wave(spec: &SlamSpec, age: f32) -> ([Transform; 4], f32) {
     (boxes.map(|(c, s)| Transform::from_translation(c).with_scale(s)), 0.85 * (1.0 - w).powf(1.3))
 }
 
-/// Dust puff `i` of `n` `age` seconds into a slam: it starts on the
-/// footprint's edge and rolls outward, growing and rising.
+/// Dust puff `i` of `n` `age` seconds into a slam (drawn with the puff
+/// ball, which reads as a soft round blot from any side): it starts on
+/// the footprint's edge and billows outward, swelling and rising.
 pub fn slam_puff(spec: &SlamSpec, i: usize, n: usize, age: f32) -> Transform {
     let w = ease_out((age / SLAM_SECS).clamp(0.0, 1.0));
     let jitter = rand(spec.seed, 100 + i as u32);
     let (at, out) = edge_point(spec.half, (i as f32 + 0.25 + 0.5 * jitter) / n.max(1) as f32 * spec.perimeter());
     let s = spec.size;
-    let dist = (0.15 + (1.2 + 0.6 * jitter) * w) * s;
-    let size = (0.25 + 0.5 * w) * s;
+    let dist = (0.2 + (1.1 + 0.6 * jitter) * w) * s;
+    let size = (0.5 + (0.7 + 0.3 * jitter) * w) * s;
     let p = at + out * dist;
-    let roll = Quat::from_axis_angle(Vec3::new(-out.y, 0.0, out.x), dist / size);
-    Transform::from_xyz(p.x, size * 0.5 + 0.7 * w * s, p.y).with_rotation(roll * Quat::from_rotation_y(jitter * TAU)).with_scale(Vec3::splat(size))
+    Transform::from_xyz(p.x, size * PUFF_SQUASH * 0.5 + 0.5 * w * s, p.y).with_scale(Vec3::new(size, size * PUFF_SQUASH, size))
 }
 
 /// The dust's opacity `age` seconds into a slam.
 pub fn dust_alpha(age: f32) -> f32 {
     let f = (age / SLAM_SECS).clamp(0.0, 1.0);
-    0.85 * (age / 0.05).clamp(0.0, 1.0) * (1.0 - f).powf(1.3)
+    DUST_ALPHA * (age / 0.05).clamp(0.0, 1.0) * (1.0 - f).powf(1.3)
 }
 
 /// Whether chip `i` is a wood splinter (else a stone chip).
@@ -654,7 +748,7 @@ fn slam_looks(spec: &SlamSpec, age: f32) -> [Look; 4] {
     let chips = chip_alpha(age);
     [
         Look::unlit(SHOCKWAVE, slam_wave(spec, age).1),
-        Look { color: DUST, alpha: dust_alpha(age), shade: Shade::Lit },
+        Look::unlit(DUST, dust_alpha(age)),
         Look { color: WOOD, alpha: chips, shade: Shade::Lit },
         Look { color: STONE, alpha: chips, shade: Shade::Lit },
     ]
@@ -685,7 +779,7 @@ pub(crate) fn spawn_slams(
             commands.entity(e).try_despawn();
         }
     }
-    let cube = painter.cube();
+    let (cube, puff) = (painter.cube(), painter.puff());
     for (pos, facing, fp, _) in fresh {
         let p = pos.0;
         let spec = SlamSpec {
@@ -702,7 +796,7 @@ pub(crate) fn spawn_slams(
         let (wave, _) = slam_wave(&spec, 0.0);
         let wave = wave.map(|tf| spawn_part(&mut commands, &mut painter, root, &cube, looks[0], tf));
         let n = spec.puffs();
-        let dust = (0..n).map(|i| spawn_part(&mut commands, &mut painter, root, &cube, looks[1], slam_puff(&spec, i, n, 0.0))).collect();
+        let dust = (0..n).map(|i| spawn_part(&mut commands, &mut painter, root, &puff, looks[1], slam_puff(&spec, i, n, 0.0))).collect();
         let chips = (0..spec.chips())
             .map(|i| {
                 let look = if chip_is_wood(&spec, i) { looks[2] } else { looks[3] };
@@ -741,8 +835,23 @@ pub(crate) fn animate_slams(mut commands: Commands, mut painter: Painter, time: 
 mod tests {
     use super::*;
 
+    /// A rig's camera: where it stands (as af_input's `rig_transform`
+    /// places it), its line of sight to the focus, and its right.
+    fn rig_camera(rig: &CameraRig) -> (Vec3, Vec3, Vec3) {
+        let (sin, cos) = rig.pitch.sin_cos();
+        let ahead = Vec3::new(rig.yaw.sin() * cos, -sin, rig.yaw.cos() * cos);
+        (Vec3::new(rig.focus.x, 0.0, rig.focus.y) - ahead * rig.distance, ahead, ahead.cross(Vec3::Y).normalize())
+    }
+
+    /// The default rig's line of sight to its focus, and its right.
+    fn rig_sight() -> (Vec3, Vec3) {
+        let (_, view, right) = rig_camera(&CameraRig::default());
+        (view, right)
+    }
+
     fn point(queued: bool) -> MarkerSpec {
-        MarkerSpec { hug: Hug::Point, arrows: true, queued, size: if queued { QUEUED_SIZE } else { 1.0 }, line: 0.1 }
+        let (view, screen_right) = rig_sight();
+        MarkerSpec { hug: Hug::Point, arrows: true, queued, size: if queued { QUEUED_SIZE } else { 1.0 }, line: 0.1, view, screen_right }
     }
 
     /// Where an arrow's tip is (the mesh tip is +0.5 along its +Z).
@@ -752,8 +861,10 @@ mod tests {
 
     #[test]
     fn arrows_swoop_down_and_in_speeding_up() {
-        for side in SIDES {
-            let steps: Vec<Vec3> = (0..=10).map(|i| tip(&arrow_transform(side, 0.3, i as f32 / 10.0, 1.0))).collect();
+        let (view, right) = rig_sight();
+        let dirs = arrow_dirs(view, right);
+        for dir in dirs {
+            let steps: Vec<Vec3> = (0..=10).map(|i| tip(&arrow_transform(dir, 0.3, i as f32 / 10.0, 1.0))).collect();
             for pair in steps.windows(2) {
                 assert!(pair[1].y < pair[0].y, "falls: {pair:?}");
                 assert!(pair[1].xz().length() < pair[0].xz().length(), "closes in: {pair:?}");
@@ -761,13 +872,57 @@ mod tests {
             let first = (steps[1] - steps[0]).length();
             let last = (steps[10] - steps[9]).length();
             assert!(last > first * 3.0, "eases in: {first} then {last}");
-            assert!(steps[0].y > 1.5, "starts high above the spot: {}", steps[0].y);
-            assert!((steps[10].xz() - side.xz() * 0.3).length() < 1e-4 && (steps[10].y - TIP_Y).abs() < 1e-4, "lands at its reach: {}", steps[10]);
-            let forward = arrow_transform(side, 0.3, 0.5, 1.0).rotation * Vec3::Z;
-            assert!(forward.y < -0.7 && forward.dot(-side) > 0.4, "points down and in: {forward}");
+            assert!(steps[0].y > 0.4, "starts above the spot: {}", steps[0].y);
+            assert!((steps[10].xz() + inward(dir).xz() * 0.3).length() < 1e-4 && (steps[10].y - TIP_Y).abs() < 1e-4, "lands at its reach: {}", steps[10]);
+            let forward = arrow_transform(dir, 0.3, 0.5, 1.0).rotation * Vec3::Z;
+            assert!((forward - dir).length() < 1e-4 && dir.y <= -MIN_DIVE.sin() + 1e-4, "points down along its path: {forward}");
         }
-        let big = arrow_transform(Vec3::X, 0.3, 0.0, 2.0);
-        assert!((big.scale.x - 2.0 * ARROW_LENGTH).abs() < 1e-5 && tip(&big).y > tip(&arrow_transform(Vec3::X, 0.3, 0.0, 1.0)).y);
+        // The two from the top of the screen come steeply down onto the spot.
+        assert!(dirs[..2].iter().all(|d| d.y < -0.75), "{dirs:?}");
+        let big = arrow_transform(dirs[0], 0.3, 0.0, 2.0);
+        assert!((big.scale.x - 2.0 * ARROW_LENGTH).abs() < 1e-5 && tip(&big).y > tip(&arrow_transform(dirs[0], 0.3, 0.0, 1.0)).y);
+    }
+
+    #[test]
+    fn no_arrow_is_seen_tail_on_anywhere_on_screen() {
+        // af_input's camera: 32 degrees tall, on a 16:9 window.
+        let (tan_up, aspect) = (16f32.to_radians().tan(), 16.0 / 9.0);
+        for distance in [25.0, 55.0, 66.0, 150.0] {
+            let rig = CameraRig { distance, ..CameraRig::default() };
+            let (eye, ahead, right) = rig_camera(&rig);
+            let up = right.cross(ahead);
+            let screen = |p: Vec3| {
+                let v = p - eye;
+                Vec2::new(v.dot(right), v.dot(up)) / v.dot(ahead)
+            };
+            for x in [-0.95, 0.0, 0.95] {
+                for y in [-0.95, 0.0, 0.95] {
+                    // A click there, on the ground.
+                    let ray = (ahead + right * x * tan_up * aspect + up * y * tan_up).normalize();
+                    let at = eye - ray * (eye.y / ray.y);
+                    let spec = MarkerSpec { view: (at - eye).normalize(), size: marker_size(distance), ..point(false) };
+                    let centre = screen(at);
+                    let corners = [Vec2::new(-1.0, 1.0), Vec2::ONE, Vec2::NEG_ONE, Vec2::new(1.0, -1.0)];
+                    for (dir, corner) in arrow_dirs(spec.view, right).into_iter().zip(corners) {
+                        let place = |u: f32| arrow_transform(dir, reach(&spec, inward(dir)), u, spec.size);
+                        // Never along the line of sight, all the way down.
+                        for i in 0..=10 {
+                            let sight = (at + place(i as f32 / 10.0).translation - eye).normalize();
+                            let angle = dir.angle_between(sight).to_degrees();
+                            assert!((45.0..=135.0).contains(&angle), "{angle} degrees at {distance} m, screen ({x}, {y}), arrow from {corner}");
+                        }
+                        assert!(dir.y <= -MIN_DIVE.sin() + 1e-4, "dives: {dir} at {distance} m, screen ({x}, {y})");
+                        // In from its corner of the screen, onto the spot:
+                        // those from the top along the diagonal.
+                        let (from, to) = (screen(at + tip(&place(0.0))) - centre, screen(at + tip(&place(1.0))) - centre);
+                        assert!(from.x * corner.x > 0.0 && from.y * corner.y > 0.0, "{from} from {corner} at {distance} m, screen ({x}, {y})");
+                        let slope = (from.y.abs() / from.x.abs()).atan().to_degrees();
+                        assert!(corner.y < 0.0 || (30.0..=60.0).contains(&slope), "{slope} degrees from {corner} at {distance} m, screen ({x}, {y})");
+                        assert!(to.length() < from.length() * 0.3, "{from} -> {to}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -813,6 +968,22 @@ mod tests {
         assert!(late.dot.unwrap().alpha > 0.5);
         assert_eq!(marker_pose(&queued, 0.1).dot.unwrap().alpha, 0.0, "no dot before the arrows land");
         assert!(marker_pose(&queued, 1.0).dot.unwrap().alpha < 0.01);
+        // The dot is big enough to find (about as wide as an arrow is
+        // long), and never thinner than a few lines.
+        assert!(late.dot.unwrap().transforms[0].scale.x * 2.0 >= 0.8 * ARROW_LENGTH * queued.size);
+        let far = MarkerSpec { line: 0.5, ..queued };
+        assert!(marker_pose(&far, 0.7).dot.unwrap().transforms[0].scale.x >= DOT_LINES * 0.5 - 1e-4);
+        // A queued hug stays on faintly once its pulses are over, then goes.
+        for hug in [Hug::Ring(0.6), Hug::Frame(Vec2::new(2.0, 1.5))] {
+            let alpha = |spec: &MarkerSpec, t: f32| {
+                let pose = marker_pose(spec, t);
+                pose.ring.map(|l| l.alpha).or(pose.frame.map(|l| l.alpha)).unwrap()
+            };
+            let hugging = MarkerSpec { hug, ..queued };
+            assert!(alpha(&hugging, 0.7) > 0.3, "{hug:?} lingers");
+            assert!(alpha(&hugging, 1.0) < 0.01, "{hug:?} goes");
+            assert_eq!(alpha(&MarkerSpec { queued: false, ..hugging }, 1.0), 0.0);
+        }
     }
 
     /// Times over `t` = 0..1 at which `f` peaks.
@@ -824,18 +995,22 @@ mod tests {
     #[test]
     fn hugs_pulse_twice_around_the_footprint() {
         let half = Vec2::new(2.0, 1.5);
-        let frame = MarkerSpec { hug: Hug::Frame(half), arrows: true, queued: false, size: 1.0, line: 0.05 };
+        let frame = MarkerSpec { hug: Hug::Frame(half), ..point(false) };
         let outer = |t: f32| marker_pose(&frame, t).frame.unwrap().transforms[3].translation.x;
         assert_eq!(peaks(outer), 2, "swells twice");
         assert!(outer(0.0) > half.x, "outside the footprint");
         assert!(marker_pose(&frame, 1.0).frame.unwrap().alpha < 0.01, "and fades");
         // The arrows land on the frame's outer edge (between two pulses),
-        // on each side's middle.
+        // wherever they come in.
         let pose = marker_pose(&frame, Timeline::of(false).land);
-        let edge = pose.frame.unwrap().transforms[3].translation.x + pose.frame.unwrap().transforms[3].scale.x * 0.5;
-        let arrow_x = tip(&pose.arrows.unwrap().transforms[0]).x;
-        assert!((arrow_x - edge).abs() < 0.02, "{arrow_x} vs {edge}");
-        assert!((tip(&pose.arrows.unwrap().transforms[2]).z - (half.y + HUG_GAP + frame_width(half, 0.05))).abs() < 1e-4);
+        let sides = pose.frame.unwrap().transforms;
+        let edge = Vec2::new(sides[3].translation.x + sides[3].scale.x * 0.5, sides[0].translation.z + sides[0].scale.z * 0.5);
+        assert!((edge - half - Vec2::splat(HUG_GAP + frame_width(half, frame.line))).length() < 0.02, "{edge}");
+        for arrow in pose.arrows.unwrap().transforms {
+            let p = tip(&arrow).xz().abs();
+            let on_edge = ((p.x - edge.x).abs() < 0.02 && p.y <= edge.y + 0.02) || ((p.y - edge.y).abs() < 0.02 && p.x <= edge.x + 0.02);
+            assert!(on_edge, "{p} on the frame's edge {edge}");
+        }
         // A unit's ring pulses too, and keeps a readable band zoomed out.
         let ring = MarkerSpec { hug: Hug::Ring(0.6), ..frame };
         assert_eq!(peaks(|t| marker_pose(&ring, t).ring.unwrap().transforms[0].scale.x), 2);
@@ -852,11 +1027,11 @@ mod tests {
         let house = data.building_id("house").unwrap();
         let fp = Footprint { half: Vec2::new(0.4, 0.3), height: 1.0 };
         let mark = |kind| ClickMark::new(kind, None, false);
-        let (hug, arrows, yaw) = marker_hug(&data, &mark(OrderMark::Place { kind: house, facing: 0.5 }), None, 2.0);
+        let (hug, arrows, yaw) = marker_hug(&data, &mark(OrderMark::Place { kind: house, facing: 0.5 }), None);
         assert_eq!((hug, arrows, yaw), (Hug::Frame(Footprint::from_size(data.building(house).size).half), false, 0.5));
-        assert_eq!(marker_hug(&data, &mark(OrderMark::Attack), Some((&fp, None, true)), 2.0), (Hug::Ring(0.5 + HUG_GAP), true, 2.0));
-        assert_eq!(marker_hug(&data, &mark(OrderMark::Gather), Some((&fp, Some(&Facing(1.0)), false)), 2.0), (Hug::Frame(fp.half), true, 1.0));
-        assert_eq!(marker_hug(&data, &mark(OrderMark::Move), None, 2.0), (Hug::Point, true, 2.0));
+        assert_eq!(marker_hug(&data, &mark(OrderMark::Attack), Some((&fp, None, true))), (Hug::Ring(0.5 + HUG_GAP), true, 0.0));
+        assert_eq!(marker_hug(&data, &mark(OrderMark::Gather), Some((&fp, Some(&Facing(1.0)), false))), (Hug::Frame(fp.half), true, 1.0));
+        assert_eq!(marker_hug(&data, &mark(OrderMark::Move), None), (Hug::Point, true, 0.0));
     }
 
     #[test]
@@ -884,7 +1059,9 @@ mod tests {
         let reach = |age: f32| slam_wave(&spec, age).0[3].translation.x;
         assert!(reach(0.0) < spec.half.x + 0.5 && reach(0.3) > reach(0.1) && reach(WAVE_SECS) > spec.half.x + 1.5);
         assert!(slam_wave(&spec, 0.0).1 > 0.8 && slam_wave(&spec, WAVE_SECS).1 < 1e-4);
-        // Dust rolls outward and rises, then fades.
+        // Soft, pale dust billows outward and rises, then fades.
+        let dust = slam_looks(&spec, 0.1)[1];
+        assert!(dust.shade == Shade::Unlit && dust.alpha <= DUST_ALPHA && dust.color.iter().sum::<f32>() > 2.0, "{dust:?}");
         let n = spec.puffs();
         for i in 0..n {
             let (a, b) = (slam_puff(&spec, i, n, 0.05), slam_puff(&spec, i, n, 0.6));
@@ -905,7 +1082,7 @@ mod tests {
         // Bigger footprints throw more dust and chips, within bounds.
         let small = SlamSpec { half: Vec2::splat(0.5), ..spec };
         let big = SlamSpec { half: Vec2::splat(6.0), ..spec };
-        assert_eq!((small.puffs(), small.chips()), (8, 4));
-        assert!(spec.puffs() > small.puffs() && big.puffs() == 20 && big.chips() == 10);
+        assert_eq!((small.puffs(), small.chips()), (6, 4));
+        assert!(spec.puffs() > small.puffs() && big.puffs() == 14 && big.chips() == 10);
     }
 }

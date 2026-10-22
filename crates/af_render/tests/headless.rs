@@ -259,6 +259,32 @@ fn materials_are_cached_not_created_per_frame() {
     assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), materials_before);
 }
 
+#[test]
+fn markers_and_slams_reuse_their_materials() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let (tree, enemy) = (w.tree, w.enemy_unit);
+    let barracks = test_data().building_id("barracks").unwrap();
+    // Markers of every shape and a slam, played to the end.
+    let play = |app: &mut App, at: Vec2| {
+        app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Patrol, None, true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(tree), true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Attack, Some(enemy), false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: barracks, facing: 0.0 }, None, false).ping(at));
+        with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, at, 0.0, false));
+        run_ticks(app, (SLAM_SECS.max(ClickMark::QUEUED_SECS) * 30.0) as u32 + 3);
+    };
+    let count = |app: &App| (app.world().resource::<BoxAssets>().material_count(), app.world().resource::<Assets<StandardMaterial>>().len());
+    play(app, Vec2::new(40.0, 20.0));
+    let first = count(app);
+    // The same again elsewhere: every fade step's material already exists.
+    play(app, Vec2::new(40.0, 45.0));
+    assert_eq!(count(app), first);
+    let playing = app.world_mut().query_filtered::<(), Or<(With<Marker>, With<Slam>)>>().iter(app.world()).count();
+    assert_eq!(playing, 0, "all played out");
+}
+
 /// The parts of a click marker (its ping's children).
 fn marker_parts(app: &App, ping: Entity) -> Vec<Entity> {
     app.world().get::<Children>(ping).map(|c| c.iter().collect()).unwrap_or_default()
