@@ -1,7 +1,9 @@
-//! MapPlugin in a headless app: match setup, default skirmish, teardown.
+//! MapPlugin in a headless app: match setup, default skirmish, map
+//! options, teardown.
 
 use std::sync::Arc;
 
+use af_core::ext::map::{MapFeatures, MapOptions, MapSize, RiverCount, SiteChoice, SiteKind, WaterLevel};
 use af_core::prelude::*;
 use af_core::testing::{run_ticks, sim_app, test_data};
 use af_map::*;
@@ -43,6 +45,9 @@ fn headless_match_builds_the_whole_world() {
     assert_eq!(info.size, Vec2::splat(expected.size));
     assert_eq!(info.start_positions, expected.starts);
     assert_eq!(info.seed, 4242);
+    let features = world.resource::<MapFeatures>();
+    assert_eq!(*features, expected.features, "the map's features are published");
+    assert_eq!((info.crater_center, info.crater_radius), (features.sites[0].center, features.sites[0].radius));
     let nav = world.resource::<Nav>();
     assert_eq!((nav.width(), nav.height()), (expected.width, expected.height));
     assert_eq!(nav.terrain_cells().len(), expected.terrain.len());
@@ -125,6 +130,30 @@ fn missing_setup_starts_the_default_skirmish() {
 }
 
 #[test]
+fn map_options_shape_the_map_and_are_published_resolved() {
+    let data = test_data();
+    let s = setup(&data, &["ironhold", "tide", "dune"]);
+    let options = MapOptions { size: MapSize::Large, water: WaterLevel::Coast, rivers: RiverCount::Two, site: SiteChoice::Kind(SiteKind::Lake) };
+    let expected = generate_with(&data, &s, &options);
+    let mut app = sim_app(data.clone());
+    app.insert_resource(s);
+    app.insert_resource(options);
+    app.add_plugins(MapPlugin);
+    run_ticks(&mut app, 1);
+    let world = app.world();
+    let features = world.resource::<MapFeatures>();
+    assert_eq!(*features, expected.features);
+    let o = features.options;
+    assert_eq!((o.size, o.water, o.rivers, o.site), (MapSize::Large, WaterLevel::Coast, 2, SiteKind::Lake));
+    assert_eq!(features.ocean_edges.len(), 1);
+    assert_eq!(features.rivers.len(), 2);
+    // A Large land for three players plus one ocean band.
+    let side = MapSize::Large.land_side(3);
+    assert_eq!(world.resource::<MapInfo>().size, Vec2::splat(side + (side * 0.17).round()));
+    assert_eq!(world.resource::<Nav>().width(), expected.width);
+}
+
+#[test]
 fn spectating_focuses_the_crater_and_reveal_explores_everything() {
     let data = test_data();
     let mut s = setup(&data, &["tide", "tide", "tide"]);
@@ -168,6 +197,7 @@ fn leaving_the_match_tears_it_down_and_a_new_one_can_start() {
     assert_eq!(count::<ClickPing>(&mut app), 0);
     let world = app.world();
     assert!(!world.contains_resource::<Players>() && !world.contains_resource::<Nav>() && !world.contains_resource::<MapInfo>());
+    assert!(!world.contains_resource::<MapFeatures>());
     assert!(world.resource::<SpatialIndex>().entries.is_empty(), "no despawned entities left to find from the menu");
     assert_eq!(world.resource::<LocalPlayer>().0, None);
 
@@ -180,6 +210,7 @@ fn leaving_the_match_tears_it_down_and_a_new_one_can_start() {
     let world = app.world();
     assert_eq!(world.resource::<Players>().list.len(), 3);
     assert_eq!(world.resource::<MapInfo>().seed, 7);
+    assert!(world.contains_resource::<MapFeatures>());
     assert!(world.resource::<SimClock>().tick <= 2, "the clock restarted");
     assert_eq!(count::<Building>(&mut app), 3);
 }

@@ -6,8 +6,8 @@ use std::f32::consts::FRAC_PI_2;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
-use super::nodes::{cluster_spacing, lattice, Zone, NODE_PAD};
-use super::{grown, polar, BuildingPlacement, Gen, Ids, UnitPlacement, MAP_MARGIN, START_AREA_RADIUS};
+use super::nodes::{cluster_spacing, lattice, nudges, Zone, NODE_PAD};
+use super::{grown, polar, BuildingPlacement, Gen, Ids, NodePlacement, UnitPlacement, MAP_MARGIN, START_AREA_RADIUS};
 
 /// Gap kept around start buildings so workers can walk around them.
 const BUILDING_PAD: f32 = 1.5;
@@ -23,8 +23,10 @@ const FOREST_EDGE: (f32, f32) = (20.5, 28.5);
 /// The forest edge covers local angles beyond this (135 degrees) on both
 /// sides, i.e. the back of the start.
 const FOREST_EDGE_FROM: f32 = 135.0 * std::f32::consts::PI / 180.0;
-/// The start's aether cluster stops this far short of the crater rim.
-const AETHER_RIM_CLEARANCE: f32 = 5.0;
+/// The start's aether cluster stops this far short of the main site's rim.
+pub(crate) const AETHER_RIM_CLEARANCE: f32 = 5.0;
+/// ...and sits this far to one side of the corridor.
+pub(crate) const AETHER_LATERAL: f32 = 9.0;
 
 /// A local frame at `origin`: x points at a target, y to its left.
 #[derive(Clone, Copy, Debug)]
@@ -85,8 +87,9 @@ pub(crate) struct StartTemplate {
 
 impl StartTemplate {
     /// `to_center` is the start's distance from the map centre and
-    /// `crater_outer` the crater rim's outer radius.
-    pub fn new(data: &GameData, ids: &Ids, rng: &mut SimRng, to_center: f32, crater_outer: f32) -> StartTemplate {
+    /// `site_reach` how far the main meteor site (its rim's outer edge)
+    /// reaches toward the starts.
+    pub fn new(data: &GameData, ids: &Ids, rng: &mut SimRng, to_center: f32, site_reach: f32) -> StartTemplate {
         let mut t = StartTemplate { nodes: Vec::new(), sand: (Vec2::ZERO, 6.0), aether: Vec2::ZERO };
         let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
         let deg = |d: f32| d.to_radians();
@@ -104,11 +107,11 @@ impl StartTemplate {
         t.cluster(data, ids.silicon, silicon_dir * 38.0, 2 + rng.below(2), rng);
         t.cluster(data, ids.palm, silicon_dir * 42.5, 2 + rng.below(2), rng);
 
-        // About 48-55 m out on the standard map sizes, a few metres short of
-        // the crater rim; closer only on small custom maps.
+        // About 45-55 m out on the default map sizes, a few metres short of
+        // the main site; closer only on small maps.
         let aether_side = if rng.chance(0.5) { 1.0 } else { -1.0 };
-        let dist = (to_center - crater_outer - AETHER_RIM_CLEARANCE).clamp(20.0, 55.0);
-        let lateral = 9.0 * aether_side;
+        let dist = (to_center - site_reach - AETHER_RIM_CLEARANCE).clamp(20.0, 55.0);
+        let lateral = AETHER_LATERAL * aether_side;
         t.aether = Vec2::new((dist * dist - lateral * lateral).max(0.0).sqrt(), lateral);
         t.cluster(data, ids.crystal, t.aether, 3, rng);
         t
@@ -158,6 +161,14 @@ impl StartTemplate {
         }
     }
 
+    /// Local centre and bounding radius of every template node.
+    pub fn footprints<'a>(&'a self, data: &'a GameData) -> impl Iterator<Item = (Vec2, f32)> + 'a {
+        self.nodes.iter().map(move |n| {
+            let s = data.node(n.kind).size;
+            (n.local, Vec2::new(s[0], s[2]).length() * 0.5)
+        })
+    }
+
     fn push(&mut self, data: &GameData, n: TemplateNode) -> bool {
         let obb = grown(Obb::from_size(n.local, data.node(n.kind).size, n.yaw), TEMPLATE_PAD);
         let clear = n.local.length() >= TEMPLATE_KEEP_OUT
@@ -188,13 +199,31 @@ impl Gen<'_> {
         }
     }
 
-    /// The template's resources around every start.
+    /// The template's resources around every start. Each node goes in at
+    /// every start or at none (when a coast, the map edge or a crowded
+    /// neighbour leaves one start no room for it), so the starts stay
+    /// mirrored.
     pub(super) fn place_start_resources(&mut self) {
         let template: Vec<TemplateNode> = self.layout.template.nodes.clone();
-        for i in 0..self.layout.starts.len() {
-            let frame = self.layout.frame(i);
-            for n in &template {
-                self.place_node_near(Some(n.kind), frame.point(n.local), frame.yaw(n.yaw), Zone::Any);
+        let frames: Vec<Frame> = (0..self.layout.starts.len()).map(|i| self.layout.frame(i)).collect();
+        for n in &template {
+            let spots: Option<Vec<(Vec2, f32, Obb)>> = frames
+                .iter()
+                .map(|f| {
+                    let (pos, yaw) = (f.point(n.local), f.yaw(n.yaw));
+                    nudges().find_map(|off| self.node_fits(n.kind, pos + off, yaw, Zone::Any).map(|reserve| (pos + off, yaw, reserve)))
+                })
+                .collect();
+            let Some(spots) = spots else { continue };
+            // Starts are far apart; only on tiny crowded maps can two
+            // starts' copies of a node clash.
+            let clash = spots.iter().enumerate().any(|(i, a)| spots[i + 1..].iter().any(|b| a.2.overlaps(&b.2)));
+            if clash {
+                continue;
+            }
+            for (pos, yaw, reserve) in spots {
+                self.occ.insert(reserve);
+                self.nodes.push(NodePlacement { kind: n.kind, pos, yaw });
             }
         }
     }

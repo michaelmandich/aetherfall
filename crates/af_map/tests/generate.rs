@@ -1,8 +1,16 @@
-//! The pure generator against the real content.
+//! The pure generator against the real content
+//! (`docs/design/maps-and-terrain.md` section 8).
+//!
+//! Most checks run over one shared sample of maps covering every map size,
+//! water level and meteor-site kind (with player counts from 2 to 8 and
+//! both river counts cycling through it); `--ignored` runs the full sweep
+//! over every combination and several seeds.
 
 use std::collections::VecDeque;
+use std::sync::OnceLock;
 use std::time::Instant;
 
+use af_core::ext::map::{MapEdge, MapFeatures, MapOptions, MapSize, RiverCount, SiteChoice, SiteKind, WaterLevel};
 use af_core::prelude::*;
 use af_core::testing::test_data;
 use af_map::*;
@@ -17,6 +25,53 @@ fn setup(data: &GameData, n: usize, seed: u64) -> MatchSetup {
         })
         .collect();
     MatchSetup { seed, players, ..MatchSetup::default() }
+}
+
+fn options(size: MapSize, water: WaterLevel, rivers: u8, site: SiteKind) -> MapOptions {
+    let rivers = if rivers == 1 { RiverCount::One } else { RiverCount::Two };
+    MapOptions { size, water, rivers, site: SiteChoice::Kind(site) }
+}
+
+/// One generated map and what it was generated from.
+struct Case {
+    players: usize,
+    seed: u64,
+    #[allow(dead_code)]
+    options: MapOptions,
+    map: GeneratedMap,
+}
+
+impl Case {
+    fn new(data: &GameData, players: usize, seed: u64, options: MapOptions) -> Case {
+        Case { players, seed, options, map: generate_with(data, &setup(data, players, seed), &options) }
+    }
+
+    fn at(&self) -> String {
+        let o = self.map.features.options;
+        format!("seed {}, {} players, {} water {} rivers {} {:?}", self.seed, self.players, o.size.name(), o.water.name(), o.rivers, o.site)
+    }
+}
+
+/// Every map size x water level x site kind once, player counts cycling
+/// through 2-8 and river counts through 1-2, generated once for every test.
+fn sample() -> &'static [Case] {
+    static SAMPLE: OnceLock<Vec<Case>> = OnceLock::new();
+    SAMPLE.get_or_init(|| {
+        let data = test_data();
+        let mut cases = Vec::new();
+        let mut k = 0u64;
+        for size in MapSize::ALL {
+            for water in WaterLevel::ALL {
+                for site in SiteKind::ALL {
+                    let players = 2 + (k % 7) as usize;
+                    let rivers = 1 + (k / 7 % 2) as u8;
+                    cases.push(Case::new(&data, players, 1000 + k, options(size, water, rivers, site)));
+                    k += 1;
+                }
+            }
+        }
+        cases
+    })
 }
 
 fn node_obb(data: &GameData, n: &NodePlacement) -> Obb {
@@ -67,35 +122,35 @@ fn cells(map: &GeneratedMap) -> impl Iterator<Item = (Vec2, TerrainId)> + '_ {
     map.terrain.iter().enumerate().map(move |(i, t)| (Vec2::new((i % w) as f32 + 0.5, (i / w) as f32 + 0.5), *t))
 }
 
-/// Bounding-box size of every 4-connected body of `kind` cells.
-fn bodies(map: &GeneratedMap, kind: TerrainId) -> Vec<Vec2> {
+/// Every 4-connected body of cells passing `kind`: its cells.
+fn bodies(map: &GeneratedMap, kind: impl Fn(TerrainId) -> bool) -> Vec<Vec<IVec2>> {
     let (w, h) = (map.width as i32, map.height as i32);
     let mut seen = vec![false; map.terrain.len()];
-    let mut sizes = Vec::new();
+    let mut out = Vec::new();
     for first in 0..map.terrain.len() {
-        if seen[first] || map.terrain[first] != kind {
+        if seen[first] || !kind(map.terrain[first]) {
             continue;
         }
         seen[first] = true;
         let mut queue = VecDeque::from([IVec2::new(first as i32 % w, first as i32 / w)]);
-        let (mut lo, mut hi) = (queue[0], queue[0]);
+        let mut body = Vec::new();
         while let Some(c) = queue.pop_front() {
-            (lo, hi) = (lo.min(c), hi.max(c));
+            body.push(c);
             for d in [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y] {
                 let n = c + d;
                 if n.x < 0 || n.y < 0 || n.x >= w || n.y >= h {
                     continue;
                 }
                 let i = (n.y * w + n.x) as usize;
-                if !seen[i] && map.terrain[i] == kind {
+                if !seen[i] && kind(map.terrain[i]) {
                     seen[i] = true;
                     queue.push_back(n);
                 }
             }
         }
-        sizes.push((hi - lo + IVec2::ONE).as_vec2());
+        out.push(body);
     }
-    sizes
+    out
 }
 
 /// The terrain grid plus every building and blocking node as an obstacle.
@@ -110,8 +165,61 @@ fn nav_with_obstacles(data: &GameData, map: &GeneratedMap) -> NavGrid {
     nav
 }
 
+/// Cells a mover of `flag` and `radius` reaches from the clear cells
+/// within `seed_radius` of `from` (4-neighbour flood).
+fn flood(nav: &mut NavGrid, flag: MoveFlag, radius: f32, from: Vec2, seed_radius: f32) -> Vec<bool> {
+    let mobility = Mobility::of(flag).0;
+    nav.prepare(mobility, af_geom::NO_TEAM);
+    let mut seen = vec![false; (nav.width() * nav.height()) as usize];
+    let mut queue = VecDeque::new();
+    let c = nav.cell_of(from);
+    let r = seed_radius.ceil() as i32;
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let n = c + IVec2::new(dx, dy);
+            if nav.in_bounds(n) && nav.cell_center(n).distance(from) <= seed_radius && nav.clear_cell(n, mobility, radius, af_geom::NO_TEAM) {
+                seen[nav.index(n)] = true;
+                queue.push_back(n);
+            }
+        }
+    }
+    while let Some(c) = queue.pop_front() {
+        for d in [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y] {
+            let n = c + d;
+            if nav.in_bounds(n) && !seen[nav.index(n)] && nav.clear_cell(n, mobility, radius, af_geom::NO_TEAM) {
+                seen[nav.index(n)] = true;
+                queue.push_back(n);
+            }
+        }
+    }
+    seen
+}
+
+/// Is any reached cell within `within` of `p`?
+fn reached(nav: &NavGrid, seen: &[bool], p: Vec2, within: f32) -> bool {
+    let c = nav.cell_of(p);
+    let r = within.ceil() as i32;
+    (-r..=r).any(|dy| {
+        (-r..=r).any(|dx| {
+            let n = c + IVec2::new(dx, dy);
+            nav.in_bounds(n) && nav.cell_center(n).distance(p) <= within && seen[nav.index(n)]
+        })
+    })
+}
+
+/// Distance from `p` to the nearest map edge that is not ocean.
+fn land_edge_distance(f: &MapFeatures, size: f32, p: Vec2) -> f32 {
+    let mut d = f32::INFINITY;
+    for (e, v) in [(MapEdge::West, p.x), (MapEdge::East, size - p.x), (MapEdge::South, p.y), (MapEdge::North, size - p.y)] {
+        if !f.ocean_edges.contains(&e) {
+            d = d.min(v);
+        }
+    }
+    d
+}
+
 #[test]
-fn same_seed_same_map_and_different_seeds_differ() {
+fn same_seed_same_map_and_different_seeds_or_options_differ() {
     let data = test_data();
     let a = generate(&data, &setup(&data, 4, 77));
     let b = generate(&data, &setup(&data, 4, 77));
@@ -120,6 +228,15 @@ fn same_seed_same_map_and_different_seeds_differ() {
     assert_ne!(a.terrain, c.terrain);
     assert_ne!(a.starts, c.starts);
     assert_ne!(a.nodes, c.nodes);
+    // Explicit options are deterministic too, and change the map.
+    let seas = options(MapSize::Large, WaterLevel::Seas, 2, SiteKind::Scar);
+    let d = generate_with(&data, &setup(&data, 3, 9), &seas);
+    assert_eq!(d, generate_with(&data, &setup(&data, 3, 9), &seas));
+    assert_ne!(d.terrain, generate_with(&data, &setup(&data, 3, 9), &MapOptions { site: SiteChoice::Kind(SiteKind::Spire), ..seas }).terrain);
+    // The random choices are resolved and published.
+    let resolved = resolve_map_options(&MapOptions::default(), 77);
+    assert_eq!(a.features.options, resolved);
+    assert!((1..=2).contains(&resolved.rivers));
 }
 
 #[test]
@@ -127,11 +244,14 @@ fn every_player_count_and_faction_gets_a_map() {
     let data = test_data();
     for n in 1..=8 {
         let map = generate(&data, &setup(&data, n, n as u64 * 11));
+        // The default options: Medium, lakes (no ocean), so the land is the
+        // whole map and the main site is at its centre.
         assert_eq!(map.size, map_size_for(n));
         assert_eq!((map.width, map.height), (map.size as u32, map.size as u32));
         assert_eq!(map.terrain.len(), (map.width * map.height) as usize);
         assert_eq!(map.starts.len(), n);
         assert_eq!(map.crater_center, Vec2::splat(map.size * 0.5));
+        assert_eq!((map.crater_center, map.crater_radius), (map.features.sites[0].center, map.features.sites[0].radius));
         for p in 0..n {
             let faction = data.faction(FactionId((p % data.factions.len()) as u8));
             let hall = map.buildings.iter().find(|b| b.player == p).expect("a main hall");
@@ -144,6 +264,31 @@ fn every_player_count_and_faction_gets_a_map() {
             assert!(map.starts[p].min_element() > 30.0 && map.starts[p].max_element() < map.size - 30.0);
         }
     }
+}
+
+#[test]
+fn sizes_follow_the_table_and_ocean_bands_grow_the_map() {
+    let data = test_data();
+    for (players, size, side) in [(2, MapSize::Small, 176.0), (4, MapSize::Large, 376.0), (8, MapSize::Huge, 616.0), (3, MapSize::Medium, 256.0)] {
+        let o = options(size, WaterLevel::Lakes, 1, SiteKind::Crater);
+        let map = generate_with(&data, &setup(&data, players, 3), &o);
+        assert_eq!(map.size, side, "{} for {players} players", size.name());
+        let f = &map.features;
+        assert_eq!((f.land_min, f.land_max), (Vec2::ZERO, Vec2::splat(side)));
+        // One ocean band: the map grows by it and the land square is whole.
+        let coast = generate_with(&data, &setup(&data, players, 3), &MapOptions { water: WaterLevel::Coast, ..o });
+        let band = (side * 0.17).round();
+        assert_eq!(coast.size, side + band);
+        let f = &coast.features;
+        assert_eq!(f.ocean_edges.len(), 1);
+        let land = f.land_max - f.land_min;
+        assert_eq!(land.min_element(), side);
+        assert_eq!(land.max_element(), side + band);
+    }
+    // MatchSetup::map_size still overrides the land side.
+    let mut s = setup(&data, 2, 5);
+    s.map_size = 300.4;
+    assert_eq!(generate_with(&data, &s, &options(MapSize::Huge, WaterLevel::Dry, 1, SiteKind::Crater)).size, 300.0);
 }
 
 #[test]
@@ -163,14 +308,16 @@ fn degenerate_setups_still_generate() {
     let data = test_data();
     let empty = generate(&data, &setup(&data, 0, 1));
     assert!(empty.starts.is_empty() && empty.buildings.is_empty() && empty.units.is_empty());
-    assert!(!empty.nodes.is_empty(), "the crater and the wilds are still there");
+    assert!(!empty.nodes.is_empty(), "the meteor site and the wilds are still there");
 
     let mut crowded = setup(&data, 8, 2);
     crowded.map_size = 160.0;
-    let map = generate(&data, &crowded);
-    assert_eq!(halls(&map).len(), 8);
-    let boxes: Vec<Obb> = map.nodes.iter().map(|n| node_obb(&data, n)).chain(map.buildings.iter().map(|b| building_obb(&data, b))).collect();
-    assert!(overlapping_pairs(&boxes).is_empty());
+    for site in SiteKind::ALL {
+        let map = generate_with(&data, &crowded, &options(MapSize::Medium, WaterLevel::Seas, 2, site));
+        assert_eq!(halls(&map).len(), 8);
+        let boxes: Vec<Obb> = map.nodes.iter().map(|n| node_obb(&data, n)).chain(map.buildings.iter().map(|b| building_obb(&data, b))).collect();
+        assert!(overlapping_pairs(&boxes).is_empty(), "{site:?}");
+    }
 
     let mut unknown = setup(&data, 2, 3);
     unknown.players[1].faction = FactionId(250);
@@ -186,22 +333,24 @@ fn degenerate_setups_still_generate() {
 #[test]
 fn start_discs_are_clear_and_buildable_for_the_main_hall() {
     let data = test_data();
-    for (n, seed) in [(2, 1), (4, 2), (6, 3), (8, 4), (8, 5)] {
-        let map = generate(&data, &setup(&data, n, seed));
+    let grass = data.terrain_id("grass").unwrap();
+    for case in sample() {
+        let map = &case.map;
         let nav = map.nav(&data);
         let nodes: Vec<Obb> = map.nodes.iter().map(|n| node_obb(&data, n)).collect();
-        for hall in halls(&map) {
+        for hall in halls(map) {
             let obb = building_obb(&data, &hall);
-            assert!(nav.area_buildable(&obb), "hall of player {} not buildable (seed {seed})", hall.player);
-            assert!(nodes.iter().all(|n| !n.overlaps(&obb)), "a node sits on the hall");
+            assert!(nav.area_buildable(&obb), "hall of player {} not buildable ({})", hall.player, case.at());
+            assert!(nodes.iter().all(|n| !n.overlaps(&obb)), "a node sits on the hall ({})", case.at());
             let start = map.starts[hall.player];
+            assert_eq!(map.terrain_at(start), Some(grass), "the start is on grass ({})", case.at());
             let clear = START_CLEAR_RADIUS - 0.5;
             let mut p = start - Vec2::splat(clear);
             while p.y <= start.y + clear {
                 while p.x <= start.x + clear {
                     if p.distance(start) <= clear {
                         let t = map.terrain_at(p).unwrap();
-                        assert!(data.terrain_def(t).buildable, "start disc of {} has {}", hall.player, data.terrain_def(t).id);
+                        assert_eq!(t, grass, "start disc of {} has {} ({})", hall.player, data.terrain_def(t).id, case.at());
                     }
                     p.x += 1.0;
                 }
@@ -213,34 +362,40 @@ fn start_discs_are_clear_and_buildable_for_the_main_hall() {
 }
 
 #[test]
-fn every_start_and_the_crater_are_reachable_on_foot() {
+fn every_ground_class_reaches_every_start_spot_and_site() {
     let data = test_data();
-    let foot = Mobility::of(MoveFlag::Foot).0;
-    for (n, seed) in [(2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15), (8, 16), (8, 17)] {
-        let map = generate(&data, &setup(&data, n, seed));
-        let nav = nav_with_obstacles(&data, &map);
-        // Flood from the crater centre with a 1 m clearance radius (3x3 free cells).
-        let origin = nav.cell_of(map.crater_center);
-        assert!(nav.clear_cell(origin, foot, 1.0, af_geom::NO_TEAM), "crater centre blocked (seed {seed})");
-        let mut seen = vec![false; (nav.width() * nav.height()) as usize];
-        let mut queue = VecDeque::from([origin]);
-        seen[nav.index(origin)] = true;
-        while let Some(c) = queue.pop_front() {
-            for d in [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y] {
-                let next = c + d;
-                if nav.in_bounds(next) && !seen[nav.index(next)] && nav.clear_cell(next, foot, 1.0, af_geom::NO_TEAM) {
-                    seen[nav.index(next)] = true;
-                    queue.push_back(next);
-                }
+    let vent = data.node_id("aether_vent").unwrap();
+    // The widest unit of each ground class (connect.rs).
+    let classes = [(MoveFlag::Foot, 1.0), (MoveFlag::Mounted, 1.0), (MoveFlag::Wheeled, 2.5), (MoveFlag::Tracked, 3.0)];
+    let mut carved = 0;
+    for case in sample() {
+        let map = &case.map;
+        assert!(map.cut_off.is_empty(), "the generator reports cut-off places: {:?} ({})", map.cut_off, case.at());
+        carved += !map.carved.is_empty() as usize;
+        let mut nav = nav_with_obstacles(&data, map);
+        let main = map.features.sites[0];
+        for (flag, radius) in classes {
+            // From the main site's open floor (its spire is in the middle of
+            // the Starspire).
+            let seen = flood(&mut nav, flag, radius, main.center, main.radius);
+            for hall in halls(map) {
+                let obb = building_obb(&data, &hall);
+                let ahead = (map.crater_center - hall.pos).normalize();
+                let front = hall.pos + ahead * (obb.support(ahead) + 2.5);
+                assert!(reached(&nav, &seen, front, 4.0), "{flag:?} cannot reach player {} ({})", hall.player, case.at());
+            }
+            for site in &map.features.sites[1..] {
+                assert!(reached(&nav, &seen, site.center, site.radius * 0.9), "{flag:?} cannot reach the site at {} ({})", site.center, case.at());
+            }
+            // The contested spots: every vent outside the sites.
+            let in_site = |p: Vec2| map.features.sites.iter().any(|s| p.distance(s.center) < s.radius);
+            for n in map.nodes.iter().filter(|n| n.kind == vent && !in_site(n.pos)) {
+                assert!(reached(&nav, &seen, n.pos, 9.0), "{flag:?} cannot reach the spot at {} ({})", n.pos, case.at());
             }
         }
-        for hall in halls(&map) {
-            let obb = building_obb(&data, &hall);
-            let ahead = (map.crater_center - hall.pos).normalize();
-            let front = hall.pos + ahead * (obb.support(ahead) + 2.5);
-            assert!(seen[nav.index(nav.cell_of(front))], "player {} of {n} cannot walk to the crater (seed {seed})", hall.player);
-        }
     }
+    // Crossings, gaps and passes are planned wide enough: carving is rare.
+    assert!(carved * 10 <= sample().len(), "{carved} of {} maps needed a route carved", sample().len());
 }
 
 #[test]
@@ -256,26 +411,30 @@ fn every_player_has_the_listed_start_resources() {
         ("iron_vein", 2, 17.0, 26.0),
         ("trees", 40, 19.0, 31.0),
         ("silicon_deposit", 2, 33.0, 45.0),
-        ("aether_crystal", 3, 45.0, 60.0),
+        // Toward the main site, a few metres short of it: 45-55 m on the
+        // default size, a little closer for the larger sites.
+        ("aether_crystal", 3, 42.0, 60.0),
     ];
     for (n, seed) in [(1, 20), (2, 21), (2, 27), (3, 22), (4, 23), (6, 24), (8, 25), (8, 26)] {
-        let map = generate(&data, &setup(&data, n, seed));
-        for (what, min, from, within) in wanted {
-            let counts: Vec<usize> = map
-                .starts
-                .iter()
-                .map(|s| {
-                    map.nodes
-                        .iter()
-                        .filter(|nd| (from..=within).contains(&nd.pos.distance(*s)))
-                        .filter(|nd| match what {
-                            "trees" => data.node(nd.kind).resource_id == wood && nd.kind != node("palm"),
-                            id => nd.kind == node(id),
-                        })
-                        .count()
-                })
-                .collect();
-            assert!(counts.iter().all(|c| *c >= min), "{what} at {from}-{within} m: {counts:?} (seed {seed}, {n} players)");
+        for site in SiteKind::ALL {
+            let map = generate_with(&data, &setup(&data, n, seed), &options(MapSize::Medium, WaterLevel::Lakes, 2, site));
+            for (what, min, from, within) in wanted {
+                let counts: Vec<usize> = map
+                    .starts
+                    .iter()
+                    .map(|s| {
+                        map.nodes
+                            .iter()
+                            .filter(|nd| (from..=within).contains(&nd.pos.distance(*s)))
+                            .filter(|nd| match what {
+                                "trees" => data.node(nd.kind).resource_id == wood && nd.kind != node("palm"),
+                                id => nd.kind == node(id),
+                            })
+                            .count()
+                    })
+                    .collect();
+                assert!(counts.iter().all(|c| *c >= min), "{what} at {from}-{within} m: {counts:?} (seed {seed}, {n} players, {site:?})");
+            }
         }
     }
 }
@@ -283,9 +442,9 @@ fn every_player_has_the_listed_start_resources() {
 #[test]
 fn start_resources_are_mirrored_between_players() {
     let data = test_data();
-    for (n, seed) in [(2, 31), (4, 32), (6, 33)] {
-        let map = generate(&data, &setup(&data, n, seed));
-        let wood = data.resource_id("wood").unwrap();
+    let wood = data.resource_id("wood").unwrap();
+    for case in sample() {
+        let map = &case.map;
         let mut signatures = Vec::new();
         for s in &map.starts {
             let mut kinds: Vec<u16> = map
@@ -297,89 +456,206 @@ fn start_resources_are_mirrored_between_players() {
             kinds.sort();
             signatures.push(kinds);
         }
-        assert!(signatures.windows(2).all(|w| w[0] == w[1]), "start resources differ between players: {signatures:?} (seed {seed})");
+        assert!(signatures.windows(2).all(|w| w[0] == w[1]), "start resources differ between players: {signatures:?} ({})", case.at());
     }
 }
 
 #[test]
 fn no_boxes_overlap_and_nodes_stand_on_buildable_ground() {
     let data = test_data();
-    for (n, seed) in [(2, 41), (4, 42), (8, 43)] {
-        let map = generate(&data, &setup(&data, n, seed));
+    for case in sample() {
+        let map = &case.map;
         let nav = map.nav(&data);
         let mut boxes: Vec<Obb> = map.nodes.iter().map(|nd| node_obb(&data, nd)).collect();
         for (nd, obb) in map.nodes.iter().zip(&boxes) {
-            assert!(nav.area_buildable(obb), "{} at {:?} is not on buildable ground", data.node(nd.kind).id, nd.pos);
+            assert!(nav.area_buildable(obb), "{} at {:?} is not on buildable ground ({})", data.node(nd.kind).id, nd.pos, case.at());
         }
         boxes.extend(map.buildings.iter().map(|b| building_obb(&data, b)));
         boxes.extend(map.units.iter().map(|u| unit_obb(&data, u)));
         let pairs = overlapping_pairs(&boxes);
-        assert!(pairs.is_empty(), "{} overlapping boxes, e.g. {:?} (seed {seed})", pairs.len(), pairs.first().map(|(a, b)| (boxes[*a], boxes[*b])));
+        assert!(pairs.is_empty(), "{} overlapping boxes, e.g. {:?} ({})", pairs.len(), pairs.first().map(|(a, b)| (boxes[*a], boxes[*b])), case.at());
     }
 }
 
 #[test]
-fn crater_and_contested_spots_hold_aether_and_adamant() {
+fn every_site_kind_holds_its_node_budget() {
     let data = test_data();
     let vent = data.node_id("aether_vent").unwrap();
     let meteor = data.node_id("adamant_meteor").unwrap();
     let crystal = data.node_id("aether_crystal").unwrap();
-    for (n, seed) in [(1, 51), (2, 52), (3, 53), (5, 54), (8, 55)] {
-        let map = generate(&data, &setup(&data, n, seed));
-        let in_crater = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && nd.pos.distance(map.crater_center) < map.crater_radius).count();
-        assert!((1..=3).contains(&in_crater(vent)), "crater vents: {} (seed {seed})", in_crater(vent));
-        assert!((2..=4).contains(&in_crater(meteor)), "crater meteors: {} (seed {seed})", in_crater(meteor));
-        assert!((8..=12).contains(&in_crater(crystal)), "crater crystals: {} (seed {seed})", in_crater(crystal));
-        // One spot between each pair of neighbours: both sides for two
-        // players, opposite the start for one.
-        let spots = n;
-        let outside = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && nd.pos.distance(map.crater_center) > map.crater_radius * 1.5).count();
-        assert_eq!(outside(vent), spots, "one vent per contested spot (seed {seed})");
-        assert!(outside(meteor) >= spots, "a meteor per contested spot (seed {seed})");
+    let scorched = data.terrain_id("scorched").unwrap();
+    let mut kinds_seen = Vec::new();
+    for case in sample() {
+        let map = &case.map;
+        let f = &map.features;
+        let kind = f.options.site;
+        kinds_seen.push(kind);
+        assert!(f.sites.iter().all(|s| s.kind == kind));
+        let main = f.sites[0];
+        // The land square is centred in the land rectangle.
+        assert_eq!(main.center, (f.land_min + f.land_max) * 0.5, "the main site is at the land square's centre ({})", case.at());
+        let count = |k: NodeTypeId, at: Vec2, r: f32| map.nodes.iter().filter(|nd| nd.kind == k && nd.pos.distance(at) < r).count();
+        let in_any = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && f.sites.iter().any(|s| nd.pos.distance(s.center) < s.radius)).count();
+        let spots = case.players.max(1);
+        let vents_outside = map.nodes.iter().filter(|nd| nd.kind == vent && f.sites.iter().all(|s| nd.pos.distance(s.center) >= s.radius)).count();
+        match kind {
+            SiteKind::Shattered => {
+                // Half the budget in a smaller central crater; the rest fell
+                // at the spots, each a small crater with its vent, meteor and
+                // veins and 2 crystals.
+                assert_eq!(f.sites.len(), 1 + spots, "a crater per spot ({})", case.at());
+                assert!((1..=2).contains(&count(vent, main.center, main.radius)), "{}", case.at());
+                assert!((1..=2).contains(&count(meteor, main.center, main.radius)), "{}", case.at());
+                assert!((4..=6).contains(&count(crystal, main.center, main.radius)), "{}", case.at());
+                for s in &f.sites[1..] {
+                    assert_eq!((count(vent, s.center, s.radius), count(meteor, s.center, s.radius), count(crystal, s.center, s.radius)), (1, 1, 2), "spot crater at {} ({})", s.center, case.at());
+                }
+                assert_eq!(vents_outside, 0);
+            }
+            _ => {
+                let n = (in_any(vent), in_any(meteor), in_any(crystal));
+                assert!((1..=3).contains(&n.0) && (2..=4).contains(&n.1) && (8..=12).contains(&n.2), "site nodes {n:?} ({})", case.at());
+                // One spot between each pair of neighbours (both sides for
+                // two players), each with its vent and meteor.
+                assert_eq!(vents_outside, spots, "one vent per contested spot ({})", case.at());
+            }
+        }
+        match kind {
+            SiteKind::Scar => assert!(f.sites.len() <= 3),
+            SiteKind::Crater | SiteKind::Lake | SiteKind::Spire => assert_eq!(f.sites.len(), 1),
+            SiteKind::Shattered => {}
+        }
+        // Site floors are scar.
+        let floor = if kind == SiteKind::Spire { main.center + Vec2::X * (main.radius - 1.0) } else { main.center + Vec2::X * 1.5 };
+        let floor_terrain = map.terrain_at(floor).unwrap();
+        if kind != SiteKind::Lake {
+            assert_eq!(floor_terrain, scorched, "{:?} floor is {} ({})", kind, data.terrain_def(floor_terrain).id, case.at());
+        }
+    }
+    for kind in SiteKind::ALL {
+        assert!(kinds_seen.contains(&kind));
     }
 }
 
 #[test]
-fn every_map_has_every_terrain_feature_in_the_wilds() {
+fn rivers_cross_the_land_away_from_the_edges_with_fords_at_most_36_m_apart() {
+    let data = test_data();
+    let deep = data.terrain_id("deep_water").unwrap();
+    for case in sample() {
+        let map = &case.map;
+        let f = &map.features;
+        assert_eq!(f.rivers.len(), f.options.rivers as usize, "requested rivers ({})", case.at());
+        let side = (f.land_max - f.land_min).min_element();
+        for r in &f.rivers {
+            assert_eq!(r.points.len(), r.half_widths.len());
+            let length = (r.points.len() - 1) as f32 * 0.75;
+            assert!(length > side * 0.3, "a river {length} m long on a {side} m land ({})", case.at());
+            // Narrower (from 1.2 m) only on the most crowded maps.
+            assert!(r.half_widths.iter().all(|h| (1.2..=4.0).contains(h)));
+            // Fords: never more than 36 m apart, nor further from either
+            // end (a tributary ends in a ford where it joins).
+            let mut at: Vec<f32> = r.fords.iter().map(|i| *i as f32 * 0.75).collect();
+            at.sort_by(f32::total_cmp);
+            at.insert(0, 0.0);
+            at.push(length);
+            for w in at.windows(2) {
+                assert!(w[1] - w[0] <= 36.0 + 0.75, "{} m between fords at {} and {} ({})", w[1] - w[0], w[0], w[1], case.at());
+            }
+            // Away from its ends the course never hugs a land edge.
+            let skip = (25.0 / 0.75) as usize;
+            if r.points.len() > 2 * skip {
+                let middle = &r.points[skip..r.points.len() - skip];
+                let nearest = middle.iter().map(|p| land_edge_distance(f, map.size, *p)).fold(f32::INFINITY, f32::min);
+                assert!(nearest > 8.0, "a river comes within {nearest} m of the edge ({})", case.at());
+            }
+        }
+        // Fords split every river into stretches: no deep body along a river
+        // runs on for more than ~40 m without one. (Lakes and the crater
+        // lake are bigger bodies of their own.)
+        let near_river = |c: IVec2| {
+            let p = c.as_vec2() + Vec2::splat(0.5);
+            f.rivers.iter().any(|r| r.points.iter().step_by(4).any(|q| q.distance(p) < 6.0))
+        };
+        for body in bodies(map, |t| t == deep) {
+            if !near_river(body[0]) {
+                continue;
+            }
+            let (lo, hi) = body.iter().fold((IVec2::MAX, IVec2::MIN), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+            let size = (hi - lo + IVec2::ONE).as_vec2();
+            assert!(size.max_element() <= 40.0, "{size} m of deep river without a ford ({})", case.at());
+        }
+    }
+}
+
+#[test]
+fn ocean_lies_beyond_the_land_exactly_at_coast_and_seas() {
+    let data = test_data();
+    let ocean = data.terrain_id("ocean").unwrap();
+    for case in sample() {
+        let map = &case.map;
+        let f = &map.features;
+        let edges = f.options.water.ocean_edges();
+        assert_eq!(f.ocean_edges.len(), edges, "{}", case.at());
+        let sea: Vec<Vec2> = cells(map).filter(|(_, t)| *t == ocean).map(|(p, _)| p).collect();
+        assert_eq!(!sea.is_empty(), edges > 0, "ocean present exactly with ocean edges ({})", case.at());
+        // Never inside the land rectangle (coasts only wobble outward).
+        assert!(sea.iter().all(|p| !(p.cmpge(f.land_min).all() && p.cmple(f.land_max).all())), "ocean on the land ({})", case.at());
+        // Every ocean edge is ocean along its middle.
+        for e in &f.ocean_edges {
+            let mid = map.size * 0.5;
+            let p = match e {
+                MapEdge::West => Vec2::new(0.5, mid),
+                MapEdge::East => Vec2::new(map.size - 0.5, mid),
+                MapEdge::South => Vec2::new(mid, 0.5),
+                MapEdge::North => Vec2::new(mid, map.size - 0.5),
+            };
+            assert_eq!(map.terrain_at(p), Some(ocean), "{e:?} edge ({})", case.at());
+        }
+    }
+}
+
+#[test]
+fn every_map_has_its_terrain_features_in_the_wilds() {
     let data = test_data();
     let terrain = |id: &str| data.terrain_id(id).unwrap();
     let (palm, silicon) = (data.node_id("palm").unwrap(), data.node_id("silicon_deposit").unwrap());
-    for n in [2, 4, 6, 8] {
-        for seed in 0..40 {
-            let map = generate(&data, &setup(&data, n, seed));
-            // Outside the start areas (whose quartz patches are sand) and the
-            // crater (whose rim is cliff and surroundings marsh and thicket).
-            let wild = |p: Vec2| {
-                p.distance(map.crater_center) > map.crater_radius + 5.0 && map.starts.iter().all(|s| p.distance(*s) > START_AREA_RADIUS + 1.0)
-            };
-            let count = |id: &str| cells(&map).filter(|(_, t)| *t == terrain(id)).count();
-            let wild_count = |id: &str| cells(&map).filter(|(p, t)| *t == terrain(id) && wild(*p)).count();
-            let wild_nodes = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && wild(nd.pos)).count();
-            let at = format!("seed {seed}, {n} players");
-            assert!(wild_count("sand") > 60, "a dune region ({at})");
-            assert!(wild_nodes(palm) > 0 && wild_nodes(silicon) > 0, "palms and quartz on the dunes ({at})");
-            assert!(wild_count("cliff") > 30, "a ridge or highland ({at})");
-            assert!(count("deep_water") > 0 && count("shallow_water") > 50, "water with shallow banks or fords ({at})");
-            assert!(count("marsh") > 0 && count("thicket") > 0, "marsh and thicket ({at})");
-            assert!(count("grass") > map.terrain.len() / 2, "mostly grass ({at})");
+    for case in sample() {
+        let map = &case.map;
+        let f = &map.features;
+        // Outside the start areas (whose quartz patches are sand) and the
+        // sites (rims are cliff, their surroundings marsh and thicket).
+        let wild = |p: Vec2| f.sites.iter().all(|s| p.distance(s.center) > s.radius + 5.0) && map.starts.iter().all(|s| p.distance(*s) > START_AREA_RADIUS + 1.0);
+        let count = |id: &str| cells(map).filter(|(_, t)| *t == terrain(id)).count();
+        let wild_count = |id: &str| cells(map).filter(|(p, t)| *t == terrain(id) && wild(*p)).count();
+        let wild_nodes = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && wild(nd.pos)).count();
+        let at = case.at();
+        assert!(wild_count("sand") > 60, "a dune region ({at})");
+        assert!(wild_nodes(palm) > 0 && wild_nodes(silicon) > 0, "palms and quartz on the dunes ({at})");
+        assert!(wild_count("cliff") > 30, "a ridge or highland ({at})");
+        assert!(count("deep_water") > 0 && count("ford") > 0, "rivers with fords ({at})");
+        assert!(count("marsh") > 0 && count("thicket") > 0, "marsh and thicket ({at})");
+        if f.options.size != MapSize::Small {
+            assert!(count("mountain") > 0 && !f.mountains.is_empty(), "mountains on Medium and larger ({at})");
         }
+        let land = cells(map).filter(|(p, _)| p.cmpge(f.land_min).all() && p.cmple(f.land_max).all()).count();
+        let grass = cells(map).filter(|(p, t)| *t == terrain("grass") && p.cmpge(f.land_min).all() && p.cmple(f.land_max).all()).count();
+        assert!(grass * 2 > land, "mostly grass on the land ({at})");
     }
 }
 
 #[test]
-fn deep_water_can_be_crossed_at_least_every_40_m() {
+fn mountains_are_impassable_to_every_ground_unit() {
     let data = test_data();
-    let deep = data.terrain_id("deep_water").unwrap();
-    for n in [2, 4, 8] {
-        for seed in 0..20 {
-            let map = generate(&data, &setup(&data, n, seed));
-            // Fords split every river into stretches: no deep body may run
-            // on for more than ~40 m without a shallow crossing.
-            for size in bodies(&map, deep) {
-                assert!(size.max_element() <= 40.0, "{size} m of deep water without a ford (seed {seed}, {n} players)");
-            }
-        }
+    let mountain = data.terrain_id("mountain").unwrap();
+    for flag in [MoveFlag::Foot, MoveFlag::Mounted, MoveFlag::Wheeled, MoveFlag::Tracked, MoveFlag::Hover] {
+        assert!(!data.terrain_passable(mountain, Mobility::of(flag)), "{flag:?}");
     }
+    let ironhold = data.faction_id("ironhold").unwrap();
+    let climber = data.unit_ids().find(|u| data.unit(*u).locomotion == MoveFlag::Foot).map(|u| data.unit_mobility(u, ironhold)).unwrap();
+    assert!(!data.terrain_passable(mountain, climber), "not even climbers");
+    assert!(data.terrain_passable(mountain, Mobility::of(MoveFlag::Flying)));
+    let ford = data.terrain_id("ford").unwrap();
+    assert!(data.terrain_passable(ford, Mobility::of(MoveFlag::Wheeled)), "wheeled machines cross at fords");
 }
 
 #[test]
@@ -435,4 +711,108 @@ fn a_384_m_map_generates_well_under_a_second() {
     assert_eq!(map.size, 384.0);
     assert!(took.as_secs_f32() < 1.0, "took {took:?}");
     println!("384 m, 8 players: {took:?}, {} nodes", map.nodes.len());
+}
+
+#[test]
+fn a_huge_map_for_eight_generates_in_a_few_seconds() {
+    let data = test_data();
+    let s = setup(&data, 8, 98);
+    let o = options(MapSize::Huge, WaterLevel::Seas, 2, SiteKind::Scar);
+    let started = Instant::now();
+    let map = generate_with(&data, &s, &o);
+    let took = started.elapsed();
+    assert!(map.size > 616.0);
+    assert!(took.as_secs_f32() < 4.0, "took {took:?}");
+    println!("{} m, 8 players, seas: {took:?}, {} nodes", map.size, map.nodes.len());
+}
+
+/// Lists every problem over a wide sample instead of stopping at the first
+/// (a tuning aid).
+#[test]
+#[ignore = "diagnostic: cargo test -p af_map --test generate diagnose -- --ignored --nocapture"]
+fn diagnose() {
+    let data = test_data();
+    let (vent, meteor, crystal) = (data.node_id("aether_vent").unwrap(), data.node_id("adamant_meteor").unwrap(), data.node_id("aether_crystal").unwrap());
+    let terrain = |id: &str| data.terrain_id(id).unwrap();
+    let mut problems = 0;
+    for players in 2..=8 {
+        for size in MapSize::ALL {
+            for water in WaterLevel::ALL {
+                for site in SiteKind::ALL {
+                    let rivers = 1 + (players as u8 + water.level()) % 2;
+                    let case = Case::new(&data, players, 7 + players as u64 * 31 + water.level() as u64, options(size, water, rivers, site));
+                    let map = &case.map;
+                    let f = &map.features;
+                    let mut notes = Vec::new();
+                    if f.rivers.len() != rivers as usize {
+                        notes.push(format!("rivers {}/{rivers}", f.rivers.len()));
+                    }
+                    if !map.cut_off.is_empty() {
+                        notes.push(format!("cut off {:?}", map.cut_off));
+                    }
+                    let main = f.sites[0];
+                    let sites = if site == SiteKind::Shattered { 1 } else { f.sites.len() };
+                    let count = |k: NodeTypeId| map.nodes.iter().filter(|nd| nd.kind == k && f.sites[..sites].iter().any(|s| nd.pos.distance(s.center) < s.radius)).count();
+                    let n = (count(vent), count(meteor), count(crystal));
+                    let ok = if site == SiteKind::Shattered {
+                        (1..=2).contains(&n.0) && (1..=2).contains(&n.1) && (4..=6).contains(&n.2)
+                    } else {
+                        (1..=3).contains(&n.0) && (2..=4).contains(&n.1) && (8..=12).contains(&n.2)
+                    };
+                    if !ok {
+                        notes.push(format!("site nodes {n:?} (r {})", main.radius));
+                    }
+                    let cliff = cells(map).filter(|(_, t)| *t == terrain("cliff")).count();
+                    if cliff < 40 {
+                        notes.push(format!("cliff {cliff}"));
+                    }
+                    if size != MapSize::Small && f.mountains.is_empty() {
+                        notes.push("no mountains".to_string());
+                    }
+                    if !notes.is_empty() {
+                        problems += 1;
+                        println!("{}: {}", case.at(), notes.join("; "));
+                    }
+                }
+            }
+        }
+    }
+    println!("{problems} maps with problems");
+}
+
+/// Every player count, size, water level, river count and site kind, three
+/// seeds each: everything reachable for every class, the rivers asked for,
+/// clear starts.
+#[test]
+#[ignore = "long: cargo test -p af_map --test generate -- --ignored --nocapture"]
+fn sweep_every_option() {
+    let data = test_data();
+    let grass = data.terrain_id("grass").unwrap();
+    let started = Instant::now();
+    let (mut maps, mut carved, mut slowest) = (0, 0, (0.0f32, String::new()));
+    for players in 2..=8 {
+        for size in MapSize::ALL {
+            for water in WaterLevel::ALL {
+                for rivers in [1, 2] {
+                    for site in SiteKind::ALL {
+                        for seed in 0..3 {
+                            let t = Instant::now();
+                            let case = Case::new(&data, players, seed * 7919 + players as u64, options(size, water, rivers, site));
+                            let took = t.elapsed().as_secs_f32();
+                            if took > slowest.0 {
+                                slowest = (took, case.at());
+                            }
+                            let map = &case.map;
+                            maps += 1;
+                            carved += !map.carved.is_empty() as usize;
+                            assert!(map.cut_off.is_empty(), "{:?} ({})", map.cut_off, case.at());
+                            assert_eq!(map.features.rivers.len(), rivers as usize, "{}", case.at());
+                            assert!(map.starts.iter().all(|s| map.terrain_at(*s) == Some(grass)), "{}", case.at());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("{maps} maps in {:?}; {carved} needed a carve; slowest {:.2} s ({})", started.elapsed(), slowest.0, slowest.1);
 }
