@@ -2,7 +2,7 @@
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy, team_bit};
 use af_core::ext::input::{PlacementGhost, PlacementPreview, ShowPaths};
-use af_core::ext::render::{MAX_GROUND_OFFSET, terrain_ground};
+use af_core::ext::render::{MAX_GROUND_OFFSET, RoutesShown, terrain_ground};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use af_render::BoxRenderPlugin;
@@ -11,7 +11,7 @@ use af_render::entities::{BoxVisual, VisualSig};
 use af_render::fog::{FogMemory, MemoryPool};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
-use af_render::paths::{LegKind, PathOverlay};
+use af_render::paths::{LegKind, MAX_ROUTES, PathOverlay};
 use af_render::scene::RenderScene;
 use af_render::terrain::{TerrainBox, terrain_top};
 use bevy::prelude::*;
@@ -577,4 +577,54 @@ fn a_selected_patrol_always_shows_its_loop() {
     app.world_mut().entity_mut(w.own_unit).remove::<Selected>();
     run_ticks(app, 1);
     assert!(app.world().resource::<PathOverlay>().plan.loops.is_empty());
+}
+
+/// The pathfinder knows the whole map, so a path round an enemy building
+/// the team has not seen would trace it: the route is drawn through the
+/// turns in sight, then straight on to the goal.
+#[test]
+fn routes_never_trace_what_the_fog_hides() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    // Team 0 sees the west half of the map (x < 32); an enemy house stands
+    // in the east, unseen, between the unit and its goal.
+    app.world_mut().insert_resource(fog_seeing((0..32).flat_map(|y| (0..16).map(move |x| (x, y)))));
+    with_commands(app, |c, d, p| spawn_building(c, d, &p.list[1], d.building_id("house").unwrap(), Vec2::new(40.0, 20.0), 0.0, true));
+    let (from, to) = (Vec2::new(20.0, 20.0), Vec2::new(56.0, 20.0));
+    place(app, w.own_unit, from, 0.0);
+    send(app, w.own_unit, &[Order::Move { target: to }], to);
+    let seq = app.world().get::<MoveGoal>(w.own_unit).unwrap().seq;
+    let round = vec![Vec2::new(28.0, 20.0), Vec2::new(36.0, 14.0), Vec2::new(44.0, 14.0), to];
+    let path = PathState { waypoints: round.clone(), next: 0, status: PathStatus::Following, goal_seq: seq, ..default() };
+    app.world_mut().entity_mut(w.own_unit).insert(path);
+    run_ticks(app, 1);
+    assert_eq!(legs(app), vec![(vec![from, round[0], to], LegKind::Move)], "the turns round the house are left out");
+    // Fog off: the whole path.
+    app.world_mut().resource_mut::<FogOfWar>().enabled = false;
+    run_ticks(app, 1);
+    assert_eq!(legs(app), vec![([vec![from], round].concat(), LegKind::Move)]);
+}
+
+/// Past [`MAX_ROUTES`] selected units, those nearest the centre of the view
+/// are drawn, and the HUD is told how many.
+#[test]
+fn a_big_selection_draws_the_routes_nearest_the_view() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    app.world_mut().resource_mut::<CameraRig>().focus = Vec2::new(0.0, 40.0);
+    let peasant = app.world().resource::<Data>().unit_id("peasant").unwrap();
+    let at = |i: usize| Vec2::new(2.0 + 0.8 * i as f32, 40.0);
+    let army: Vec<Entity> = (0..70).map(|i| with_commands(app, |c, d, p| spawn_unit(c, d, &p.list[0], peasant, at(i), 0.0))).collect();
+    run_ticks(app, 1);
+    for (i, e) in army.iter().enumerate() {
+        let goal = at(i) + Vec2::new(0.0, 10.0);
+        send(app, *e, &[Order::Move { target: goal }], goal);
+    }
+    run_ticks(app, 1);
+    let starts: Vec<Vec2> = legs(app).iter().map(|(points, _)| points[0]).collect();
+    assert_eq!(starts.len(), MAX_ROUTES);
+    assert!((0..MAX_ROUTES).all(|i| starts.contains(&at(i))), "the nearest {MAX_ROUTES}: {starts:?}");
+    assert_eq!(*app.world().resource::<RoutesShown>(), RoutesShown { drawn: MAX_ROUTES, wanted: 70 });
 }

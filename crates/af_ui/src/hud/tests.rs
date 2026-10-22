@@ -4,6 +4,7 @@
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy};
 use af_core::ext::input::ShowPaths;
+use af_core::ext::render::RoutesShown;
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use bevy::ecs::entity::EntityHashMap;
@@ -445,10 +446,30 @@ fn the_paths_button_flips_the_toggle_and_shows_its_state() {
     app.update();
     let t = texts(&mut app);
     assert!(t.contains(&"Paths: off (P)".to_string()), "{t:?}");
+    // Too many routes to draw (af_render): the button says how many are.
+    app.insert_resource(RoutesShown { drawn: 64, wanted: 80 });
+    app.update();
+    let t = texts(&mut app);
+    assert!(t.contains(&"Paths: off (P)\n64 of 80 routes shown".to_string()), "{t:?}");
     // Spectators command no units.
     app.insert_resource(LocalPlayer(None));
     app.update();
     assert_eq!(app.world().get::<Node>(shown).unwrap().display, Display::None);
+}
+
+/// The Paths button stacks under the game-over screen and the leave panel
+/// (later siblings draw on top), so their dimming covers it and their
+/// click blocking keeps it from being pressed meanwhile.
+#[test]
+fn the_paths_button_stays_under_the_full_screen_panels() {
+    let mut app = hud_app();
+    let paths = button(&mut app, "Paths: off (P)");
+    let world = app.world_mut();
+    let order: Vec<Entity> = world.query_filtered::<&Children, With<HudRoot>>().single(world).unwrap().iter().collect();
+    let screen = world.query_filtered::<Entity, With<GameOverScreen>>().single(world).unwrap();
+    let leave = world.query_filtered::<Entity, With<LeavePanel>>().single(world).unwrap();
+    let at = |e: Entity| order.iter().position(|&c| c == e).unwrap();
+    assert!(at(paths) < at(screen) && at(paths) < at(leave), "{order:?}");
 }
 
 #[test]

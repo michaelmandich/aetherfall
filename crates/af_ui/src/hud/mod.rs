@@ -135,9 +135,11 @@ fn spawn_hud(mut commands: Commands, data: Res<Data>, mut images: ResMut<Assets<
                     });
                 card_view::spawn(bottom);
             });
+            // Before the tooltips and the full-screen panels, which stack
+            // over it (later siblings draw on top).
+            paths::spawn(root);
             card_view::spawn_tooltip(root);
             overlays::spawn(root);
-            paths::spawn(root);
         });
 }
 

@@ -46,6 +46,7 @@ pub mod terrain;
 
 use af_core::ext::fog::FogGhosts;
 use af_core::ext::input::PlacementPreview;
+use af_core::ext::render::RoutesShown;
 use af_core::prelude::*;
 use bevy::gizmos::GizmoPlugin;
 use bevy::gltf::Gltf;
@@ -80,6 +81,7 @@ impl Plugin for BoxRenderPlugin {
             .init_resource::<ghost::GhostPool>()
             .init_resource::<overlay::RallyPool>()
             .init_resource::<paths::PathOverlay>()
+            .init_resource::<RoutesShown>()
             .init_resource::<fog::FogOverlay>()
             .init_resource::<fog::MemoryPool>()
             .init_resource::<model::rig::TeamTints>()

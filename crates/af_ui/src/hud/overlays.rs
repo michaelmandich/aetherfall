@@ -355,7 +355,7 @@ pub(crate) fn cursor_hint(data: &GameData, player: Option<&PlayerState>, mode: &
                 TargetAction::Move => "Move: click a destination",
                 TargetAction::AttackMove => "Attack: click an enemy, or ground to attack-move",
                 TargetAction::Attack => "Attack: click an enemy",
-                TargetAction::Patrol => "Patrol: click the far end of the route",
+                TargetAction::Patrol => "Patrol: click the far end of the route (Shift-click more points for a loop)",
                 TargetAction::Rally => "Rally: click where new units should go",
                 TargetAction::Gather => "Gather: click a resource or a farm",
                 TargetAction::Repair => "Repair: click a damaged building or machine",
