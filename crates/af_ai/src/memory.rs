@@ -170,6 +170,19 @@ pub struct SiteWatch {
     pub since: f32,
 }
 
+/// The way from home to the middle of the map as last worked out (see
+/// `plan::front_from`): for this home and the regions of this terrain
+/// stamp (0 without regions), the front, and which army units can get
+/// there (see `plan::reachable_mix`). Kept while both stay, so the coarse
+/// searches behind them run once, not every think.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HomeWay {
+    pub home: Vec2,
+    pub stamp: u64,
+    pub front: Vec2,
+    pub reach: Vec<(UnitTypeId, bool)>,
+}
+
 /// Everything one AI player remembers between thinks.
 #[derive(Clone, Debug, Default)]
 pub struct AiMemory {
@@ -203,6 +216,8 @@ pub struct AiMemory {
     /// there, as (owner, unit, position), sorted by unit and refreshed every
     /// think (see `update_remnants` in the crate root).
     pub remnants: Vec<(PlayerId, Entity, Vec2)>,
+    /// The way from home to the middle (see [`HomeWay`]).
+    pub home_way: Option<HomeWay>,
     /// Remnant units a hunt could not close in on: (unit, until); see
     /// `Think::press_attack`.
     pub lost_prey: Vec<(Entity, f32)>,

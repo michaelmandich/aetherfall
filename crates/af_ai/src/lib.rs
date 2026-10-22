@@ -150,7 +150,7 @@ pub use economy::{
 };
 pub use lanes::{Mover, PINCH_WIDTH, POCKET_WINDOW, WALK_MARGIN, ground_movers, seals_pocket};
 pub use memory::{
-    AiBrains, AiMemory, Alert, AttackState, EnemyIntel, GRUDGE_TIME, INCOME_WINDOW, INTEL_HALF_LIFE, MAX_REMOTE_CLUSTERS, PendingBuild,
+    AiBrains, AiMemory, Alert, AttackState, EnemyIntel, GRUDGE_TIME, HomeWay, INCOME_WINDOW, INTEL_HALF_LIFE, MAX_REMOTE_CLUSTERS, PendingBuild,
     RemoteSearch, SPEND_WINDOW, SPLIT_WINDOW, SiteWatch, WorkerOrder,
 };
 pub use plan::{ADVANTAGE, AGE_SCHEDULE, MIN_SEEN, Plan, passive_income};

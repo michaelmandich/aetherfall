@@ -3449,10 +3449,39 @@ fn units_with_no_way_to_the_middle_are_left_out_of_the_mix() {
     let home = m.start(0);
     m.river(125..131, Some(("shallow_water", 96..104)));
     let snap = m.snapshot(0);
-    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone()), vec![(spear, 2.0)]);
+    let mut known = Vec::new();
+    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone(), &mut known), vec![(spear, 2.0)]);
+    assert_eq!(known, vec![(ram, false), (spear, true)], "the verdicts are kept");
     m.river(125..131, Some(("ford", 96..104)));
     let snap = m.snapshot(0);
-    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone()), comp);
+    assert_eq!(crate::plan::reachable_mix(&m.view(0, &snap), home, comp.clone(), &mut Vec::new()), comp);
+}
+
+/// The way from home to the middle is worked out once per home and terrain:
+/// a think keeps it in memory, and the next plans use it until the regions
+/// change.
+#[test]
+fn the_way_to_the_middle_is_kept_between_thinks() {
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    m.workers(0, 3, m.start(0));
+    m.river(125..131, Some(("ford", 170..177)));
+    m.tick();
+    let mut mem = AiMemory::default();
+    m.think(0, &mut mem);
+    let way = mem.home_way.clone().expect("kept");
+    assert!(way.front.y > 0.5 && way.stamp != 0, "{way:?}");
+    // A stale entry is not trusted after the terrain changed ...
+    m.river(125..131, None);
+    let snap = m.snapshot(0);
+    let plan = Plan::new(&m.view(0, &snap), &mem);
+    assert_ne!(plan.home_way.stamp, way.stamp);
+    // ... and a fresh one is used as it is.
+    let mut fake = plan.home_way.clone();
+    fake.front = Vec2::new(0.0, -1.0);
+    mem.home_way = Some(fake);
+    let snap = m.snapshot(0);
+    assert_eq!(Plan::new(&m.view(0, &snap), &mem).front, Vec2::new(0.0, -1.0));
 }
 
 /// Builders are picked among the workers that can walk to the site.

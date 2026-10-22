@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use crate::army::{army_mix, army_target, wave_due, wave_floor, wave_size};
 use crate::budget::just_in_time_reserve;
 use crate::economy::worker_target;
-use crate::memory::AiMemory;
+use crate::memory::{AiMemory, HomeWay};
 use crate::progress::{AgeUpStep, age_path_cost, age_up_step};
 use crate::view::AiView;
 
@@ -45,6 +45,9 @@ pub struct Plan {
     pub front: Vec2,
     /// Army gathering point.
     pub rally: Vec2,
+    /// What `front` and the mix's reach were worked out from (kept in
+    /// `AiMemory::home_way` for the next thinks).
+    pub home_way: HomeWay,
     pub worker_kind: UnitTypeId,
     pub workers: u32,
     pub workers_queued: u32,
@@ -119,7 +122,10 @@ impl Plan {
             let s = data.building(b.kind).size;
             Vec2::new(s[0], s[2]).length() * 0.5
         });
-        let front = front_from(view, home);
+        let stamp = view.regions.map_or(0, |r| r.stamp());
+        let known = mem.home_way.as_ref().filter(|w| w.home == home && w.stamp == stamp);
+        let front = known.map_or_else(|| front_from(view, home), |w| w.front);
+        let mut home_way = HomeWay { home, stamp, front, reach: known.map_or_else(Vec::new, |w| w.reach.clone()) };
         let mut wanted = view.clamp(home + front * RALLY_DISTANCE, 4.0);
         if !view.worker_reaches(home, wanted)
             && let Some(near) = view.regions.and_then(|r| {
@@ -204,12 +210,14 @@ impl Plan {
         let allowed = AGE_SCHEDULE.get(me.age.saturating_sub(1) as usize).copied().unwrap_or(f32::INFINITY);
         let behind_schedule = pending && mem.age_duration(view.time) > allowed;
 
+        let comp = reachable_mix(view, home, army_mix(data, me, &mem.intel, &mem.known, mem.razing_lately(view.time), &pop_by_kind), &mut home_way.reach);
         Plan {
             hall: hall.map(|b| b.entity),
             home,
             hall_radius,
             front,
             rally,
+            home_way,
             worker_kind,
             workers: snap.workers.len() as u32,
             workers_queued,
@@ -221,7 +229,7 @@ impl Plan {
             wave_size,
             queued_pop,
             production,
-            comp: reachable_mix(view, home, army_mix(data, me, &mem.intel, &mem.known, mem.razing_lately(view.time), &pop_by_kind)),
+            comp,
             age_up,
             age_cost,
             shortfall: mem.shortfall,
@@ -255,17 +263,22 @@ pub fn front_from(view: &AiView, home: Vec2) -> Vec2 {
 /// The army mix less the units no route leads for from `home` to the main
 /// meteor site (siege on wheels where only shallows cross a river, giants
 /// too wide for every pass), unless that would leave nothing. Flyers always
-/// get there; without regions everything does.
-pub(crate) fn reachable_mix(view: &AiView, home: Vec2, comp: Vec<(UnitTypeId, f32)>) -> Vec<(UnitTypeId, f32)> {
+/// get there; without regions everything does. `known` holds the verdicts
+/// worked out so far for this home (looked up, and added to).
+pub(crate) fn reachable_mix(view: &AiView, home: Vec2, comp: Vec<(UnitTypeId, f32)>, known: &mut Vec<(UnitTypeId, bool)>) -> Vec<(UnitTypeId, f32)> {
     if view.regions.is_none() {
         return comp;
     }
     let near = view.features.and_then(|f| f.sites.first()).map_or(GOAL_SEARCH_RADIUS, |s| s.radius.max(GOAL_SEARCH_RADIUS));
-    let kept: Vec<(UnitTypeId, f32)> = comp
-        .iter()
-        .copied()
-        .filter(|(u, _)| view.data.unit(*u).locomotion == MoveFlag::Flying || view.reaches(*u, home, view.crater, near))
-        .collect();
+    let mut gets_there = |u: UnitTypeId| match known.iter().find(|k| k.0 == u) {
+        Some(k) => k.1,
+        None => {
+            let yes = view.data.unit(u).locomotion == MoveFlag::Flying || view.reaches(u, home, view.crater, near);
+            known.push((u, yes));
+            yes
+        }
+    };
+    let kept: Vec<(UnitTypeId, f32)> = comp.iter().copied().filter(|(u, _)| gets_there(*u)).collect();
     if kept.is_empty() { comp } else { kept }
 }
 

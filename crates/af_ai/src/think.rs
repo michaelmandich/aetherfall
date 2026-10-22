@@ -111,6 +111,7 @@ pub fn run(view: &AiView, mem: &mut AiMemory, out: &mut Vec<PlayerCommand>) {
     mem.observe_income(view.time, &view.me.stats.gathered);
     mem.note_age(view.me.age, view.time);
     let plan = Plan::new(view, mem);
+    mem.home_way = Some(plan.home_way.clone());
     let mut t = Think::new(*view, plan, mem, out);
     t.defend();
     t.abandon_stalled_sites();
