@@ -8,8 +8,9 @@
 //! * [`mesh`]: the field cut into chunks of 64 x 64 cells, one ground mesh
 //!   and one water surface each (normals from the whole field, so chunks
 //!   meet without seams); flat chunks cast no shadows.
-//! * [`props`]: brambles, reeds, scree, meteor rock and the Starspire,
-//!   merged into one mesh per chunk.
+//! * [`props`]: brambles, reeds, scree and meteor rock, merged into one
+//!   mesh per chunk, casting no shadows; the Starspire of a `Spire` site
+//!   is its own mesh and casts its tall shadow.
 //! * [`material`]: the ground, water and prop materials, `StandardMaterial`
 //!   extended with the embedded shaders `terrain.wgsl`, `water.wgsl` and
 //!   `props.wgsl` (which import `common.wgsl`), created once per match.
@@ -18,6 +19,9 @@
 //! The drawn surface is published as `af_core::ext::render::TerrainSurface`.
 //! Apps without the render stack (headless tests) get the same chunk
 //! entities with plain `StandardMaterial`s and no shaders.
+//!
+//! The meshes are built on the compute task pool: a 384 m map takes about
+//! 60 ms, a 1024 m one about 300 ms (dev build, 24 threads).
 
 pub mod field;
 pub mod material;
@@ -30,12 +34,12 @@ use std::time::Instant;
 use af_core::ext::map::MapFeatures;
 use af_core::ext::render::{FogTexture, TerrainSurface, WATER_LEVEL};
 use af_core::prelude::*;
+use bevy::camera::primitives::Aabb;
 use bevy::ecs::system::SystemParam;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::tasks::ComputeTaskPool;
-use bevy::camera::primitives::Aabb;
 
 use self::field::{Field, FieldSource};
 use self::material::{GroundParams, PropExt, PropMaterial, TerrainExt, TerrainMaterial, WaterExt, WaterMaterial};

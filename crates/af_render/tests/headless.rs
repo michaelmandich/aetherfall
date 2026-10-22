@@ -302,6 +302,8 @@ fn leaving_the_match_clears_the_scene() {
     app.update();
     let scene = app.world_mut().query_filtered::<(), With<RenderScene>>().iter(app.world()).count();
     assert_eq!(scene, 0);
+    assert!(app.world().get_resource::<TerrainSurface>().is_none(), "the drawn surface goes with the map");
+    assert!(app.world().resource::<TerrainState>().materials().is_none());
 }
 
 #[test]
