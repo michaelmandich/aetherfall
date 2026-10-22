@@ -221,9 +221,11 @@ mod tests {
         assert_eq!(reach.nearest(Vec2::new(90.3, 33.3), &grid), Vec2::new(90.3, 33.3));
     }
 
-    /// On a big map, slots off a shore cost a look round each, not a sort
-    /// of the whole region (thousands of coarse nodes) per slot: an order
-    /// to a lake shore would stall the tick it is given in.
+    /// On a big map, slots off a shore cost a look round each, not a walk
+    /// over the whole region (thousands of coarse nodes) per slot: an order
+    /// to a lake shore must not stall the tick it is given in. The bound is
+    /// absolute, since `RegionMap::nearest_in` itself no longer sorts the
+    /// region (it is checked here only as the reference answer's cost).
     #[test]
     fn slots_off_a_shore_on_a_big_map_skip_the_region_wide_search() {
         let (grid, regions, walker) = lake_shore(1024, 512);
@@ -246,6 +248,9 @@ mod tests {
         };
         let bounded = time(&|s| reach.nearest(s, &grid));
         let full = time(&|s| map.nearest_in(region, s).expect("a shore"));
-        assert!(bounded * 10 < full, "{bounded:?} for the slots against {full:?} searching the region for each");
+        // 80 slots well inside a millisecond each way (a sort of the region
+        // per slot took about 2 ms a slot on this map).
+        assert!(bounded < Duration::from_millis(5), "{bounded:?} for the slots (region-wide answers: {full:?})");
+        assert!(full < Duration::from_millis(20), "{full:?} for the region-wide answers");
     }
 }

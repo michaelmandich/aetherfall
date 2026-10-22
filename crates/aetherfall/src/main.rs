@@ -432,7 +432,7 @@ mod tests {
         }
         let (min, max) = af_ui::menu::MAP_METRES_RANGE;
         let help = include_str!("main.rs");
-        assert!(help.contains(&format!("--map-size M            map side in metres, {min}-{max}")), "the --help range is af_map's");
+        assert!(help.contains(&format!("--map-size M            land side in metres, {min}-{max}")), "the --help range is af_map's");
     }
 
     /// Every flag the parser takes is in the --help text.
