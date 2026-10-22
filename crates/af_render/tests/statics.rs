@@ -246,13 +246,14 @@ fn a_foundation_rises_out_of_the_ground_as_it_is_built() {
 }
 
 #[test]
-fn models_stand_on_the_sand_their_footprint_overlaps() {
+fn models_on_sand_stand_on_the_flat_ground() {
     let mut t = setup(true);
     let app = &mut t.app;
     let data = test_data();
     let sand = data.terrain_id("sand").unwrap();
-    let top = af_render::terrain::flat_top(data.terrain_def(sand));
-    assert!(top > 0.0, "sand is drawn proud of the ground units walk on");
+    // Dunes are paint on flat ground now: drawn exactly where units walk.
+    let top = 0.0;
+    assert_eq!(af_core::ext::render::terrain_ground(data.terrain_def(sand)), top);
     {
         let mut nav = app.world_mut().resource_mut::<Nav>();
         for y in 0..64 {
@@ -287,11 +288,11 @@ fn models_stand_on_the_sand_their_footprint_overlaps() {
     }
     let lifted = |m: &StaticVisual| m.rest.translation.y - fitted(m).0.translation.y;
     let on_edge = drawn(app, straddling);
-    assert!((lifted(&on_edge) - top).abs() < 1e-5, "up on the sand its east side stands in: {}", lifted(&on_edge));
+    assert!((lifted(&on_edge) - top).abs() < 1e-6, "half on the sand, still on the one flat ground: {}", lifted(&on_edge));
     assert_eq!(tf(app, on_edge.instance), on_edge.rest);
-    assert!(lifted(&drawn(app, touching)).abs() < 1e-6, "a footprint flush with the sand stays on the grass");
+    assert!(lifted(&drawn(app, touching)).abs() < 1e-6);
     let pine_model = drawn(app, tree);
-    assert!((lifted(&pine_model) - top).abs() < 1e-5);
+    assert!((lifted(&pine_model) - top).abs() < 1e-6);
     // A foundation on sand starts with its top level with the ground, so
     // none of it (the banner's tip included) shows before building starts.
     let foundation = drawn(app, site);

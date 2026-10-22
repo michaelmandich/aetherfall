@@ -5,11 +5,16 @@ Age of Mythology, StarCraft and Warhammer, where a medieval world slowly turns
 medieval+tech after a star falls and its **Aether** crystals unlock machines,
 computers, shields and beams.
 
-**Everything is a box** for now: the map, terrain, buildings, units, weapons,
-projectiles. Boxes are placed freely (any position, any angle) but never
-overlap. Real graphics come one model at a time and only touch the renderer
-crate: the peasant is animated, and any building or resource node takes a
-model dropped into `art/static/source/` (see Models below).
+The land is drawn in a lush, temperate look: a height field painted by its
+own shaders (meadows with wildflowers, dunes, marsh, bright rivers and deep
+lakes and seas, grey mountains with snow, the scorched meteor sites), with
+the fog of war drawn into it (`cargo run -p af_render --example landscape`
+shows every terrain on one hand-painted map). Units, buildings and resource
+nodes are models where they have one and **boxes** where they do not yet;
+everything in the simulation is a box, placed freely (any position, any
+angle) but never overlapping. Graphics only touch the renderer crate: the
+peasant is animated, and any building or resource node takes a model
+dropped into `art/static/source/` (see Models below).
 
 ## Play
 

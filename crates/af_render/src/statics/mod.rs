@@ -61,9 +61,8 @@ pub struct StaticVisual {
     /// The instance's transform at rest (built) in the visual root's frame.
     pub rest: Transform,
     /// How high its top stands above the ground its entity is drawn on
-    /// (metres; a building's banner and the lift onto the drawn terrain
-    /// included): how far a fresh foundation's model is sunk, so none of
-    /// it shows at 0 %.
+    /// (metres; a building's banner included): how far a fresh
+    /// foundation's model is sunk, so none of it shows at 0 %.
     pub height: f32,
     /// It shrinks as it is gathered (nodes that are not trees).
     pub shrinks: bool,
@@ -74,14 +73,13 @@ pub struct StaticVisual {
 pub struct StaticInstance;
 
 /// Where `mesh` (a variant of `model`) stands, at rest, on a box of `size`
-/// whose base centre is at `pos`: fitted, turned by the position hash when
-/// the model turns at random, and `lift` metres up (onto the drawn terrain,
-/// see `Ground::model_lift`).
-pub fn rest_transform(model: &StaticModel, mesh: &StaticMesh, size: BoxSize, pos: Vec2, lift: f32) -> Transform {
+/// whose base centre is at `pos`: fitted, and turned by the position hash
+/// when the model turns at random. Buildings and nodes only stand on
+/// buildable ground, which is drawn flat at the ground their entity is
+/// drawn on, so the model stands right there.
+pub fn rest_transform(model: &StaticModel, mesh: &StaticMesh, size: BoxSize, pos: Vec2) -> Transform {
     let yaw = if model.manifest.random_yaw { hashed_yaw(pos) } else { 0.0 };
-    let mut rest = fit_transform(model.manifest.fit, mesh.min, mesh.max, Vec3::from(size), yaw);
-    rest.translation.y += lift;
-    rest
+    fit_transform(model.manifest.fit, mesh.min, mesh.max, Vec3::from(size), yaw)
 }
 
 /// Where a tree's `stump` stands, in the same frame as the tree's `rest`

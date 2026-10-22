@@ -172,6 +172,55 @@ pale quartz sand for silicon; berry bushes with red berries; violet aether
 crystals; the adamant meteor charred black with gold ore; the aether vent a
 scorched crater rim with violet light deep inside.
 
+## 9a. Landscape
+
+The land is where the picture departs from the objects' muted palette: a
+temperate European landscape in the spirit of Civilization VI, **lush
+greens, deep blues, grey rocky mountains with some variation, rivers a
+bright blue with white blended in**. It is painted procedurally by
+af_render's terrain shaders (`crates/af_render/src/terrain/*.wgsl`; no
+textures), so these colours are the shaders' palette:
+
+| Surface | sRGB | Notes |
+|---|---|---|
+| Meadow | `#5E9A3A` | base; shade `#3F7A2E`, sunlit `#7DB348`, dry accents `#A5A957`; wildflower specks white, yellow, pale blue (never red: berries) |
+| Forest floor (thickets, off-map woods) | `#3B5A2A` | moss `#4E6E2E`, leaf litter `#6B5434` |
+| Dirt | `#8A6A48` | |
+| Sand | dunes `#E3D3A2`, beaches `#D8C38E` | wind ripples, pebbles, grass tufts at meadow edges |
+| Marsh | `#556B3A` | puddles of dark water `#2F4A4A` |
+| Rock (highlands, mountains) | `#A4A6A8` / `#7E8184` / `#55585C` | lichen `#B9BE8C`; lighter on ridges, darker in gullies |
+| Snow | `#EEF3F8` shading to `#C9D6E6` | gentle slopes above about 7 m |
+| Meteor site floor | `#3A3436` / `#241F22` | cracked basalt; aether veins `#BF73FF`, the only glow on the land |
+| Shallows, fords | `#6FC0EA` | the shores' clear turquoise |
+| River | `#3C9BE0` | foam `#F2F8FB` streaking downstream, white water over fords |
+| Lake | `#1F5BA8` | |
+| Sea | `#173E7A` to `#0F2A57` | swell and surf on beaches |
+| Sky and haze | `#A1BFDB` | the distance fog and the skirt's far edge fade into it |
+
+Rules:
+
+- **Team colour still reads.** Grass and water stay a step below the team
+  colours in saturation: Sylvan green, Tide cyan and Ironhold blue must
+  stand out on meadow and river. Nodes keep their colour code (section 9)
+  against every ground.
+- **Mountains are not highlands.** Impassable mountains are tall grey peaks
+  (at most 10.5 m, below every flyer) with snow on top and green at the
+  foot; climbable rocky highlands are a low (0.6 m) plateau of grey rock
+  with grass and lichen on top and dark scarps. Never draw a mountain low or
+  a highland tall.
+- **Decoration never looks gatherable.** Brambles, reeds, scree and meteor
+  rock grow only on unbuildable ground and avoid the node colour code: no
+  loose round grey boulder piles (stone), no red berries, no bright violet
+  crystals (the Starspire is pale), no gold in charred rock, no scorched
+  rings, no free-standing trees (every tree is a wood node).
+- **Off the map** the land carries on, greyed and darkened, fading into the
+  haze; never a frame or a void.
+- **The fog of war** is drawn into the land: out of sight darkened and
+  greyed, unexplored near black.
+- **Scenery models** made later (mountain pieces, crater rims, reeds, ...)
+  follow this palette rather than the muted object rule, may carry snow, and
+  must blend into the ground instead of standing on a plate.
+
 ## 10. How prompts are built (Meshy)
 
 Every asset goes through **concept art first, then a model built from the

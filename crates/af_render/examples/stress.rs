@@ -2,7 +2,7 @@
 //! 1000 moving units from every faction, 3000 resource nodes and 150
 //! buildings, with bars and outlines on part of them. Runs uncapped (no
 //! vsync) for a few seconds, prints the average and worst frame time, the
-//! entity / material / terrain box counts, and exits.
+//! entity / material / terrain chunk counts, and exits.
 //!
 //!   cargo run -p af_render --example stress --release
 
@@ -13,7 +13,8 @@ use af_core::prelude::*;
 use af_core::testing::{flat_world, with_commands};
 use af_render::assets::BoxAssets;
 use af_render::motion::combat_slot_state;
-use af_render::terrain::TerrainBox;
+use af_core::ext::input::RtsCamera;
+use af_render::terrain::TerrainChunk;
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 
@@ -52,7 +53,7 @@ fn main() -> AppExit {
     populate(&mut app, &ids);
     let focus = Vec3::new(MAP * 0.5, 0.0, MAP * 0.5);
     app.world_mut()
-        .spawn((Camera3d::default(), Transform::from_translation(focus + Vec3::new(0.41, 0.81, 0.41).normalize() * 160.0).looking_at(focus, Vec3::Y)));
+        .spawn((RtsCamera, Camera3d::default(), Transform::from_translation(focus + Vec3::new(0.41, 0.81, 0.41).normalize() * 160.0).looking_at(focus, Vec3::Y)));
     app.run()
 }
 
@@ -147,7 +148,7 @@ fn measure(
     time: Res<Time<Real>>,
     mut stats: Local<Stats>,
     assets: Res<BoxAssets>,
-    terrain: Query<(), With<TerrainBox>>,
+    terrain: Query<(), With<TerrainChunk>>,
     all: Query<Entity>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -161,7 +162,7 @@ fn measure(
     if stats.frames == WARMUP + MEASURE {
         let avg = stats.total.as_secs_f64() * 1000.0 / MEASURE as f64;
         println!(
-            "stress: {UNITS} units, {NODES} nodes, {BUILDINGS} buildings | avg {avg:.2} ms ({:.0} fps), worst {:.2} ms | {} entities, {} materials, {} terrain boxes",
+            "stress: {UNITS} units, {NODES} nodes, {BUILDINGS} buildings | avg {avg:.2} ms ({:.0} fps), worst {:.2} ms | {} entities, {} materials, {} terrain chunks",
             1000.0 / avg,
             stats.worst.as_secs_f64() * 1000.0,
             all.iter().count(),
