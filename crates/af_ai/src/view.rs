@@ -245,7 +245,8 @@ pub struct AiView<'a> {
     pub spatial: &'a SpatialIndex,
     /// Map size (x, z) in metres.
     pub map_size: Vec2,
-    /// Centre of the Starfall Crater (the contested middle of the map).
+    /// Centre of the main meteor site (the contested middle of the map). At
+    /// the Starspire it is the spire, which no ground unit stands on.
     pub crater: Vec2,
     /// Sim seconds since the match started.
     pub time: f32,
@@ -296,6 +297,13 @@ impl<'a> AiView<'a> {
     pub fn with_features(self, features: Option<&'a MapFeatures>) -> AiView<'a> {
         let crater = features.and_then(|f| f.sites.first()).map_or(self.crater, |s| s.center);
         AiView { features, crater, ..self }
+    }
+
+    /// Radius of the main meteor site (at least [`GOAL_SEARCH_RADIUS`]
+    /// without features, or for a smaller one): a unit this near
+    /// [`AiView::crater`] is in the middle.
+    pub fn middle_radius(&self) -> f32 {
+        self.features.and_then(|f| f.sites.first()).map_or(GOAL_SEARCH_RADIUS, |s| s.radius.max(GOAL_SEARCH_RADIUS))
     }
 
     /// Has `player` lost every production building, so that its remaining

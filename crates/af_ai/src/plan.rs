@@ -1,7 +1,6 @@
 //! Facts derived once per think from the view: where home is, how many
 //! workers and soldiers there are, the age-up step and what to save for.
 
-use af_core::prelude::af_geom::GOAL_SEARCH_RADIUS;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -250,12 +249,18 @@ impl Plan {
 /// middle), along the way a worker walks there: toward the point
 /// [`FRONT_LOOKAHEAD`] down the coarse route, so a base whose way to the
 /// middle bends round a river or a range faces where its army will go,
-/// not the water. Straight at the site without regions or a route.
+/// not the water. The route ends on the site's open ground nearest its
+/// centre, which may be solid rock (the Starspire's spire). Straight at the
+/// site without regions or a route.
 pub fn front_from(view: &AiView, home: Vec2) -> Vec2 {
     let toward = (view.crater - home).normalize_or(Vec2::Y);
     let Some(regions) = view.regions else { return toward };
     let (mobility, radius) = view.unit_class(view.worker_kind());
-    let Some(route) = regions.route(home, view.crater, mobility, radius) else { return toward };
+    let middle = regions
+        .nearest_reachable(home, view.crater, mobility, radius)
+        .filter(|p| p.distance(view.crater) <= view.middle_radius())
+        .unwrap_or(view.crater);
+    let Some(route) = regions.route(home, middle, mobility, radius) else { return toward };
     let ahead = route.point_at(FRONT_LOOKAHEAD.min(route.length()));
     (ahead - home).normalize_or(toward)
 }
@@ -269,7 +274,7 @@ pub(crate) fn reachable_mix(view: &AiView, home: Vec2, comp: Vec<(UnitTypeId, f3
     if view.regions.is_none() {
         return comp;
     }
-    let near = view.features.and_then(|f| f.sites.first()).map_or(GOAL_SEARCH_RADIUS, |s| s.radius.max(GOAL_SEARCH_RADIUS));
+    let near = view.middle_radius();
     let mut gets_there = |u: UnitTypeId| match known.iter().find(|k| k.0 == u) {
         Some(k) => k.1,
         None => {
