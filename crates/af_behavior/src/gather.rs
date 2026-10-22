@@ -115,7 +115,7 @@ pub(crate) fn run_gather_orders(mut workers: Query<Worker, (With<Unit>, Without<
     // visited. Lockstep peers with different selections must agree.
     order.clear();
     order.extend(workers.iter().map(|u| u.entity));
-    order.sort_unstable();
+    order.sort_unstable_by_key(|e| e.index_u32());
     for e in order.iter() {
         let Ok(mut u) = workers.get_mut(*e) else { continue };
         if !u.brain.synced(&u.orders) {

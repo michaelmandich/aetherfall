@@ -59,7 +59,7 @@ pub(crate) fn run_healers(
     // In entity order (see gather.rs): healers share patients first come
     // first served.
     let mut order: Vec<Entity> = medics.iter().map(|m| m.entity).collect();
-    order.sort_unstable();
+    order.sort_unstable_by_key(|e| e.index_u32());
     for e in order {
         let Ok(mut m) = medics.get_mut(e) else { continue };
         let Some(heal) = &data.unit(m.unit.kind).healer else { continue };

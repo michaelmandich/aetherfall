@@ -190,7 +190,11 @@ const COLUMN_WIDTH: f32 = 520.0;
 const LIST_NAME_CHARS: usize = 22;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.init_resource::<MpForm>()
+    // The multiplayer client (af_net) replaces these with the real thing;
+    // without it the screen still exists, offline.
+    app.init_resource::<NetSession>()
+        .init_resource::<NetActions>()
+        .init_resource::<MpForm>()
         .add_systems(OnEnter(GameState::Menu), (seed_form, spawn_root))
         .add_systems(
             Update,

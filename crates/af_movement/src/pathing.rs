@@ -324,7 +324,7 @@ pub(crate) fn collect_requests(
     // unit change): the queue is first come first served and the tick's
     // budget runs out on whoever asks last. Lockstep peers must agree.
     let mut order: Vec<Entity> = units.iter().map(|u| u.0).collect();
-    order.sort_unstable();
+    order.sort_unstable_by_key(|e| e.index_u32());
     for e in order {
         let Ok((e, pos, facing, mob, owner, goal, mut path, mut mover)) = units.get_mut(e) else { continue };
         let Some(goal) = goal else {

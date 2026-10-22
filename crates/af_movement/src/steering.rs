@@ -144,8 +144,10 @@ pub(crate) fn steer(data: Res<Data>, nav: Res<Nav>, mut scratch: Local<SteerScra
     // In entity order, not table order (which client-only components on a
     // unit change): the grid lists neighbours in this order, `avoid` sums
     // their pushes in it, and a float sum depends on the order of its
-    // terms. Lockstep peers with different selections must agree.
-    s.neighbors.sort_unstable_by_key(|n| n.entity);
+    // terms. Lockstep peers with different selections must agree. (Index
+    // order: the order units were spawned in, which is what table order was
+    // before anything moved them.)
+    s.neighbors.sort_unstable_by_key(|n| n.entity.index_u32());
     s.bounds.extend(s.neighbors.iter().map(|n| (n.pos - Vec2::splat(n.rho), n.pos + Vec2::splat(n.rho))));
     s.grid.rebuild(nav.origin(), nav.world_size(), GRID_CELL, &s.bounds);
     s.seen.clear();

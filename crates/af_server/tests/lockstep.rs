@@ -113,7 +113,9 @@ fn ranked_duel_forfeit_moves_the_ratings() {
     pump(&mut [&mut a], Duration::from_secs(5), "the leaderboard", |apps| session(apps[0]).leaderboard.len() == 2);
 
     act(&mut a, NetAction::JoinRanked(RankedMode::Duel));
-    pump(&mut [&mut a, &mut b], Duration::from_secs(5), "Ann waiting", |apps| session(apps[1]).ranked_slots.iter().any(|s| s.mode == RankedMode::Duel && s.waiting == 1));
+    pump(&mut [&mut a, &mut b], Duration::from_secs(5), "Ann waiting", |apps| {
+        session(apps[1]).ranked_slots.iter().any(|s| s.mode == RankedMode::Duel && s.waiting == 1) && session(apps[0]).lobby.is_some()
+    });
     assert!(session(&a).lobby.as_ref().is_some_and(|l| l.kind == LobbyKind::Ranked(RankedMode::Duel) && l.slots[0].elo == Some(1600)));
     act(&mut b, NetAction::JoinRanked(RankedMode::Duel));
     pump(&mut [&mut a, &mut b], Duration::from_secs(10), "the ranked match", |apps| apps.iter().all(|x| playing(x)));
