@@ -254,7 +254,9 @@ simulation is still 2D and nothing in it reads heights.
 ### 6.2 Water
 
 One water surface at `y = -0.12` over every water and ford cell (with a cell
-of overlap under the banks), drawn with a water material:
+of overlap under the banks, so the rising bank cuts the shoreline), drawn
+opaque (the depth look is faked from per-vertex depth, so the many
+alpha-blended overlays never sort against it) with a water material:
 
 * colour by depth: clear turquoise over fords and shallows (#6FC0EA) to deep
   blue in lakes (#1F5BA8) and the ocean (#173E7A to #0F2A57); rivers a
@@ -290,7 +292,50 @@ A brighter, warmer afternoon: a warm sun, sky-tinted ambient light, a light
 hazy blue sky colour with distance fog matched to it, a touch of extra
 saturation in the colour grading and a soft bloom so aether glows.
 
-## 7. Testing
+### 6.5 How it is built
+
+* Height field and meshes are a pure function of the map (`Nav` terrain,
+  `MapInfo`, `MapFeatures` when present), built once per match, in chunks of
+  64 x 64 cells with normals taken from the whole field so chunk seams match.
+  Flat chunks cast no shadows; mountain chunks do.
+* `TerrainMaterial` and `WaterMaterial` are
+  `ExtendedMaterial<StandardMaterial, _>` with WGSL shaders embedded in the
+  af_render crate (`embedded_asset!`), so they load from any asset root.
+  Their material plugins are added only when the render stack exists;
+  headless test apps get the same chunk entities with a vertex-coloured
+  `StandardMaterial`. Animation reads `globals.time` (periods divide 3600 s);
+  no material changes per frame.
+* Ground-bound things keep standing where they stand today (walkable ground
+  is unchanged); on water, markers sit on the water surface; flyer shadows,
+  pings and rally flags sit on the drawn surface.
+
+## 7. Pathing on big maps
+
+A river or mountain range that spans the map forces detours of hundreds of
+metres, which the path service cannot find today (each A* search stops after
+24,000 cells: a ford more than about 110 m off the straight line is never
+found, and the unit stops on the near bank). So:
+
+* **Regions.** af_movement labels connected regions of the terrain once per
+  map for each mover class it meets (admitted terrain set and clearance
+  level; obstacles and teams ignored), and publishes them read-only in
+  `af_core::ext::movement` (`NavRegions`). A path request whose goal lies in
+  another region is answered at once, with the reachable point nearest the
+  goal and no search.
+* **Coarse routes.** Long requests are planned first on a coarse terrain
+  graph (static per match, per mover class), then followed leg by leg with
+  the existing obstacle-aware sliced A*, each leg well inside its cap. A
+  truncated search ends at its best g + h frontier cell, not at the bank
+  facing the goal. One long request can no longer hold the head of the
+  queue for many ticks.
+* **Consumers.** af_behavior and af_ai skip targets in another region
+  (drop sites, replacement nodes, attack targets, remote resources, vents,
+  build spots) and prefer route distance where they rank by distance; the
+  AI measures attack progress by route distance left and scales its
+  military radii with the map. The invariant tests measure stuck and
+  stalled units by path progress, not straight-line distance.
+
+## 8. Testing
 
 * af_map: for 2-8 players, every size, water level, river count and site
   kind and several seeds: the reachability above for every ground
