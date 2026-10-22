@@ -563,6 +563,40 @@ fn every_site_kind_holds_its_node_budget() {
 }
 
 #[test]
+fn the_skyfall_scar_is_fair_to_every_start() {
+    let data = test_data();
+    let kinds = ["aether_vent", "adamant_meteor", "aether_crystal"].map(|id| data.node_id(id).unwrap());
+    let mut three = 0;
+    for players in 1..=8 {
+        for (seed, size) in [(3, MapSize::Medium), (4, MapSize::Large), (5, MapSize::Huge)] {
+            let map = generate_with(&data, &setup(&data, players, seed), &options(size, WaterLevel::Lakes, 1, SiteKind::Scar));
+            let sites = &map.features.sites;
+            let at = format!("{players} players, seed {seed}, {}", size.name());
+            if !matches!(players, 1 | 2 | 4) {
+                // Side basins would lie by only some starts.
+                assert_eq!(sites.len(), 1, "a single basin ({at})");
+                continue;
+            }
+            if sites.len() < 3 {
+                continue;
+            }
+            three += 1;
+            // Every start lies as near a side basin as every other...
+            let near: Vec<f32> = map.starts.iter().map(|s| sites[1..].iter().map(|b| b.center.distance(*s)).fold(f32::INFINITY, f32::min)).collect();
+            let (lo, hi) = near.iter().fold((f32::INFINITY, 0.0f32), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+            assert!(hi - lo < 0.5, "side basins {lo:.1}-{hi:.1} m from the starts ({at})");
+            // ...and the two side basins hold the same nodes.
+            let nearest = |p: Vec2| (0..3).min_by(|a, b| p.distance(sites[*a].center).total_cmp(&p.distance(sites[*b].center))).unwrap();
+            for kind in kinds {
+                let count = |k: usize| map.nodes.iter().filter(|n| n.kind == kind && n.pos.distance(sites[k].center) < sites[k].radius && nearest(n.pos) == k).count();
+                assert_eq!(count(1), count(2), "{} split between the side basins ({at})", data.node(kind).id);
+            }
+        }
+    }
+    assert!(three >= 5, "only {three} three-basin scars in the sample");
+}
+
+#[test]
 fn rivers_cross_the_land_away_from_the_edges_with_fords_at_most_36_m_apart() {
     let data = test_data();
     let deep = data.terrain_id("deep_water").unwrap();
