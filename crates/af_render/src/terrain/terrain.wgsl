@@ -154,11 +154,14 @@ fn forest_floor(p: vec2<f32>, off: f32, bulge: f32) -> Paint {
     let leaves = smoothstep(0.55, 0.75, vnoise(p * 2.3)) * 0.5 + smoothstep(0.6, 0.85, fbm(p * 0.5)) * 0.3;
     c = mix(c, litter, leaves);
     c *= 0.82 + 0.28 * vnoise(p * 5.0);
-    let leafy = vnoise(p * 2.6) * 0.5 + vnoise(p * 6.1) * 0.5;
-    var canopy = mix(lin(vec3<f32>(0.2, 0.33, 0.13)), lin(vec3<f32>(0.33, 0.48, 0.18)), fbm(p * 0.06));
-    canopy *= (0.55 + 0.7 * smoothstep(0.3, 0.75, bulge)) * (0.85 + 0.3 * leafy);
+    // The canopy: soft, green and only gently darker between the crowns,
+    // so the far woods read as forest rather than dark stains.
+    let leafy = vnoise(p * 1.9) * 0.5 + vnoise(p * 4.3) * 0.5;
+    var canopy = mix(lin(vec3<f32>(0.25, 0.39, 0.16)), lin(vec3<f32>(0.36, 0.5, 0.2)), fbm(p * 0.06));
+    canopy = mix(canopy, lin(vec3<f32>(0.42, 0.5, 0.22)), smoothstep(0.6, 0.8, fbm(p * 0.13 + 4.0)) * 0.4);
+    canopy *= (0.8 + 0.32 * smoothstep(0.25, 0.75, bulge)) * (0.9 + 0.2 * leafy);
     let up = smoothstep(6.0, 9.0, off);
-    return paint(mix(c, canopy, up), 0.95, mix(leaves * 0.05, leafy * 0.12, up));
+    return paint(mix(c, canopy, up), 0.95, mix(leaves * 0.05, leafy * 0.05, up));
 }
 // Grey rock: broad tones, warmer and cooler; on the faces, streaks running
 // down the fall line and dark joints between blocks; lichen on the flatter

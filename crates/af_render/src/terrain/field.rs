@@ -12,11 +12,12 @@
 //!   to -2.5 m, the sea to -4 m.
 //! * Corners touching only mountains rise with the distance into the range,
 //!   shaped by ridged noise, to peaks of 6.8-10.5 m.
-//! * Off the map the edge carries on: water and mountains straight out, the
-//!   sea beyond a sea edge, and otherwise meadow, woodland and a frame of
-//!   mountains further out.
+//! * Off the map the edge carries on: rivers along their own winding
+//!   course, narrowing into the distance; other water and mountains
+//!   straight out; the sea beyond a sea edge; and otherwise meadow,
+//!   woodland and a frame of mountains further out.
 
-use af_core::ext::map::{MapEdge, MapFeatures, SiteKind};
+use af_core::ext::map::{MapEdge, MapFeatures, RiverLine, SiteKind};
 use af_core::ext::render::{MAX_TERRAIN_HEIGHT, WATER_LEVEL, is_barrier_terrain, is_water_terrain, nearer_zero, terrain_ground};
 use af_core::prelude::*;
 use bevy::math::{IVec2, Vec2, Vec3};
@@ -30,6 +31,17 @@ pub const RIVER_SPEED: f32 = 1.1;
 /// How far (cells) a mountain cell looks for its range's crest; deeper
 /// inside a massif than this, the rock rises to summits and saddles.
 pub const RANGE_REACH: i32 = 9;
+/// Width of a river's shallow banks beyond its deep core (metres), where
+/// the field paints a river's course across the skirt.
+const RIVER_BANK: f32 = 2.0;
+
+/// A river's centreline (a point every ~0.75 m, source first) and the
+/// half-width of its deep core at each point.
+#[derive(Clone, Debug, Default)]
+struct Course {
+    points: Vec<Vec2>,
+    half: Vec<f32>,
+}
 
 /// What a cell looks like.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -190,6 +202,9 @@ impl Field {
         };
         let looks: Vec<(Cover, f32)> = src.data.terrain.iter().map(|d| (Cover::of(d), terrain_ground(d))).collect();
         let ocean_edges: Vec<MapEdge> = src.features.map(|m| m.ocean_edges.clone()).unwrap_or_default();
+        // River lines, carried on across the skirt where they leave the map.
+        let courses: Vec<Course> = src.features.map(|m| m.rivers.iter().map(|r| f.carry_on(r)).collect()).unwrap_or_default();
+        let mouths = f.river_mouths(&courses);
         for z in 0..rows {
             for x in 0..cols {
                 let i = f.index(x, z);
@@ -202,19 +217,28 @@ impl Field {
                     // Off-map land is at 0, like the grass `corner_ground`
                     // assumes off the map (water and rock use their own rules).
                     let edge = IVec2::new(m.x.clamp(0, map_cols - 1), m.y.clamp(0, map_rows - 1));
-                    let edge_cover = looks.get(nav.terrain_at(edge) as usize).map_or(Cover::Meadow, |l| l.0);
+                    let mut edge_cover = looks.get(nav.terrain_at(edge) as usize).map_or(Cover::Meadow, |l| l.0);
+                    // A river leaving the map is drawn along its own course
+                    // below, not straight on from the edge; but the first
+                    // ring of cells beyond the edge always carries its water
+                    // on, as `corner_ground` (`off_map_terrain`) assumes.
+                    let first_ring = (m - edge).abs().max_element() <= 1;
+                    if !first_ring && mouths[(edge.y * map_cols + edge.x) as usize] && edge_cover.is_water() && edge_cover != Cover::Ocean {
+                        edge_cover = Cover::Meadow;
+                    }
                     let sea = beyond_edges(m, map_cols, map_rows).iter().any(|e| ocean_edges.contains(e));
                     f.cover[i] = off_map_cover(f.world_cell(x, z), (m - edge).as_vec2().length() * cell, edge_cover, sea, seed);
                 }
             }
         }
+        f.paint_skirt_rivers(&courses);
         let (to_land, to_water) = (f.distance(|c| !c.is_water()), f.distance(Cover::is_water));
         f.shore = f.cover.iter().enumerate().map(|(i, c)| if c.is_water() { to_land[i] } else { to_water[i] }).collect();
         let (to_open, to_rock) = (f.distance(|c| c != Cover::Mountain), f.distance(|c| c == Cover::Mountain));
         f.rock = f.cover.iter().enumerate().map(|(i, c)| if *c == Cover::Mountain { to_open[i] } else { to_rock[i] }).collect();
         f.depth = f.range_depth(&to_open);
         f.wood = f.distance(|c| c != Cover::Woodland).into_iter().zip(&f.cover).map(|(d, c)| if *c == Cover::Woodland { d } else { 0.0 }).collect();
-        f.lay_rivers(src.features);
+        f.lay_rivers(&courses);
         f.sites = match src.features {
             Some(m) => m.sites.iter().map(|s| (s.center, s.radius)).collect(),
             None => src.crater.into_iter().filter(|(_, r)| *r > 0.0).collect(),
@@ -235,6 +259,13 @@ impl Field {
     pub fn on_map(&self, x: i32, z: i32) -> bool {
         let (mx, mz) = (x - self.skirt, z - self.skirt);
         mx >= 0 && mz >= 0 && mx < self.map_cols && mz < self.map_rows
+    }
+
+    /// Is a field cell on the map or in the first ring of cells round it
+    /// (one that touches a corner of the map)?
+    pub fn near_map(&self, x: i32, z: i32) -> bool {
+        let (mx, mz) = (x - self.skirt, z - self.skirt);
+        mx >= -1 && mz >= -1 && mx <= self.map_cols && mz <= self.map_rows
     }
 
     /// How far a world point lies beyond the map's edge (0 on the map).
@@ -383,14 +414,143 @@ impl Field {
         out
     }
 
+    /// A river line carried on beyond the map: from each end that lies
+    /// beyond the edge, on across the skirt and past it, bending gently
+    /// (its meanders grow from nothing at the end, so the course has no
+    /// kink) but always heading away from the map, and narrowing as it
+    /// goes, so it fades into the distance instead of running out straight.
+    fn carry_on(&self, river: &RiverLine) -> Course {
+        let pts = &river.points;
+        let half_at = |i: usize| river.half_widths.get(i).copied().unwrap_or(2.5);
+        if pts.len() < 2 {
+            return Course { points: pts.clone(), half: (0..pts.len()).map(half_at).collect() };
+        }
+        let lo = self.world_corner(self.skirt, self.skirt);
+        let hi = self.world_corner(self.skirt + self.map_cols, self.skirt + self.map_rows);
+        let length = self.skirt as f32 * self.cell * 1.7 + 12.0;
+        let reach_back = 6.min(pts.len() - 1);
+        let extend = |end: usize, inner: usize, salt: u32| -> Vec<(Vec2, f32)> {
+            let p0 = pts[end];
+            if self.beyond_map(p0) < 0.5 {
+                return Vec::new();
+            }
+            // Away from the map: across the edge(s) the end lies beyond.
+            let mut out = Vec2::ZERO;
+            out.x = if p0.x < lo.x { -1.0 } else if p0.x > hi.x { 1.0 } else { 0.0 };
+            out.y = if p0.y < lo.y { -1.0 } else if p0.y > hi.y { 1.0 } else { 0.0 };
+            let out = out.normalize_or(Vec2::X);
+            let start_dir = (p0 - pts[inner]).normalize_or(out);
+            let (wave, phase) = (44.0 + 22.0 * value(Vec2::splat(salt as f32 * 0.37), self.seed ^ salt), value(Vec2::new(3.1, salt as f32), self.seed ^ 0x51ab) * std::f32::consts::TAU);
+            let h0 = half_at(end);
+            let (mut p, mut s, mut v) = (p0, 0.0f32, Vec::new());
+            while s < length {
+                let grow = smoothstep(0.0, 16.0, s);
+                // Turn from the river's own heading to straight away from
+                // the map, then wander about that.
+                let base = start_dir.lerp(out, smoothstep(0.0, 28.0, s)).normalize_or(out);
+                let bend = grow * (0.62 * (s * std::f32::consts::TAU / wave + phase).sin() + 0.55 * (value(Vec2::new(s * 0.05, salt as f32), self.seed ^ 0x51ac) - 0.5));
+                let mut dir = Vec2::from_angle(bend).rotate(base);
+                let away = dir.dot(out);
+                if away < 0.35 {
+                    dir = (dir + out * (0.35 - away) * 2.0).normalize_or(out);
+                }
+                p += dir * 0.75;
+                s += 0.75;
+                v.push((p, h0 * (1.0 - 0.65 * smoothstep(6.0, 56.0, self.beyond_map(p)))));
+            }
+            v
+        };
+        let head = extend(0, reach_back, 0x1d);
+        let tail = extend(pts.len() - 1, pts.len() - 1 - reach_back, 0x2e);
+        let mut course = Course { points: Vec::with_capacity(head.len() + pts.len() + tail.len()), half: Vec::new() };
+        for (p, h) in head.into_iter().rev() {
+            course.points.push(p);
+            course.half.push(h);
+        }
+        for i in 0..pts.len() {
+            course.points.push(pts[i]);
+            course.half.push(half_at(i));
+        }
+        for (p, h) in tail {
+            course.points.push(p);
+            course.half.push(h);
+        }
+        course
+    }
+
+    /// The map's edge cells a river leaves by (indexed like the map), so the
+    /// skirt beyond them follows the river's course instead of carrying the
+    /// edge straight on.
+    fn river_mouths(&self, courses: &[Course]) -> Vec<bool> {
+        let mut out = vec![false; (self.map_cols * self.map_rows) as usize];
+        let lo = self.world_corner(self.skirt, self.skirt);
+        let hi = self.world_corner(self.skirt + self.map_cols, self.skirt + self.map_rows);
+        for c in courses {
+            for (p, half) in c.points.iter().zip(&c.half) {
+                let reach = half + RIVER_BANK + 3.0;
+                // Only points near the edge, inside or out.
+                if self.beyond_map(*p) > reach + 2.0 || (*p - lo).min(hi - *p).min_element() > reach + self.cell {
+                    continue;
+                }
+                let at = self.cell_of(*p) - IVec2::splat(self.skirt);
+                let r = (reach / self.cell).ceil() as i32 + 1;
+                for z in (at.y - r).max(0)..=(at.y + r).min(self.map_rows - 1) {
+                    for x in (at.x - r).max(0)..=(at.x + r).min(self.map_cols - 1) {
+                        let edge = x == 0 || z == 0 || x == self.map_cols - 1 || z == self.map_rows - 1;
+                        if edge && self.world_cell(x + self.skirt, z + self.skirt).distance(*p) < reach {
+                            out[(z * self.map_cols + x) as usize] = true;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Paint the rivers' courses over the skirt: a deep core within each
+    /// point's half-width and shallow banks beyond it (the sea is left as
+    /// it is, and so is the first ring of cells round the map, which
+    /// carries the edge on as the ground units walk on assumes).
+    fn paint_skirt_rivers(&mut self, courses: &[Course]) {
+        let lo = self.world_corner(self.skirt, self.skirt);
+        let hi = self.world_corner(self.skirt + self.map_cols, self.skirt + self.map_rows);
+        for c in courses {
+            for (p, half) in c.points.iter().zip(&c.half) {
+                let reach = half + RIVER_BANK;
+                // Points well inside the map paint nothing off it.
+                if (*p - lo).min(hi - *p).min_element() > reach + self.cell {
+                    continue;
+                }
+                let at = self.cell_of(*p);
+                let r = (reach / self.cell).ceil() as i32 + 1;
+                for z in (at.y - r).max(0)..=(at.y + r).min(self.rows - 1) {
+                    for x in (at.x - r).max(0)..=(at.x + r).min(self.cols - 1) {
+                        if self.near_map(x, z) {
+                            continue;
+                        }
+                        let i = self.index(x, z);
+                        let d = self.world_cell(x, z).distance(*p);
+                        let now = self.cover[i];
+                        if d < *half && now != Cover::Ocean {
+                            self.cover[i] = Cover::Deep;
+                        } else if d < reach && !now.is_water() {
+                            self.cover[i] = Cover::Shallows;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// River flow and how river-like each water cell is: from af_map's
-    /// river lines when it publishes them, else from the shape of each body
-    /// of water (narrow bodies are rivers), drawn still.
-    fn lay_rivers(&mut self, features: Option<&MapFeatures>) {
-        match features {
-            Some(m) if !m.rivers.is_empty() => {
+    /// river lines (carried on across the skirt) when it publishes them,
+    /// else from the shape of each body of water (narrow bodies are rivers),
+    /// drawn still.
+    fn lay_rivers(&mut self, courses: &[Course]) {
+        match courses {
+            [_, ..] => {
                 let mut best = vec![f32::MAX; self.cover.len()];
-                for river in &m.rivers {
+                for river in courses {
                     let pts = &river.points;
                     let mut arc = 0.0;
                     for i in 0..pts.len() {
@@ -398,7 +558,7 @@ impl Field {
                             arc += pts[i].distance(pts[i - 1]);
                         }
                         let tangent = (pts[(i + 1).min(pts.len() - 1)] - pts[i.saturating_sub(1)]).normalize_or_zero();
-                        let half = river.half_widths.get(i).copied().unwrap_or(2.5);
+                        let half = river.half.get(i).copied().unwrap_or(2.5);
                         let reach = half + 3.5;
                         let c = self.cell_of(pts[i]);
                         let r = (reach / self.cell).ceil() as i32 + 1;
@@ -516,7 +676,8 @@ impl Field {
             // Off the map nothing stands: the land rolls and woods rise.
             if cells.iter().all(|i| !self.on_map((*i as i32) % self.cols, (*i as i32) / self.cols)) {
                 let wood = cells.iter().map(|i| self.wood[*i]).fold(0.0, f32::max) * self.cell;
-                return g + skirt_relief(self.world_corner(x, z), self.beyond_map(self.world_corner(x, z)), wood, self.seed);
+                let shore = cells.iter().map(|i| if self.cover[*i].is_water() { 0.0 } else { self.shore[*i] }).fold(f32::MAX, f32::min) * self.cell;
+                return g + skirt_relief(self.world_corner(x, z), self.beyond_map(self.world_corner(x, z)), wood, shore, self.seed);
             }
             return g;
         }
@@ -655,11 +816,13 @@ pub fn mountain_height(p: Vec2, d: f32, crest_depth: f32, seed: u32) -> f32 {
 }
 
 /// The height of off-map land `out` metres beyond the map, `wood` metres
-/// inside a wood: low rolling hills rising away from the edge, and the
-/// rounded crowns of the woods (2-4 m) on them.
-pub fn skirt_relief(p: Vec2, out: f32, wood: f32, seed: u32) -> f32 {
-    let hills = smoothstep(3.0, 36.0, out) * (fbm(p * 0.025, 3, seed ^ 0x51c1) * 3.5 - 0.6).max(0.0);
-    let canopy = smoothstep(0.0, 5.0, wood) * (1.4 + 1.4 * crowns(p, 3.2, seed ^ 0x51c2) + 0.5 * crowns(p, 1.7, seed ^ 0x51c3));
+/// inside a wood and `shore` metres from water: low rolling hills rising
+/// away from the edge, and the woods on them, a soft canopy of rounded
+/// crowns (2-3 m) rising gently from the wood's edge; both settle down
+/// toward water, so rivers and lakes keep low banks.
+pub fn skirt_relief(p: Vec2, out: f32, wood: f32, shore: f32, seed: u32) -> f32 {
+    let hills = smoothstep(3.0, 36.0, out) * (fbm(p * 0.025, 3, seed ^ 0x51c1) * 3.5 - 0.6).max(0.0) * smoothstep(1.0, 12.0, shore);
+    let canopy = smoothstep(0.0, 7.0, wood) * (1.5 + 0.8 * crowns(p, 3.4, seed ^ 0x51c2) + 0.25 * crowns(p, 1.8, seed ^ 0x51c3)) * smoothstep(0.5, 4.0, shore);
     hills + canopy
 }
 
@@ -718,17 +881,35 @@ pub(crate) mod tests {
         Field::build(&FieldSource { data, nav, seed: 7, features, crater: None })
     }
 
+    /// What af_map would publish for [`painted`] at 128 m: a sea to the
+    /// west, the Starspire on the range, the river's line running off both
+    /// ends of the map.
+    pub(crate) fn painted_features() -> MapFeatures {
+        MapFeatures {
+            options: ResolvedMapOptions { size: MapSize::Medium, water: WaterLevel::Coast, rivers: 1, site: SiteKind::Spire },
+            land_min: Vec2::ZERO,
+            land_max: Vec2::splat(128.0),
+            ocean_edges: vec![MapEdge::West],
+            sites: vec![MeteorSite { kind: SiteKind::Spire, center: Vec2::new(45.0, 40.0), radius: 12.0 }],
+            rivers: vec![RiverLine { points: (0..200).map(|i| Vec2::new(90.0, 130.0 - i as f32 * 0.75)).collect(), half_widths: vec![2.5; 200], fords: vec![133] }],
+            mountains: vec![MountainRange { spine: vec![Vec2::new(20.0, 40.0), Vec2::new(70.0, 40.0)], half_widths: vec![7.0; 2] }],
+        }
+    }
+
     #[test]
     fn walkable_corners_are_at_the_ground_units_stand_on() {
         let data = test_data();
         let nav = painted(&data, 128);
-        let f = build(&data, &nav, None);
-        for z in 0..=128 {
-            for x in 0..=128 {
-                let (fx, fz) = (x + f.skirt, z + f.skirt);
-                let touches_land = f.corner_cells(fx, fz).iter().any(|i| f.cover[*i].is_land());
-                if touches_land {
-                    assert_eq!(f.height(fx, fz), corner_ground(&data, &nav, IVec2::new(x, z)), "corner {x},{z}");
+        let features = painted_features();
+        for features in [None, Some(&features)] {
+            let f = build(&data, &nav, features);
+            for z in 0..=128 {
+                for x in 0..=128 {
+                    let (fx, fz) = (x + f.skirt, z + f.skirt);
+                    let touches_land = f.corner_cells(fx, fz).iter().any(|i| f.cover[*i].is_land());
+                    if touches_land {
+                        assert_eq!(f.height(fx, fz), corner_ground(&data, &nav, IVec2::new(x, z)), "corner {x},{z} (features: {})", features.is_some());
+                    }
                 }
             }
         }
@@ -768,15 +949,7 @@ pub(crate) mod tests {
         let lake = f.cell_of(Vec2::new(30.5, 90.5));
         assert!(f.river[f.index(lake.x, lake.y)] < 0.1, "a wide one a lake");
         // A sea edge puts the sea beyond it.
-        let features = MapFeatures {
-            options: ResolvedMapOptions { size: MapSize::Medium, water: WaterLevel::Coast, rivers: 1, site: SiteKind::Spire },
-            land_min: Vec2::ZERO,
-            land_max: Vec2::splat(128.0),
-            ocean_edges: vec![MapEdge::West],
-            sites: vec![MeteorSite { kind: SiteKind::Spire, center: Vec2::new(45.0, 40.0), radius: 12.0 }],
-            rivers: vec![RiverLine { points: (0..200).map(|i| Vec2::new(90.0, 130.0 - i as f32 * 0.75)).collect(), half_widths: vec![2.5; 200], fords: vec![133] }],
-            mountains: vec![MountainRange { spine: vec![Vec2::new(20.0, 40.0), Vec2::new(70.0, 40.0)], half_widths: vec![7.0; 2] }],
-        };
+        let features = painted_features();
         let f = build(&data, &nav, Some(&features));
         let west = f.cell_of(Vec2::new(-30.0, 60.0));
         assert_eq!(f.cover_at(west.x, west.y), Cover::Ocean);
@@ -794,6 +967,31 @@ pub(crate) mod tests {
         // The spire's massif is a low base, not a peak.
         let c = f.cell_of(Vec2::new(45.0, 40.0));
         assert!(f.height(c.x, c.y) < 1.5, "{}", f.height(c.x, c.y));
+    }
+
+    #[test]
+    fn rivers_wind_on_across_the_skirt_and_narrow() {
+        // With its line, the river leaving the south edge winds on across
+        // the skirt instead of running out straight, narrower far out, and
+        // still flows.
+        let data = test_data();
+        let nav = painted(&data, 128);
+        let f = build(&data, &nav, Some(&painted_features()));
+        let row = |out: f32| -> Vec<f32> {
+            let z = f.cell_of(Vec2::new(0.0, -out)).y;
+            (0..f.cols).filter(|x| f.cover_at(*x, z).is_water() && f.cover_at(*x, z) != Cover::Ocean).map(|x| f.world_cell(x, z).x).filter(|x| *x > 40.0).collect()
+        };
+        let (near, far) = (row(3.0), row(54.0));
+        assert!(!far.is_empty() && far.len() < near.len(), "narrower far out: {} cells wide at 3 m, {} at 54 m", near.len(), far.len());
+        let centres: Vec<f32> = [24.0, 32.0, 40.0, 48.0, 56.0].iter().map(|o| row(*o)).filter(|r| !r.is_empty()).map(|r| r.iter().sum::<f32>() / r.len() as f32).collect();
+        let (lo, hi) = centres.iter().fold((f32::MAX, f32::MIN), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+        assert!(centres.len() == 5 && hi - lo > 1.0, "the course winds: centres {centres:?}");
+        let out = f.cell_of(Vec2::new(centres[2], -40.0));
+        assert!(f.flow[f.index(out.x, out.y)].y < -0.3, "and flows on: {}", f.flow[f.index(out.x, out.y)]);
+        // Without lines, water carries straight on.
+        let plain = build(&data, &nav, None);
+        let z = plain.cell_of(Vec2::new(0.0, -40.0)).y;
+        assert!((86..94).all(|x| plain.cover_at(x + plain.skirt, z).is_water()));
     }
 
     #[test]
