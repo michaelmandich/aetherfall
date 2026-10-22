@@ -19,6 +19,11 @@ use bevy::prelude::*;
 
 use crate::tuning::{CHASE_DETOUR, CHASE_DETOUR_SLACK, CHASE_FRACTION};
 
+/// Rings of cells round a formation slot searched for the unit's region
+/// before the region-wide search (see [`Reach::nearest`]): a slot in a
+/// river or a few metres off a shore never needs that.
+const SLOT_RINGS: i32 = 16;
+
 /// A unit's place in the regions of its mover class.
 #[derive(Clone)]
 pub(crate) struct Reach {
@@ -104,10 +109,16 @@ impl Reach {
     }
 
     /// Where the unit can stand nearest `p` (the point itself when it can
-    /// get there), for a formation slot across water from it.
-    pub(crate) fn nearest(&self, p: Vec2) -> Vec2 {
+    /// get there, else the centre of the nearest cell of its region), for a
+    /// formation slot across water from it. `grid` is the grid the regions
+    /// were built on: the few metres round `p` are looked through first, so
+    /// a slot in a river costs about the cells to the bank, and only one far
+    /// out on a lake or the sea the region-wide search.
+    pub(crate) fn nearest(&self, p: Vec2, grid: &NavGrid) -> Vec2 {
         match self.knows() {
-            Some(map) if map.region_at(p) != self.region => map.nearest_in(self.region, p).unwrap_or(p),
+            Some(map) if map.region_at(p) != self.region => {
+                near_cell_in(map, grid, self.region, p).or_else(|| map.nearest_in(self.region, p)).unwrap_or(p)
+            }
             _ => p,
         }
     }
@@ -131,4 +142,110 @@ fn arrival(obb: &Obb, from: Vec2, close: f32) -> Vec2 {
         }
     }
     from.lerp(obb.center, hi)
+}
+
+/// The centre of the cell of `region` nearest `p` (whose own cell is not
+/// one) within [`SLOT_RINGS`] rings of cells of `grid` round it: square
+/// rings outward until none left can hold a nearer cell. `None` when that
+/// is not settled within the rings.
+fn near_cell_in(map: &RegionMap, grid: &NavGrid, region: RegionId, p: Vec2) -> Option<Vec2> {
+    let c = grid.cell_of(p);
+    let mut best: Option<(f32, Vec2)> = None;
+    for r in 1..=SLOT_RINGS + 1 {
+        // Every cell of ring r has its centre at least r - 1/2 cells from `p`.
+        let bound = (r as f32 - 0.5) * grid.cell_size();
+        if let Some((d, q)) = best
+            && d <= bound * bound
+        {
+            return Some(q);
+        }
+        if r > SLOT_RINGS {
+            break;
+        }
+        for dy in -r..=r {
+            // Along the ring: every cell of its top and bottom rows, the two
+            // end cells of the rows between.
+            let step = if dy.abs() == r { 1 } else { 2 * r };
+            for dx in (-r..=r).step_by(step as usize) {
+                let q = grid.cell_center(c + IVec2::new(dx, dy));
+                let d = q.distance_squared(p);
+                if map.region_at(q) == region && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, q));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// A side x side grid of land (Foot) whose east half from x = `shore`
+    /// on is deep water, its regions, and a walker on the land.
+    fn lake_shore(side: u32, shore: i32) -> (NavGrid, NavRegions, Mobile) {
+        let walker = Mobile { mobility: Mobility::of(MoveFlag::Foot), radius: 0.3, turn_rate: 6.0, flying: false };
+        let mut grid = NavGrid::new(side, side, 1.0, Vec2::ZERO);
+        grid.set_terrain_info(0, walker.mobility.0, true);
+        grid.set_terrain_info(1, 0, false);
+        for y in 0..side as i32 {
+            for x in shore..side as i32 {
+                grid.set_terrain(IVec2::new(x, y), 1);
+            }
+        }
+        let regions = NavRegions::new(&grid);
+        (grid, regions, walker)
+    }
+
+    /// A formation slot in the water lands on the cell of the shore nearest
+    /// it, as the region-wide search finds it; on land it stays put.
+    #[test]
+    fn a_slot_in_the_water_lands_on_the_nearest_shore() {
+        let (grid, regions, walker) = lake_shore(256, 128);
+        let reach = Reach::of(Some(&regions), Vec2::new(60.0, 60.0), &walker);
+        let map = regions.map(walker.mobility, walker.radius).expect("a map");
+        let region = map.region_at(Vec2::new(60.0, 60.0));
+        // In the water just off the shore, a few metres out, and far out
+        // (past the rings: the region-wide search answers).
+        let slots = [Vec2::new(128.2, 40.7), Vec2::new(131.9, 100.1), Vec2::new(143.5, 12.25), Vec2::new(200.0, 70.0), Vec2::new(250.0, 0.4)];
+        for (i, slot) in slots.into_iter().enumerate() {
+            let q = reach.nearest(slot, &grid);
+            let full = map.nearest_in(region, slot).expect("a shore");
+            assert_eq!(map.region_at(q), region, "slot {i} on the walker's ground: {q}");
+            assert!((q.distance(slot) - full.distance(slot)).abs() < 1e-4, "slot {i}: {q} is no nearer than {full}");
+        }
+        assert_eq!(reach.nearest(Vec2::new(90.3, 33.3), &grid), Vec2::new(90.3, 33.3));
+    }
+
+    /// On a big map, slots off a shore cost a look round each, not a sort
+    /// of the whole region (thousands of coarse nodes) per slot: an order
+    /// to a lake shore would stall the tick it is given in.
+    #[test]
+    fn slots_off_a_shore_on_a_big_map_skip_the_region_wide_search() {
+        let (grid, regions, walker) = lake_shore(1024, 512);
+        let reach = Reach::of(Some(&regions), Vec2::new(300.0, 500.0), &walker);
+        let map = regions.map(walker.mobility, walker.radius).expect("a map");
+        let region = map.region_at(Vec2::new(300.0, 500.0));
+        // An 80-unit group: half its slots in the water, up to 8 m out.
+        let slots: Vec<Vec2> = (0..80).map(|i| Vec2::new(512.3 + (i % 8) as f32, 480.6 + (i / 8) as f32 * 2.1)).collect();
+        let time = |f: &dyn Fn(Vec2) -> Vec2| {
+            (0..3)
+                .map(|_| {
+                    let start = Instant::now();
+                    for &s in &slots {
+                        black_box(f(black_box(s)));
+                    }
+                    start.elapsed()
+                })
+                .min()
+                .unwrap_or(Duration::ZERO)
+        };
+        let bounded = time(&|s| reach.nearest(s, &grid));
+        let full = time(&|s| map.nearest_in(region, s).expect("a shore"));
+        assert!(bounded * 10 < full, "{bounded:?} for the slots against {full:?} searching the region for each");
+    }
 }
