@@ -34,6 +34,9 @@
 # tint = { a = [0.7, 0.75, 0.55] }  multiply variant a's base colour
 #                         textures (sRGB values, each 0 to 2) to bring it in
 #                         line with the other variants; "*" = every variant
+# size = [1.2, 1.5, 1.2]  decor only: the size (w, h, d metres) the game
+#                         draws it at, before a placement scales it to the
+#                         land (reeds a little taller, rocks a little smaller)
 #
 # Defaults (lib/settings.py):
 #   trees (the nodes that give wood: pine, oak, palm)
@@ -45,6 +48,11 @@
 #       citadel 10000), texture = 1024, banner at the top front-left corner
 #   stumps
 #       stump_triangles = 300
+#   decor (scenery in source/decor/, placed by the game over the land)
+#       per id in lib/settings.py DECOR: fit, size, triangles (mountain
+#       pieces 4000-8000, meteor-site pieces 3500-5000, small scenery
+#       600-2000) and texture (1024 px for the big pieces, else 512);
+#       random_yaw = true
 #
 # Example:
 #

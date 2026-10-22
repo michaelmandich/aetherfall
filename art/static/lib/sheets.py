@@ -12,7 +12,8 @@ blue.
              pixel scale on a 1080 px screen: what a player sees; zoomed
              out, and labelled so, when a big building does not fit)
     bottom   "in game": nodes as a patch of nine (the variants mixed, turned
-             at random when random_yaw is on), buildings as three copies, rising out
+             at random when random_yaw is on), decor as its variants side
+             by side at the size the game draws them, buildings as three copies, rising out
              of the ground at 40 %, 75 % and 100 % build progress and
              tinted red, blue and green, all from the game's camera
              (enlarged 2x or 3x when that still fits, zoomed out when even
@@ -342,6 +343,15 @@ def _group(asset, s, roots, box, scn, cam, scratch, w, h):
                              (gy - 1) * step + rng.uniform(-0.25, 0.25) * step, 0.0))
                 copies.append(_instance(root, at, yaw, 0.0))
         label = f"in game: nine {asset.id}, variants mixed" + (", turned at random" if s.random_yaw else "")
+    elif asset.kind == "decor":
+        # Every variant once, side by side at its drawn size (the game
+        # scales each placement further: mountains to the range, rims to
+        # the crater, bridges to the river).
+        step = box[0] * 1.15 + 0.6
+        for i, (_, _, root, _) in enumerate(variants):
+            at = Vector(((i - (len(variants) - 1) / 2) * step, (i % 2) * box[2] * 0.3, 0.0))
+            copies.append(_instance(root, at, 0.0, 0.0))
+        label = f"in game: {asset.id}, every variant at its drawn size"
     else:
         root = variants[0][2]
         height = box[1]

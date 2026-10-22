@@ -1,4 +1,4 @@
-"""Build the static models (buildings and resource nodes) for the game.
+"""Build the static models (buildings, resource nodes and decor) for the game.
 
 Run headless from the repository root:
 
@@ -9,7 +9,7 @@ Options (after the `--`):
     --only pine,house    build only these ids (the registry still lists every
                          asset already built)
     --source DIR         where the source models are (default art/static/source),
-                         in DIR/buildings/ and DIR/nodes/
+                         in DIR/buildings/, DIR/nodes/ and DIR/decor/
     --out-root DIR       where the models go (default assets/models/static)
     --registry PATH      the generated registry (default assets/visuals/static.ron)
     --asset-root DIR     the folder the engine's asset paths are relative to
@@ -80,7 +80,7 @@ def run(args):
         raise SystemExit(f"--out-root {out_root} is not inside --asset-root {asset_root}")
     game = content.load(_abs(args.data))
     overrides = settings.load(_abs(args.settings))
-    assets = discover.discover(source, game)
+    assets = discover.discover(source, game, settings.DECOR)
     print(f"source {source}: {len(assets)} asset(s)")
 
     wanted = sorted(assets)
@@ -104,6 +104,9 @@ def run(args):
             print(f"  ! {note}")
         try:
             s = settings.resolve(asset.kind, asset.id, entry, overrides)
+            if asset.kind == "decor" and s.size:
+                # Not a game entity: its "box" is the size the game draws it at.
+                entry = content.Entry("decor", asset.id, tuple(s.size))
             build_asset(asset, s, entry, out_root, asset_root, sheets)
         except (BuildError, settings.SettingsError, RuntimeError, ValueError) as e:
             print(f"  FAILED: {e}")

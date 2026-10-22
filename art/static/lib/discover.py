@@ -1,14 +1,15 @@
 """Find the source models and group them into assets by file name.
 
-    source/<buildings|nodes>/<id>.<ext>            one model (variant "a")
-    source/<buildings|nodes>/<id>_<variant>.<ext>  variants: pine_a, pine_b...
-    source/<buildings|nodes>/<id>_stump.<ext>      a felled tree's stump
+    source/<buildings|nodes|decor>/<id>.<ext>            one model (variant "a")
+    source/<buildings|nodes|decor>/<id>_<variant>.<ext>  variants: pine_a, pine_b...
+    source/nodes/<id>_stump.<ext>                        a felled tree's stump
 
-Ids contain underscores (`town_center`, `stone_outcrop`), so a name is
-split against the game's ids first: `town_center.glb` is the town centre,
-`stone_outcrop_b.glb` its variant b. A name that matches no id is split at
-its last underscore when what follows looks like a variant (one letter, or
-digits), and kept whole otherwise; either way the build warns.
+Ids contain underscores (`town_center`, `stone_outcrop`, `mountain_peak`),
+so a name is split against the known ids first (the game's for buildings
+and nodes, `settings.DECOR` for decor): `town_center.glb` is the town
+centre, `stone_outcrop_b.glb` its variant b. A name that matches no id is
+split at its last underscore when what follows looks like a variant (one
+letter, or digits), and kept whole otherwise; either way the build warns.
 """
 
 import os
@@ -16,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 
 EXTENSIONS = (".glb", ".gltf", ".fbx", ".obj")
+KINDS = ("buildings", "nodes", "decor")  # the source folders, in build order
 STUMP = "stump"
 DEFAULT_VARIANT = "a"
 _VARIANT = re.compile(r"^[a-z0-9]{1,8}$")
@@ -29,7 +31,7 @@ class SourceError(ValueError):
 
 @dataclass
 class Asset:
-    kind: str                 # "buildings" | "nodes"
+    kind: str                 # "buildings" | "nodes" | "decor"
     id: str
     variants: dict = field(default_factory=dict)   # variant name -> source path
     stump: str = None         # source path
@@ -63,15 +65,20 @@ def split_name(stem, ids):
     return stem, None, False
 
 
-def discover(source_root, content):
-    """{(kind, id): Asset} for every model under source_root/<kind>/."""
+def discover(source_root, content, decor_ids=()):
+    """{(kind, id): Asset} for every model under source_root/<kind>/.
+    `content` is the game's buildings and nodes, `decor_ids` the decor
+    the game places."""
     assets = {}
-    for kind in ("buildings", "nodes"):
+    for kind in KINDS:
         folder = os.path.join(source_root, kind)
         if not os.path.isdir(folder):
             continue
-        ids = {e.id for e in content.values() if e.kind == kind}
-        other = {e.id: e.kind for e in content.values() if e.kind != kind}
+        if kind == "decor":
+            ids, other = set(decor_ids), {}
+        else:
+            ids = {e.id for e in content.values() if e.kind == kind}
+            other = {e.id: e.kind for e in content.values() if e.kind != kind}
         seen = {}
         for name in sorted(os.listdir(folder)):
             path = os.path.join(folder, name)
@@ -93,6 +100,8 @@ def discover(source_root, content):
                 asset = assets[(kind, ident)] = Asset(kind, ident, known=ident in ids)
                 if ident in other:
                     asset.notes.append(f"{ident!r} is a {other[ident][:-1]} in the game, not a {kind[:-1]}")
+                elif ident not in ids and kind == "decor":
+                    asset.notes.append(f"{ident!r} is not a decor id the game places (art/static/lib/settings.py DECOR)")
                 elif ident not in ids:
                     asset.notes.append(f"{ident!r} is not a {kind[:-1]} id in assets/data")
             if stump:

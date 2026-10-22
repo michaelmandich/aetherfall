@@ -46,6 +46,14 @@ def build_part(src, ident, part, s, kind, entry, out_path, is_stump=False):
     objs = scene.import_file(src)
     obj, notes = scene.to_statue(objs, ident)
     scene.normalise(obj, s.yaw)
+    if kind == "decor" and s.long:
+        # A long piece (a ridge, a rim arc, a bridge) lies along X: the
+        # engine lays its length along the spine, arc or span. Blender's -Y
+        # is glTF's +Z.
+        lo, hi = scene.bounds(obj)
+        if hi[1] - lo[1] > 1.15 * (hi[0] - lo[0]):
+            scene.normalise(obj, 90.0)
+            notes.append("turned a quarter: its long side now lies along X (set yaw to choose which way it faces)")
     depth = None if is_stump else s.plate_cut(part)
     if depth is not None:
         cut = scene.cut_plate(obj, depth)
@@ -130,8 +138,9 @@ def build_asset(asset, s, entry, out_root, asset_root, sheets_dir=None):
                 print(f"         {note}")
         variants = [built[n] for n, _, stump in parts if not stump]
         stump = built.get(STUMP)
+        size = entry.size if asset.kind == "decor" and entry is not None else None
         write_manifest(os.path.join(tmp_dir, asset.id + MANIFEST_SUFFIX), asset.kind, asset.id, s.fit,
-                       s.random_yaw, variants, stump, has_banner(asset.kind, s))
+                       s.random_yaw, variants, stump, has_banner(asset.kind, s), size)
         if sheets_dir:
             from . import sheets
             sheet = os.path.join(sheets_dir, f"{asset.kind}_{asset.id}.png")
