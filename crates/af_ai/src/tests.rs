@@ -3565,4 +3565,17 @@ fn the_map_scale_grows_with_big_maps() {
     )
     .expect("player");
     assert_eq!(view.map_scale(), 2.0);
+    // Sea bands beyond the land do not count: a 384 m land square with a
+    // 384 m band of sea on one side is the tuned size.
+    use af_core::ext::map::{MapEdge, MapSize, ResolvedMapOptions, SiteKind, WaterLevel};
+    let coast = MapFeatures {
+        options: ResolvedMapOptions { size: MapSize::Medium, water: WaterLevel::Coast, rivers: 1, site: SiteKind::Crater },
+        land_min: Vec2::ZERO,
+        land_max: Vec2::new(768.0, 384.0),
+        ocean_edges: vec![MapEdge::North],
+        sites: Vec::new(),
+        rivers: Vec::new(),
+        mountains: Vec::new(),
+    };
+    assert_eq!(view.with_features(Some(&coast)).map_scale(), 1.0);
 }

@@ -138,8 +138,8 @@ Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
   the Starspire, from cell hashes, only on unbuildable ground, merged per
   chunk.
 * **Published:** `TerrainSurface` (the drawn top of the map: ground, rock
-  or water surface) for markers on mountains and water, and for picking
-  with a ray later.
+  or water surface) for markers on mountains and water, and for af_input's
+  cursor ray, so clicks land on the rock and water that are drawn.
 * **Headless** apps (no `PbrPlugin`) get the same chunk entities with
   plain `StandardMaterial`s, made once per match.
 * **Look of the light** (`scene`): a warm afternoon sun, sky-tinted

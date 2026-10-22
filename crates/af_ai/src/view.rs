@@ -401,10 +401,13 @@ impl<'a> AiView<'a> {
         pop.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map_or(self.worker_kind(), |p| p.0)
     }
 
-    /// How much bigger than [`TUNED_MAP_SIDE`] the map is (at least 1): the
-    /// military radii (defence, home, recall) grow with it.
+    /// How much bigger than [`TUNED_MAP_SIDE`] the land is (at least 1): the
+    /// military radii (defence, home, recall) grow with it. Sea bands
+    /// beyond the land (Coast and Seas maps) do not count: the land
+    /// rectangle's shorter side is the land square, else the map's side.
     pub fn map_scale(&self) -> f32 {
-        (self.map_size.max_element() / TUNED_MAP_SIDE).max(1.0)
+        let land = self.features.map_or(self.map_size.max_element(), |f| (f.land_max - f.land_min).min_element());
+        (land / TUNED_MAP_SIDE).max(1.0)
     }
 
     /// Of the spatial entries passing `wanted`, the one a unit of `kind` at
