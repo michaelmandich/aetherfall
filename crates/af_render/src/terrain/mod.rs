@@ -196,16 +196,31 @@ fn ground_params(field: &Field) -> GroundParams {
     let map_max = map_min + Vec2::new(field.map_cols as f32, field.map_rows as f32) * field.cell;
     let size = Vec2::new(field.cols as f32, field.rows as f32) * field.cell;
     let sky = SKY.to_linear();
+    let sky = Vec4::new(sky.red, sky.green, sky.blue, 1.0);
     GroundParams {
         map: Vec4::new(map_min.x, map_min.y, map_max.x, map_max.y),
         field: Vec4::new(field.origin.x, field.origin.y, 1.0 / size.x, 1.0 / size.y),
         fog: Vec4::new(0.0, 0.0, 0.0, field.skirt as f32 * field.cell),
-        sky: Vec4::new(sky.red, sky.green, sky.blue, 1.0),
+        sky,
+        reflection: sky,
     }
 }
 
-/// The drawn top at every map corner (for `TerrainSurface`).
-fn surface_of(field: &Field) -> TerrainSurface {
+/// Point the uniforms at the fog of war (`fog_extent`: the fog grid's size
+/// in metres) or away from it: while it is drawn the skirt fades into the
+/// dark of unexplored ground, else into the sky. The water's reflection
+/// stays the sky either way.
+fn set_fog(p: &mut GroundParams, fog_extent: Vec2, on: bool) {
+    let beyond = if on { BEYOND_FOG } else { SKY }.to_linear();
+    p.fog.x = 1.0 / fog_extent.x;
+    p.fog.y = 1.0 / fog_extent.y;
+    p.fog.z = if on { 1.0 } else { 0.0 };
+    p.sky = Vec4::new(beyond.red, beyond.green, beyond.blue, 1.0);
+}
+
+/// The drawn top at every map corner, and how every map cell is split into
+/// its triangles (for `TerrainSurface`).
+pub(crate) fn surface_of(field: &Field) -> TerrainSurface {
     let (w, h) = (field.map_cols + 1, field.map_rows + 1);
     let mut top = Vec::with_capacity((w * h) as usize);
     for z in 0..h {
@@ -215,7 +230,8 @@ fn surface_of(field: &Field) -> TerrainSurface {
             top.push(if field.corner_wet(fx, fz) { y.max(WATER_LEVEL) } else { y });
         }
     }
-    TerrainSurface { origin: field.world_corner(field.skirt, field.skirt), cell: field.cell, width: w as u32, height: h as u32, top }
+    let split = (0..field.map_rows).flat_map(|z| (0..field.map_cols).map(move |x| !mesh::main_diagonal(field, x + field.skirt, z + field.skirt))).collect();
+    TerrainSurface { origin: field.world_corner(field.skirt, field.skirt), cell: field.cell, width: w as u32, height: h as u32, top, split }
 }
 
 /// What one chunk of the field turns into.
@@ -346,17 +362,10 @@ pub(crate) fn bind_fog(
     let Some(mats) = state.materials.clone() else { return };
     let extent = fog.as_ref().map_or(Vec2::ONE, |f| Vec2::new(f.width as f32, f.height as f32) * f.cell).max(Vec2::splat(1.0));
     let on = image.is_some();
-    let beyond = if on { BEYOND_FOG } else { SKY };
     if let Some(mut clear) = clear {
-        clear.0 = beyond;
+        clear.0 = if on { BEYOND_FOG } else { SKY };
     }
-    let beyond = beyond.to_linear();
-    assets.each_params(&mats, |p| {
-        p.fog.x = 1.0 / extent.x;
-        p.fog.y = 1.0 / extent.y;
-        p.fog.z = if on { 1.0 } else { 0.0 };
-        p.sky = Vec4::new(beyond.red, beyond.green, beyond.blue, 1.0);
-    });
+    assets.each_params(&mats, |p| set_fog(p, extent, on));
     if let (Mat::Shaded(h), Some(a)) = (&mats.ground, assets.ground.as_mut())
         && let Some(mut m) = a.get_mut(h)
     {
@@ -373,4 +382,68 @@ pub(crate) fn bind_fog(
         m.extension.fog = image.clone();
     }
     state.fog_bound = Some(want);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terrain::field::tests::{painted, painted_features};
+    use crate::terrain::mesh::main_diagonal;
+    use af_core::testing::test_data;
+
+    #[test]
+    fn the_fog_darkens_the_skirt_but_not_the_waters_sky() {
+        let data = test_data();
+        let nav = painted(&data, 64);
+        let field = Field::build(&FieldSource { data: &data, nav: &nav, seed: 2, features: None, crater: None });
+        let mut p = ground_params(&field);
+        let sky = SKY.to_linear();
+        let sky = Vec4::new(sky.red, sky.green, sky.blue, 1.0);
+        assert_eq!((p.sky, p.reflection), (sky, sky));
+        set_fog(&mut p, Vec2::splat(128.0), true);
+        assert!(p.sky.truncate().max_element() < 0.01, "the skirt fades into the dark: {}", p.sky);
+        assert_eq!(p.reflection, sky, "the water still mirrors the sky");
+        assert_eq!(p.fog.z, 1.0);
+        set_fog(&mut p, Vec2::splat(128.0), false);
+        assert_eq!((p.sky, p.reflection, p.fog.z), (sky, sky, 0.0));
+    }
+
+    #[test]
+    fn the_published_surface_is_the_drawn_ground() {
+        // Sample inside every dry map cell (mountains included, whose cells
+        // split along either diagonal) and compare the published top with
+        // the drawn triangles of the ground mesh.
+        let data = test_data();
+        let nav = painted(&data, 128);
+        let features = painted_features();
+        let field = Field::build(&FieldSource { data: &data, nav: &nav, seed: 4, features: Some(&features), crater: None });
+        let surface = surface_of(&field);
+        assert_eq!(surface.split.len(), 128 * 128);
+        assert!(surface.split.iter().any(|s| *s), "some mountain cells split the other way");
+        let mut worst: f32 = 0.0;
+        for z in 0..128 {
+            for x in 0..128 {
+                let (fx, fz) = (x + field.skirt, z + field.skirt);
+                if [(0, 0), (1, 0), (0, 1), (1, 1)].iter().any(|(dx, dz)| field.corner_wet(fx + dx, fz + dz)) {
+                    continue;
+                }
+                let (h00, h10, h01, h11) = (field.height(fx, fz), field.height(fx + 1, fz), field.height(fx, fz + 1), field.height(fx + 1, fz + 1));
+                for (u, v) in [(0.7, 0.2), (0.2, 0.7), (0.5, 0.5), (0.9, 0.85), (0.1, 0.15)] {
+                    // The mesh's triangles: (00, 01, 11) and (00, 11, 10)
+                    // along the main diagonal, (00, 01, 10) and (10, 01, 11)
+                    // along the other.
+                    let drawn = if main_diagonal(&field, fx, fz) {
+                        if u >= v { h00 + (h10 - h00) * u + (h11 - h10) * v } else { h00 + (h11 - h01) * u + (h01 - h00) * v }
+                    } else if u + v <= 1.0 {
+                        h00 + (h10 - h00) * u + (h01 - h00) * v
+                    } else {
+                        h11 + (h01 - h11) * (1.0 - u) + (h10 - h11) * (1.0 - v)
+                    };
+                    let p = field.world_corner(fx, fz) + Vec2::new(u, v) * field.cell;
+                    worst = worst.max((surface.top_at(p) - drawn).abs());
+                }
+            }
+        }
+        assert!(worst < 1e-4, "the published top strays {worst} m from the drawn ground");
+    }
 }

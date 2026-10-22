@@ -104,9 +104,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr);
-    // A touch of sky in the surface, more at grazing angles (Fresnel).
+    // A touch of sky in the surface, more at grazing angles (Fresnel): the
+    // real sky, not the dark the skirt fades into under the fog of war.
     let fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(pbr.N, pbr.V), 0.0), 5.0);
-    out.color = vec4<f32>(mix(out.color.rgb, ground.sky.rgb * 0.8, fresnel * (1.0 - foam) * 0.5 * calm), out.color.a);
+    out.color = vec4<f32>(mix(out.color.rgb, ground.reflection.rgb * 0.8, fresnel * (1.0 - foam) * 0.5 * calm), out.color.a);
     let fog = fog_at(p);
     out.color = vec4<f32>(ground_veil(out.color.rgb, p, fog), out.color.a);
     out.color = unexplored(main_pass_post_lighting_processing(pbr, out.color), fog);

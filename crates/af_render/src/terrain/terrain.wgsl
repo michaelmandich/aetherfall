@@ -30,36 +30,78 @@ fn paint(color: vec3<f32>, rough: f32, bump: f32) -> Paint {
     return Paint(color, rough, vec3<f32>(0.0), bump);
 }
 
-// Lush meadow: broad lighter and darker swathes, a hint of hue shift,
-// small dry spots, grass clumps and darker tufts, speckles of wildflowers;
+// Lush meadow, painted from large to small: broad swathes of deeper green
+// (a hundred metres and more), lighter yellow-green and olive meadows
+// between them, now and then a field-like patch of pasture, hay or clover
+// with faint mowing stripes, then gentle patches, grass clumps and tufts
+// (kept soft: the game is seen from 40-66 m), speckles of wildflowers;
 // richer and darker toward water. A step below the team colours in
 // saturation, so Sylvan green still reads on it.
 fn meadow(p: vec2<f32>, wet: f32) -> Paint {
-    let shade = lin(vec3<f32>(0.247, 0.478, 0.180));
-    let base = lin(vec3<f32>(0.369, 0.604, 0.227));
-    let sunlit = lin(vec3<f32>(0.490, 0.702, 0.282));
-    let dry = lin(vec3<f32>(0.647, 0.663, 0.341));
-    let big = fbm(p * 0.021);
-    let mid = fbm(p * 0.085 + 7.0);
-    let small = fbm(p * 0.42 + 3.0);
-    var c = mix(shade, base, smoothstep(0.22, 0.62, big));
-    c = mix(c, sunlit, smoothstep(0.58, 0.8, mid) * 0.45);
-    c = mix(c, shade * 0.8, smoothstep(0.6, 0.82, 1.0 - mid) * 0.45);
-    c = mix(c, dry, smoothstep(0.64, 0.8, small) * smoothstep(0.45, 0.7, mid) * 0.5 * (1.0 - wet));
-    c = mix(c, c * vec3<f32>(1.08, 1.0, 0.82), smoothstep(0.5, 0.8, fbm(p * 0.045 + 31.0)) * 0.5);
-    // Grass clumps a few decimetres across, and darker tufts.
-    let clump = vnoise(p * 3.1) * 0.55 + vnoise(p * 7.3) * 0.45;
-    c *= 0.8 + 0.34 * clump;
-    c *= 1.0 - smoothstep(0.6, 0.78, fbm(mat2x2<f32>(0.8, 0.6, -0.6, 0.8) * p * 0.8 + 17.0)) * 0.24;
+    let deep = lin(vec3<f32>(0.17, 0.32, 0.14));
+    let base = lin(vec3<f32>(0.245, 0.44, 0.175));
+    let fresh = lin(vec3<f32>(0.33, 0.51, 0.19));
+    let olive = lin(vec3<f32>(0.38, 0.45, 0.22));
+    let dry = lin(vec3<f32>(0.56, 0.55, 0.33));
+    // Swathes and meadows, their outlines warped so they never look like
+    // noise blobs.
+    let q = p + (vec2<f32>(vnoise(p * 0.017), vnoise(p * 0.017 + vec2<f32>(5.3, 1.9))) - 0.5) * 46.0;
+    let vast = fbm(q * 0.006 + 1.3);
+    let big = fbm(q * 0.018 + 3.7);
+    let meadows = fbm(q * 0.012 + 41.0);
+    let tint = fbm(q * 0.03 + 9.0);
+    let mid = fbm(p * 0.05 + 7.0);
+    var c = mix(deep, base, smoothstep(0.32, 0.56, big + (vast - 0.5) * 0.6));
+    c = mix(c, fresh, smoothstep(0.56, 0.72, vast + (big - 0.5) * 0.5) * 0.65);
+    c = mix(c, olive, smoothstep(0.6, 0.76, meadows) * 0.45);
+    c = mix(c, deep * 0.9, smoothstep(0.64, 0.8, 1.0 - big) * 0.45);
+    // Patches a few tens of metres across, a little warmer or cooler.
+    c *= mix(vec3<f32>(0.95, 1.0, 1.04), vec3<f32>(1.04, 1.01, 0.94), smoothstep(0.35, 0.65, tint));
+    // Within one view (10-20 m): lusher, darker hollows and sunny, lighter
+    // yellow-green rises, softly edged.
+    let hollows = fbm(q * 0.06 + 23.0);
+    // (fbm is about 0.4-0.6 over half the ground, 0.3-0.7 over most.)
+    c = mix(c, c * vec3<f32>(0.74, 0.86, 0.76), smoothstep(0.5, 0.66, hollows) * 0.8);
+    c = mix(c, mix(c, fresh, 0.5) * 1.15, smoothstep(0.5, 0.34, hollows) * 0.65);
+    // Field-like patches: now and then a plot of a coarse grid (rows
+    // staggered, the grid turned off the map's axes), one crop each with
+    // soft, wandering edges and faint stripes down its length.
+    let along = vec2<f32>(0.857, 0.515);
+    let g = vec2<f32>(dot(p, along), dot(p, vec2<f32>(-along.y, along.x))) / vec2<f32>(36.0, 23.0);
+    let row = floor(g.y);
+    let gx = g.x + hash12(vec2<f32>(row, 7.7)) * 0.8;
+    let plot = vec2<f32>(floor(gx), row);
+    let pick = hash12(plot + 0.31);
+    let inner = min(min(fract(gx), 1.0 - fract(gx)) * 36.0, min(fract(g.y), 1.0 - fract(g.y)) * 23.0);
+    let is_field = step(pick, 0.06) * smoothstep(1.5, 6.0, inner + (fbm(p * 0.15) - 0.5) * 6.0);
+    let crop = hash12(plot + 5.17);
+    var field_col = lin(vec3<f32>(0.34, 0.5, 0.2));
+    if (crop < 0.35) {
+        field_col = lin(vec3<f32>(0.5, 0.49, 0.27));
+    } else if (crop < 0.6) {
+        field_col = lin(vec3<f32>(0.22, 0.38, 0.165));
+    }
+    let stripe = sin(g.y * 23.0 * TAU / 2.6) * 0.5 + 0.5;
+    field_col *= 0.92 + 0.13 * stripe;
+    c = mix(c, field_col, is_field * 0.5 * (1.0 - wet));
+    // Patches tens of metres across, a little lighter or darker.
+    c *= 0.86 + 0.28 * smoothstep(0.35, 0.65, mid);
+    // Dry spots.
+    let small = fbm(p * 0.3 + 3.0);
+    c = mix(c, dry, smoothstep(0.6, 0.78, small) * smoothstep(0.45, 0.66, mid) * 0.38 * (1.0 - wet));
+    // Grass clumps a few decimetres across, and darker tufts: gentle.
+    let clump = vnoise(p * 2.7) * 0.6 + vnoise(p * 6.3) * 0.4;
+    c *= 0.9 + 0.19 * clump;
+    c *= 1.0 - smoothstep(0.62, 0.8, fbm(mat2x2<f32>(0.8, 0.6, -0.6, 0.8) * p * 0.7 + 17.0)) * 0.12;
     // Richer, darker grass along the water.
     c = mix(c, c * vec3<f32>(0.7, 0.84, 0.68), wet * 0.6);
-    c = mix(c, vec3<f32>(luma(c)), 0.16);
+    c = mix(c, vec3<f32>(luma(c)), 0.08);
     // Wildflowers: white, yellow and blue dots in flowery patches.
     let cell = floor(p * 2.4);
     let h = hash12(cell);
     let spot = fract(p * 2.4) - 0.5 - (hash22(cell) - 0.5) * 0.6;
-    let flowery = smoothstep(0.5, 0.75, fbm(p * 0.06 + 3.1)) * (1.0 - wet);
-    let bloom = (1.0 - smoothstep(0.08, 0.14, length(spot))) * step(h, 0.14 * flowery);
+    let flowery = smoothstep(0.55, 0.78, fbm(p * 0.06 + 3.1)) * (1.0 - wet) * (1.0 - is_field);
+    let bloom = (1.0 - smoothstep(0.08, 0.14, length(spot))) * step(h, 0.1 * flowery);
     let hue = hash12(cell + 7.3);
     var flower = lin(vec3<f32>(0.93, 0.92, 0.86));
     if (hue < 0.45) {
@@ -68,7 +110,8 @@ fn meadow(p: vec2<f32>, wet: f32) -> Paint {
         flower = lin(vec3<f32>(0.56, 0.6, 0.9));
     }
     c = mix(c, flower, bloom);
-    return paint(c, 0.92, clump * 0.05);
+    // No bumped relief: at play distances it read only as dark specks.
+    return paint(c, 0.92, 0.0);
 }
 
 // Warm pale sand: broad swells, wind ripples, a few pebbles, and tufts of
@@ -111,11 +154,14 @@ fn forest_floor(p: vec2<f32>, off: f32, bulge: f32) -> Paint {
     let leaves = smoothstep(0.55, 0.75, vnoise(p * 2.3)) * 0.5 + smoothstep(0.6, 0.85, fbm(p * 0.5)) * 0.3;
     c = mix(c, litter, leaves);
     c *= 0.82 + 0.28 * vnoise(p * 5.0);
-    let leafy = vnoise(p * 2.6) * 0.5 + vnoise(p * 6.1) * 0.5;
-    var canopy = mix(lin(vec3<f32>(0.2, 0.33, 0.13)), lin(vec3<f32>(0.33, 0.48, 0.18)), fbm(p * 0.06));
-    canopy *= (0.55 + 0.7 * smoothstep(0.3, 0.75, bulge)) * (0.85 + 0.3 * leafy);
+    // The canopy: soft, green and only gently darker between the crowns,
+    // so the far woods read as forest rather than dark stains.
+    let leafy = vnoise(p * 1.9) * 0.5 + vnoise(p * 4.3) * 0.5;
+    var canopy = mix(lin(vec3<f32>(0.25, 0.39, 0.16)), lin(vec3<f32>(0.36, 0.5, 0.2)), fbm(p * 0.06));
+    canopy = mix(canopy, lin(vec3<f32>(0.42, 0.5, 0.22)), smoothstep(0.6, 0.8, fbm(p * 0.13 + 4.0)) * 0.4);
+    canopy *= (0.8 + 0.32 * smoothstep(0.25, 0.75, bulge)) * (0.9 + 0.2 * leafy);
     let up = smoothstep(6.0, 9.0, off);
-    return paint(mix(c, canopy, up), 0.95, mix(leaves * 0.05, leafy * 0.12, up));
+    return paint(mix(c, canopy, up), 0.95, mix(leaves * 0.05, leafy * 0.05, up));
 }
 // Grey rock: broad tones, warmer and cooler; on the faces, streaks running
 // down the fall line and dark joints between blocks; lichen on the flatter
@@ -153,7 +199,7 @@ fn rock(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
 fn mountain(p: vec2<f32>, y: f32, n: vec3<f32>, bulge: f32) -> Paint {
     var r = rock(p, y, n);
     r.color *= 0.58 + 0.7 * smoothstep(0.2, 0.8, bulge);
-    let grass = lin(vec3<f32>(0.247, 0.478, 0.180)) * (0.75 + 0.35 * vnoise(p * 1.7));
+    let grass = lin(vec3<f32>(0.255, 0.44, 0.18)) * (0.75 + 0.35 * vnoise(p * 1.7));
     let foot = (1.0 - smoothstep(0.3, 1.6, y + (vnoise(p * 0.7) - 0.5) * 1.4)) * smoothstep(0.4, 0.8, n.y);
     r.color = mix(r.color, grass, foot * 0.9);
     let snow_line = 7.4 + (fbm(p * 0.15) - 0.5) * 1.4;
@@ -166,16 +212,55 @@ fn mountain(p: vec2<f32>, y: f32, n: vec3<f32>, bulge: f32) -> Paint {
 }
 
 // Rocky highland: a plateau of grey rock with grass and lichen on top,
-// bare scarps at its edge.
-fn highland(p: vec2<f32>, y: f32, n: vec3<f32>) -> Paint {
+// bare scarps at its edge. A meteor site's rim (`rim` > 0: 0.2 at its
+// edges, 1 along its crest) is drawn as a raised lip of shattered rock.
+fn highland(p: vec2<f32>, y: f32, n: vec3<f32>, rim: f32) -> Paint {
+    if (rim > 0.1) {
+        return crater_rim(p, y, n, clamp((rim - 0.2) / 0.8, 0.0, 1.0));
+    }
     var r = rock(p, y * 2.5, n);
-    let tufts = lin(vec3<f32>(0.32, 0.5, 0.21)) * (0.72 + 0.35 * vnoise(p * 2.1));
+    let tufts = lin(vec3<f32>(0.3, 0.47, 0.2)) * (0.72 + 0.35 * vnoise(p * 2.1));
     let top = smoothstep(0.93, 0.99, n.y);
     let green = smoothstep(0.42, 0.6, fbm(p * 0.19 + 4.0)) * 0.7 + smoothstep(0.55, 0.7, fbm(p * 0.9 + 1.0)) * 0.3;
     r.color = mix(r.color, tufts, top * green * 0.8);
     // The scarps: darker, steeper-looking rock.
     r.color *= 1.0 - (1.0 - top) * 0.25;
     return r;
+}
+
+// A meteor site's rim, thrown up by the impact: a lip of heaved,
+// scorched rock (`crest` 1 along its top, 0 at its feet). The top is big
+// blocks split by deep dark joints, lit; the flanks fall away darker in
+// screes of angular stones, which the bumped normals light and shade
+// stone by stone. Heights stay those units stand on: only the shading
+// raises it.
+fn crater_rim(p: vec2<f32>, y: f32, n: vec3<f32>, crest: f32) -> Paint {
+    let light = lin(vec3<f32>(0.56, 0.54, 0.52));
+    let mid = lin(vec3<f32>(0.4, 0.385, 0.38));
+    let dark = lin(vec3<f32>(0.24, 0.225, 0.23));
+    let char_col = lin(vec3<f32>(0.2, 0.18, 0.19));
+    var r = rock(p, y * 2.5, n);
+    let warp = vec2<f32>(vnoise(p * 0.6), vnoise(p * 0.6 + 4.1)) * 0.6;
+    // Blocks along the top.
+    let blocks = cells(p * 0.75 + warp);
+    let joint = 1.0 - smoothstep(0.03, 0.13, blocks.y - blocks.x);
+    let block_col = mix(mid, light, blocks.z) * (0.85 + 0.3 * vnoise(p * 1.7));
+    // Scree on the flanks: stones a few decimetres across.
+    let scree = cells(p * 2.6 + warp * 2.0);
+    let gap = 1.0 - smoothstep(0.04, 0.16, scree.y - scree.x);
+    let stone_col = mix(dark, mid * 1.1, scree.z) * (1.0 - gap * 0.55);
+    let flank = 1.0 - smoothstep(0.15, 0.75, crest);
+    var c = mix(mix(r.color, block_col, 0.6), stone_col, flank * 0.85);
+    c = mix(c, dark * 0.4, joint * (1.0 - flank) * 0.75);
+    // Lit along the lip, falling into shade down its flanks; the stones
+    // nearest the floor scorched.
+    c *= mix(0.62, 1.12, smoothstep(0.0, 0.9, crest));
+    c = mix(c, char_col, smoothstep(0.55, 0.9, vnoise(p * 0.35 + 6.0)) * flank * 0.4);
+    // The lip's swell, for the bumped normal: its flanks face the light or
+    // turn from it, as a raised ridge's would.
+    let swell = smoothstep(0.0, 1.0, crest) * 0.9;
+    let bump = swell + (1.0 - flank) * (blocks.z * 0.22 - joint * 0.12) + flank * ((1.0 - gap) * 0.07 + scree.z * 0.05);
+    return paint(c, 0.9, bump);
 }
 
 // The meteor site's floor: dark basalt cracked into plates, glassy in
@@ -270,7 +355,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if (wa.y > 0.003) { acc = add(acc, wa.y, sand(p, wet, ra.x)); }
     if (wa.z > 0.003) { acc = add(acc, wa.z, marsh(p)); }
     if (wa.w > 0.003) { acc = add(acc, wa.w, forest_floor(p, off_map, in.color.b)); }
-    if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n)); }
+    if (wb.x > 0.003) { acc = add(acc, wb.x, highland(p, y, n, in.color.a)); }
     if (wb.y > 0.003) { acc = add(acc, wb.y, mountain(p, y, n, in.color.b)); }
     if (wb.z > 0.003) { acc = add(acc, wb.z, scar(p)); }
     if (wb.w > 0.003) { acc = add(acc, wb.w, bed(p)); }
@@ -281,8 +366,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let r = rock(p, y, n);
         acc = Paint(mix(acc.color, r.color, steep), mix(acc.rough, r.rough, steep), acc.glow, mix(acc.bump, r.bump, steep));
     }
-    // A darker ring of scree and shade round a mountain's foot.
-    let foot = in.color.g * (1.0 - wb.y) * smoothstep(0.75, 0.95, n.y);
+    // A darker ring of scree and shade round a mountain's foot and a
+    // meteor site's rim (not on the rim itself).
+    let foot = in.color.g * (1.0 - wb.y) * (1.0 - wb.x * step(0.1, in.color.a)) * smoothstep(0.75, 0.95, n.y);
     acc.color = mix(acc.color, acc.color * vec3<f32>(0.82, 0.8, 0.76), foot * 0.45);
     // Hollows a little darker, edges a little lighter (the vertex bulge).
     acc.color *= clamp(1.0 + (in.color.b - 0.5) * 0.6, 0.78, 1.18);

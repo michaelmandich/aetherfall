@@ -11,8 +11,11 @@ struct GroundParams {
     // xy: 1 / the fog grid's size, z: 1 while the fog of war is drawn,
     // w: the skirt's width.
     fog: vec4<f32>,
-    // The sky / haze colour (linear) the skirt fades into.
+    // What the skirt fades into (linear): the sky / haze colour, or the
+    // dark of unexplored ground while the fog of war is drawn.
     sky: vec4<f32>,
+    // The sky the water mirrors (linear): never darkened by the fog.
+    reflection: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> ground: GroundParams;

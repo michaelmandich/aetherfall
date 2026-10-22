@@ -19,13 +19,16 @@ pub struct FogTexture(pub Handle<Image>);
 
 /// How far from y = 0 [`ground_height`] may put the visual ground.
 ///
-/// The rest of the game treats the ground as the plane y = 0: af_core's
-/// `SpatialIndex` stores `Altitude` as the base height, af_input picks
-/// with a ray against those columns and the y = 0 plane, and af_combat
-/// aims at `Altitude` + offset. So af_render keeps every surface that
-/// something stands on within this distance of y = 0, and a box drawn on
-/// it still overlaps the column the sim picks and shoots at (for an
-/// infantry box, the ray through its centre passes through the column).
+/// The rest of the game measures heights from y = 0: af_core's
+/// `SpatialIndex` stores `Altitude` as the base height of the columns
+/// af_input hovers units through and af_combat aims at (`Altitude` +
+/// offset). af_input's cursor ray meets the drawn land through
+/// [`TerrainSurface`] while a map exists (the y = 0 plane without one),
+/// but units, buildings and their columns still sit near y = 0. So
+/// af_render keeps every surface that something stands on within this
+/// distance of y = 0, and a box drawn on it still overlaps the column the
+/// sim picks and shoots at (for an infantry box, the ray through its
+/// centre passes through the column).
 /// Climbable highlands are therefore drawn this high, not at their
 /// `TerrainDef::height`, until those crates measure heights from
 /// [`ground_height`]. Real relief (mountains, water beds) only happens
@@ -88,11 +91,12 @@ pub fn ground_height(data: &GameData, nav: &NavGrid, p: Vec2) -> f32 {
 /// exactly flat and a highland or marsh slopes inside its own edge cells;
 /// with no land around it, the same of the water cells (a unit wading in
 /// sinks gradually); else (deep inside a mountain range) 0. Off the map
-/// counts as grass.
+/// counts as what af_render draws just beyond the edge ([`off_map_terrain`]):
+/// the water of the nearest map cell, else grass.
 pub fn corner_ground(data: &GameData, nav: &NavGrid, c: IVec2) -> f32 {
     let (mut land, mut water) = (None::<f32>, None::<f32>);
     for d in [IVec2::new(-1, -1), IVec2::new(0, -1), IVec2::new(-1, 0), IVec2::ZERO] {
-        let Some(def) = data.terrain.get(nav.terrain_at(c + d) as usize) else { continue };
+        let Some(def) = data.terrain.get(off_map_terrain(data, nav, c + d) as usize) else { continue };
         let slot = if is_water_terrain(def) {
             &mut water
         } else if is_barrier_terrain(def) {
@@ -104,6 +108,20 @@ pub fn corner_ground(data: &GameData, nav: &NavGrid, c: IVec2) -> f32 {
         *slot = Some(slot.map_or(g, |h| nearer_zero(h, g)));
     }
     land.or(water).unwrap_or(0.0)
+}
+
+/// The terrain of cell `c`, on the map or just off it: off the map, the
+/// terrain of the nearest map cell when that is water (a river or the sea
+/// carries on past the edge, and af_render draws its first ring of off-map
+/// cells so), else grass (terrain 0, what `NavGrid::terrain_at` reads out
+/// of bounds).
+pub fn off_map_terrain(data: &GameData, nav: &NavGrid, c: IVec2) -> u8 {
+    if nav.in_bounds(c) || nav.width() == 0 || nav.height() == 0 {
+        return nav.terrain_at(c);
+    }
+    let edge = c.clamp(IVec2::ZERO, IVec2::new(nav.width() as i32 - 1, nav.height() as i32 - 1));
+    let t = nav.terrain_at(edge);
+    if data.terrain.get(t as usize).is_some_and(is_water_terrain) { t } else { nav.terrain_at(c) }
 }
 
 /// Whichever of two heights is nearer y = 0 (the higher on a tie).
@@ -130,8 +148,11 @@ pub fn terrain_ground(def: &TerrainDef) -> f32 {
 /// every cell corner of the map (the ground, a mountain's rock, or the water
 /// surface over a water bed). For things that must sit on or hit the drawn
 /// world where it rises above the ground units walk on: markers on
-/// mountains and water, and picking with a ray (af_input may switch from
-/// the y = 0 plane to [`TerrainSurface::raycast`]).
+/// mountains and water, and af_input's cursor ray
+/// ([`TerrainSurface::raycast`], falling back to the y = 0 plane while
+/// there is no map), so clicks land on the rock and water that are drawn.
+/// Unit columns and aiming still work from `Altitude` near y = 0 (see
+/// [`MAX_GROUND_OFFSET`]).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct TerrainSurface {
     /// World position of corner (0, 0).
@@ -143,11 +164,16 @@ pub struct TerrainSurface {
     pub height: u32,
     /// Top of the drawn world at each corner, row-major from z = origin.
     pub top: Vec<f32>,
+    /// How each cell (row-major, `(width - 1) * (height - 1)`) is split into
+    /// its two drawn triangles: true along its (max x, min z) - (min x,
+    /// max z) diagonal, false along (min, min) - (max, max) as every cell
+    /// units walk on is ([`ground_height`]). Empty: all along the latter.
+    pub split: Vec<bool>,
 }
 
 impl TerrainSurface {
-    /// The drawn top at `p`, bilinear between corners (within a few
-    /// centimetres of the drawn triangles); 0 off the map.
+    /// The drawn top at `p`, interpolated on the drawn triangles of its
+    /// cell; 0 off the map.
     pub fn top_at(&self, p: Vec2) -> f32 {
         if self.width < 2 || self.height < 2 || self.top.len() < (self.width * self.height) as usize {
             return 0.0;
@@ -161,9 +187,16 @@ impl TerrainSurface {
         let z0 = (g.y.floor() as u32).min(self.height - 2);
         let (fx, fz) = (g.x - x0 as f32, g.y - z0 as f32);
         let at = |x: u32, z: u32| self.top[(z * self.width + x) as usize];
-        let a = at(x0, z0) + (at(x0 + 1, z0) - at(x0, z0)) * fx;
-        let b = at(x0, z0 + 1) + (at(x0 + 1, z0 + 1) - at(x0, z0 + 1)) * fx;
-        a + (b - a) * fz
+        let (h00, h10, h01, h11) = (at(x0, z0), at(x0 + 1, z0), at(x0, z0 + 1), at(x0 + 1, z0 + 1));
+        let split = self.split.get((z0 * (self.width - 1) + x0) as usize).copied().unwrap_or(false);
+        match (split, fx >= fz, fx + fz <= 1.0) {
+            // Along (min, min) - (max, max), as `ground_height`.
+            (false, true, _) => h00 + (h10 - h00) * fx + (h11 - h10) * fz,
+            (false, false, _) => h00 + (h11 - h01) * fx + (h01 - h00) * fz,
+            // Along (max, min) - (min, max).
+            (true, _, true) => h00 + (h10 - h00) * fx + (h01 - h00) * fz,
+            (true, _, false) => h11 + (h01 - h11) * (1.0 - fx) + (h10 - h11) * (1.0 - fz),
+        }
     }
 
     /// Where a ray from `origin` along `dir` first meets the drawn top within
@@ -256,10 +289,60 @@ mod tests {
     }
 
     #[test]
+    fn water_carries_on_past_the_map_edge() {
+        // A river runs off the south and north edges: units wading in its
+        // last row stay at its ground instead of rising toward the grass
+        // `terrain_at` reads off the map.
+        let data = test_data();
+        let grass = data.terrain_id("grass").unwrap();
+        let deep = data.terrain_id("deep_water").unwrap();
+        let shallow = data.terrain_id("shallow_water").unwrap();
+        let mut nav = new_nav(&data, 12, 12, grass);
+        for y in 0..12 {
+            for x in 3..8 {
+                nav.set_terrain(IVec2::new(x, y), if (4..7).contains(&x) { deep.0 } else { shallow.0 });
+            }
+        }
+        let wet = terrain_ground(data.terrain_def(deep));
+        assert_eq!(off_map_terrain(&data, &nav, IVec2::new(5, -1)), deep.0, "beyond the river: the river");
+        assert_eq!(off_map_terrain(&data, &nav, IVec2::new(1, -3)), 0, "beyond the grass: grass");
+        assert_eq!(off_map_terrain(&data, &nav, IVec2::new(5, 4)), deep.0, "on the map: the map");
+        for c in [IVec2::new(5, 0), IVec2::new(6, 12)] {
+            assert_eq!(corner_ground(&data, &nav, c), wet, "border corner {c} is in the water");
+        }
+        for p in [Vec2::new(5.5, 0.1), Vec2::new(5.5, 11.9), Vec2::new(5.9, 11.97)] {
+            assert!((ground_height(&data, &nav, p) - wet).abs() < 1e-6, "wading at {p}: {}", ground_height(&data, &nav, p));
+        }
+        assert_eq!(corner_ground(&data, &nav, IVec2::new(1, 0)), 0.0, "the grass edge stays flat");
+        assert_eq!(corner_ground(&data, &nav, IVec2::new(3, 0)), 0.0, "the bank stays on the land");
+    }
+
+    #[test]
+    fn surface_follows_the_drawn_triangles() {
+        // A cell creased along one diagonal: the drawn top at its centre is
+        // that diagonal's, not the average of its corners.
+        let top = vec![6.0, 8.0, 8.0, 6.0];
+        let along = TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 2, height: 2, top: top.clone(), split: vec![false] };
+        let across = TerrainSurface { split: vec![true], ..along.clone() };
+        assert_eq!(along.top_at(Vec2::splat(0.5)), 6.0, "a gully along (min, min) - (max, max)");
+        assert_eq!(across.top_at(Vec2::splat(0.5)), 8.0, "a ridge along the other diagonal");
+        assert!((across.top_at(Vec2::new(0.8, 0.7)) - 7.0).abs() < 1e-6);
+        assert!((along.top_at(Vec2::new(0.8, 0.7)) - 6.2).abs() < 1e-6);
+        // The corners are the corners either way, and no split reads as
+        // the main diagonal (as land is drawn).
+        for (p, h) in [(Vec2::ZERO, 6.0), (Vec2::X, 8.0), (Vec2::Y, 8.0), (Vec2::ONE, 6.0)] {
+            assert_eq!(along.top_at(p), h);
+            assert_eq!(across.top_at(p), h);
+        }
+        let unsplit = TerrainSurface { split: Vec::new(), ..along.clone() };
+        assert_eq!(unsplit.top_at(Vec2::new(0.3, 0.6)), along.top_at(Vec2::new(0.3, 0.6)));
+    }
+
+    #[test]
     fn surface_samples_and_raycasts() {
         let mut top = vec![0.0; 11 * 11];
         top[5 * 11 + 5] = 4.0;
-        let s = TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 11, height: 11, top };
+        let s = TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width: 11, height: 11, top, split: Vec::new() };
         assert_eq!(s.top_at(Vec2::new(5.0, 5.0)), 4.0);
         assert_eq!(s.top_at(Vec2::new(5.5, 5.0)), 2.0);
         assert_eq!(s.top_at(Vec2::new(-3.0, 5.0)), 0.0, "off the map");

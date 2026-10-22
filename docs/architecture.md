@@ -112,10 +112,12 @@ Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 
 * **Field** (`terrain::field`): what every cell looks like and the height
   of every cell corner, over the map and a 64 m off-map skirt that carries
-  the edge on (sea beyond a sea edge, water and mountains straight out,
-  else meadow, woodland and a frame of mountains). Every cell units walk on
-  is drawn exactly at `af_core::ext::render::ground_height` (corner
-  heights, interpolated on the drawn triangles); relief only rises in
+  the edge on (sea beyond a sea edge, rivers winding on along their lines
+  and narrowing, other water and mountains straight out, else meadow,
+  woodland and a frame of mountains; the first ring beyond the edge always
+  carries its water on, as `off_map_terrain` assumes). Every cell units
+  walk on is drawn exactly at `af_core::ext::render::ground_height`
+  (corner heights, interpolated on the drawn triangles); relief only rises in
   mountains (a sharp crest, at most 10.5 m, below every flyer) and sinks in
   water beds. A pure function of the map: the nav terrain, the seed and
   `MapFeatures` when af_map publishes them (river lines give the water its
@@ -131,20 +133,27 @@ Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
   paints the water's rim on the bank, so shores curve. The water streams
   ripples and foam down rivers in their own downstream/across coordinates.
   All three draw the fog of war from `FogTexture` (and dark beyond the
-  map while it is shown) and grey the skirt; spectators and fog-off
-  matches see everything. Animation reads `globals.time` with periods
+  map while it is shown, though the water still mirrors the sky) and grey
+  the skirt; spectators and fog-off matches see everything. The meadow
+  is painted from large to small (swathes, meadows, field-like plots,
+  patches) with soft fine detail. Animation reads `globals.time` with periods
   that divide an hour; materials change only when the fog binding does.
-* **Props** (`terrain::props`): brambles, reeds, scree, meteor rock and
-  the Starspire, from cell hashes, only on unbuildable ground, merged per
-  chunk.
+* **Props** (`terrain::props`): brambles, reeds, scree (also down the
+  meteor sites' rims), meteor rock and the Starspire (a cluster of
+  pointed crystal prisms, its own shadow-casting mesh), from cell hashes,
+  only on unbuildable ground, merged per chunk.
 * **Published:** `TerrainSurface` (the drawn top of the map: ground, rock
-  or water surface) for markers on mountains and water, and for af_input's
-  cursor ray, so clicks land on the rock and water that are drawn.
+  or water surface, with each cell's triangle split, so `top_at` lies on
+  the drawn triangles) for markers on mountains and water, and for
+  af_input's cursor ray, so clicks land on the rock and water that are
+  drawn.
 * **Headless** apps (no `PbrPlugin`) get the same chunk entities with
   plain `StandardMaterial`s, made once per match.
 * **Look of the light** (`scene`): a warm afternoon sun, sky-tinted
   ambient light, a hazy sky with distance fog matched to it, colour grading
-  and soft bloom over glows only, put on the RTS camera by an observer.
+  and soft bloom over glows only, put on the RTS camera by an observer;
+  `fit_haze` scales the haze with the camera's distance from its focus
+  whenever it moves, so far zooms never turn milky.
 
 ## Visual models
 

@@ -179,6 +179,37 @@ impl PropMesh {
         }
     }
 
+    /// A long six-sided crystal: a prism from `base` along `axis` (unit),
+    /// `radius` to its edges and `length` long, ending in a pointed tip,
+    /// turned `twist` about its axis. Each side is one flat facet colour,
+    /// darker toward the foot like smoky quartz, the tip lighter; the foot
+    /// glows in `glow` (its alpha) fading out a little way up.
+    #[allow(clippy::too_many_arguments)]
+    fn prism(&mut self, base: Vec3, axis: Vec3, radius: f32, length: f32, twist: f32, facets: &[[f32; 4]; 6], tip: [f32; 4], glow: [f32; 4]) {
+        let side = axis.cross(if axis.y.abs() > 0.99 { Vec3::X } else { Vec3::Y }).normalize();
+        let fwd = axis.cross(side);
+        let ring = |h: f32, r: f32| -> [Vec3; 6] {
+            std::array::from_fn(|i| {
+                let a = twist + i as f32 / 6.0 * std::f32::consts::TAU;
+                base + axis * h + (side * a.cos() + fwd * a.sin()) * r
+            })
+        };
+        let glow_h = 0.2 + 0.06 * length;
+        let (r0, r1, r2) = (ring(-0.35, radius * 0.98), ring(glow_h, radius), ring(length * 0.8, radius * 0.94));
+        let apex = base + axis * length;
+        for i in 0..6 {
+            let j = (i + 1) % 6;
+            let c = facets[i];
+            let foot = scale_rgb(c, 0.7);
+            let shoulder = mix_rgb(c, tip, 0.3);
+            self.tri(r0[i], r0[j], r1[j], [glow, glow, foot]);
+            self.tri(r0[i], r1[j], r1[i], [glow, foot, foot]);
+            self.tri(r1[i], r1[j], r2[j], [foot, foot, c]);
+            self.tri(r1[i], r2[j], r2[i], [foot, c, c]);
+            self.tri(r2[i], r2[j], apex, [shoulder, shoulder, tip]);
+        }
+    }
+
     /// Dense dark brambles: two or three thorny lumps.
     fn bramble(&mut self, at: Vec3, dice: &mut Dice) {
         let leaves = [lin(0x2c4a23, 0.0), lin(0x35562a, 0.0), lin(0x3e5f2b, 0.0), lin(0x263f1e, 0.0), lin(0x46652f, 0.0)];
@@ -232,6 +263,21 @@ fn char_shades() -> [[f32; 4]; 3] {
     [lin(0x3a3436, 0.0), lin(0x2b2628, 0.0), lin(0x4a4446, 0.0)]
 }
 
+/// Heaved, scorched rim rock: darker greys warmed by soot.
+fn rim_shades() -> [[f32; 4]; 4] {
+    [lin(0x6e6a68, 0.0), lin(0x57534f, 0.0), lin(0x7f7b77, 0.0), lin(0x403b3b, 0.0)]
+}
+
+/// The drawn ground's height at a world point (bilinear between its
+/// cell's corners: close enough to set a stone on).
+fn surface(field: &Field, p: Vec2) -> f32 {
+    let g = (p - field.origin) / field.cell;
+    let (x, z) = (g.x.floor() as i32, g.y.floor() as i32);
+    let (fx, fz) = (g.x - x as f32, g.y - z as f32);
+    let h = |dx: i32, dz: i32| field.height(x + dx, z + dz);
+    (h(0, 0) * (1.0 - fx) + h(1, 0) * fx) * (1.0 - fz) + (h(0, 1) * (1.0 - fx) + h(1, 1) * fx) * fz
+}
+
 /// Is the cell next to (4-neighbourhood) a cell `pred` holds for?
 fn next_to(field: &Field, x: i32, z: i32, pred: impl Fn(Cover) -> bool) -> Option<Vec2> {
     let mut away = Vec2::ZERO;
@@ -252,7 +298,7 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
         let centre = field.world_cell(x, z);
         let jitter = |dice: &mut Dice| centre + Vec2::new(dice.range(-0.3, 0.3), dice.range(-0.3, 0.3)) * field.cell;
         let on = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
-        let in_site = field.sites.iter().any(|(c, rad)| centre.distance(*c) < rad * 1.15 + 2.0);
+        let in_site = field.in_site(centre);
         let in_spire = field.spire.is_some_and(|(c, rad)| centre.distance(c) < rad + 3.0);
         match cover {
             Cover::Thicket => {
@@ -278,6 +324,23 @@ pub fn chunk_props(field: &Field, r: ChunkRect) -> PropMesh {
                 let size = dice.range(0.3, 0.6);
                 let y = field.height(x, z).min(field.height(x + 1, z + 1));
                 m.shard(on(p, y), size, size * dice.range(0.5, 0.9), lean, &mut dice, &char_shades());
+            }
+            Cover::Highland if in_site => {
+                let mut dice = Dice::new(x, z, salt ^ 0x5c07);
+                if let Some(away) = next_to(field, x, z, |c| c != Cover::Highland) {
+                    // Scree down the rim's flanks: a few angular stones.
+                    for _ in 0..1 + (dice.next() * 3.0) as usize {
+                        let p = centre + Vec2::new(dice.range(-0.45, 0.45), dice.range(-0.45, 0.45)) * field.cell + away * 0.12;
+                        let size = dice.range(0.14, 0.3);
+                        m.shard(on(p, surface(field, p) + 0.06), size, size * dice.range(0.5, 0.9), away, &mut dice, &rim_shades());
+                    }
+                } else if field.rim[field.index(x, z)] >= 2.0 && dice.next() < 0.16 {
+                    // Jagged spurs along the crest.
+                    let p = jitter(&mut dice);
+                    let lean = Vec2::new(dice.range(-1.0, 1.0), dice.range(-1.0, 1.0)).normalize_or(Vec2::X);
+                    let size = dice.range(0.3, 0.55);
+                    m.shard(on(p, surface(field, p)), size, size * dice.range(0.9, 1.5), lean, &mut dice, &rim_shades());
+                }
             }
             Cover::Mountain => {
                 if let Some(away) = next_to(field, x, z, Cover::is_land)
@@ -315,19 +378,62 @@ pub fn spire_props(field: &Field) -> PropMesh {
     m
 }
 
-/// The Starspire: a giant pale crystal and its splinters on a rocky base,
-/// pale rather than the bright violet of an aether node, glowing faintly.
+/// The Starspire: a giant dormant crystal, a cluster of long six-sided
+/// prisms with pointed tips leaning out from a common base (three tall
+/// ones at the heart, a ring of shorter ones round them, small ones
+/// splaying out low), pale smoky white-violet with darker facets, rather
+/// than the bright violet of an aether node; only their feet glow a soft
+/// violet (well under a twentieth of the surface). Charred splinters lie
+/// round its rim.
 pub fn spire(m: &mut PropMesh, at: Vec3, radius: f32, seed: u32) {
-    let (pale, tip) = (lin(0xc4bbe0, 0.05), lin(0xe8e2fa, 0.14));
+    use std::f32::consts::TAU;
+    let facets = [lin(0xd2c9e4, 0.0), lin(0xa497c4, 0.0), lin(0x665a8c, 0.0), lin(0xbcb1d6, 0.0), lin(0x807399, 0.0), lin(0xddd6ec, 0.0)];
+    let (tip, glow) = (lin(0xede8f6, 0.0), lin(0xa16ff0, 1.0));
     let mut dice = Dice(seed ^ 0x5717);
     let top = af_core::ext::render::MAX_TERRAIN_HEIGHT - 0.3 - at.y;
-    m.crystal(at, radius * 0.32, top, Vec3::new(0.04, 0.0, -0.03), pale, tip);
-    for i in 0..8 {
-        let a = i as f32 / 8.0 * std::f32::consts::TAU + dice.range(-0.25, 0.25);
+    let thick = (radius * 0.13).clamp(0.9, 2.4);
+    let lean = |out: Vec3, angle: f32| (Vec3::Y * angle.cos() + out * angle.sin()).normalize();
+    let turn = dice.next() * TAU;
+    // The heart: three tall prisms leaning a little apart.
+    for (k, (tilt, size, length)) in [(0.05f32, 0.78f32, 1.0f32), (0.2, 0.6, 0.84), (0.27, 0.55, 0.74)].into_iter().enumerate() {
+        let a = turn + k as f32 / 3.0 * TAU + dice.range(-0.3, 0.3);
         let out = Vec3::new(a.cos(), 0.0, a.sin());
-        let foot = at + out * radius * dice.range(0.3, 0.6);
-        let h = top * dice.range(0.3, 0.65);
-        m.crystal(foot, radius * dice.range(0.09, 0.17), h, out * dice.range(0.2, 0.5), pale, tip);
+        let axis = lean(out, tilt);
+        let foot = at + out * thick * if k == 0 { 0.1 } else { 0.7 };
+        m.prism(foot, axis, thick * size, top * length / axis.y, dice.range(0.0, TAU), &facets, tip, glow);
+    }
+    // A ring of shorter prisms round them, leaning out.
+    let ring = 8;
+    for i in 0..ring {
+        let a = turn + (i as f32 + 0.5) / ring as f32 * TAU + dice.range(-0.22, 0.22);
+        let out = Vec3::new(a.cos(), 0.0, a.sin());
+        let foot = at + out * (thick * 1.1 + radius * dice.range(0.03, 0.1)) + Vec3::Y * 0.15;
+        let axis = lean(out, dice.range(0.32, 0.58));
+        m.prism(foot, axis, thick * dice.range(0.36, 0.48), top * dice.range(0.5, 0.74), dice.range(0.0, TAU), &facets, tip, glow);
+    }
+    // Slimmer ones fanning out low from the same base.
+    let splay = 10;
+    for i in 0..splay {
+        let a = turn + i as f32 / splay as f32 * TAU + dice.range(-0.25, 0.25);
+        let out = Vec3::new(a.cos(), 0.0, a.sin());
+        let foot = at + out * radius * dice.range(0.14, 0.3) + Vec3::Y * 0.15;
+        let axis = lean(out, dice.range(0.62, 0.92));
+        m.prism(foot, axis, thick * dice.range(0.24, 0.34), top * dice.range(0.3, 0.5), dice.range(0.0, TAU), &facets, tip, glow);
+    }
+    // Out toward the edge of its footing (all of it impassable), the
+    // crystal breaks through the ground again in smaller clusters of
+    // columns, leaning out like the heart.
+    let sprays = 7;
+    for i in 0..sprays {
+        let a = turn + (i as f32 + 0.5) / sprays as f32 * TAU + dice.range(-0.25, 0.25);
+        let centre = at + Vec3::new(a.cos(), 0.0, a.sin()) * radius * dice.range(0.45, 0.66);
+        for k in 0..3 {
+            let b = a + dice.range(-0.6, 0.6);
+            let out = Vec3::new(b.cos(), 0.0, b.sin());
+            let foot = centre + out * dice.range(0.0, 0.5) + Vec3::Y * 0.05;
+            let axis = lean(out, dice.range(0.2, 0.55) + 0.12 * k as f32);
+            m.prism(foot, axis, thick * dice.range(0.19, 0.27), top * dice.range(0.32, 0.5) * (1.0 - 0.15 * k as f32), dice.range(0.0, TAU), &facets, tip, glow);
+        }
     }
     for i in 0..10 {
         let a = i as f32 / 10.0 * std::f32::consts::TAU + dice.range(-0.3, 0.3);

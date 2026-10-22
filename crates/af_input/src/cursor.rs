@@ -187,7 +187,7 @@ mod tests {
     fn ridge(height: f32) -> TerrainSurface {
         let (width, rows) = (41, 41);
         let top = (0..width * rows).map(|i| if (20..=24).contains(&(i % width)) { height } else { 0.0 }).collect();
-        TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width, height: rows, top }
+        TerrainSurface { origin: Vec2::ZERO, cell: 1.0, width, height: rows, top, split: Vec::new() }
     }
 
     #[test]

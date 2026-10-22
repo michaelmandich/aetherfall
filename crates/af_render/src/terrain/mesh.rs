@@ -105,22 +105,27 @@ pub fn main_diagonal(field: &Field, x: i32, z: i32) -> bool {
 
 /// The ground's vertex colour, which the terrain shader reads as data: how
 /// close a corner is to water (r: 1 on the shore, 0 from 6 m away), to a
-/// mountain's foot (g: 1 at the rock, 0 from 4 m away), and how much it
-/// stands out of the ground around it (b: 0.5 flat, toward 1 on ridges and
-/// peaks, toward 0 in gullies).
+/// mountain's foot or a meteor site's rim (g: 1 at the rock, 0 from 4 m
+/// away from a mountain, 3 m from a rim), how much it stands out of the
+/// ground around it (b: 0.5 flat, toward 1 on ridges and peaks, toward 0
+/// in gullies), and where it lies across a site's rim (a: 0 off the rims;
+/// on them 0.2 at the edges rising to 1 along the crest).
 pub fn corner_data(field: &Field, x: i32, z: i32) -> [f32; 4] {
     let cells = field.corner_cells(x, z);
-    let (mut shore, mut rock) = (f32::MAX, f32::MAX);
+    let (mut shore, mut rock, mut near_rim, mut rim) = (f32::MAX, f32::MAX, f32::MAX, 0.0f32);
     for i in cells {
         let c = field.cover[i];
         shore = shore.min(if c.is_water() { 0.0 } else { field.shore[i] });
         rock = rock.min(if c == Cover::Mountain { 0.0 } else { field.rock[i] });
+        near_rim = near_rim.min(field.to_rim[i]);
+        rim = rim.max(field.rim[i]);
     }
     let wet = 1.0 - smoothstep(0.5, 6.5, shore * field.cell);
-    let foot = 1.0 - smoothstep(0.5, 4.5, rock * field.cell);
+    let foot = (1.0 - smoothstep(0.5, 4.5, rock * field.cell)).max((1.0 - smoothstep(0.0, 3.0, near_rim * field.cell)) * 0.85);
     let around = (field.height(x - 1, z) + field.height(x + 1, z) + field.height(x, z - 1) + field.height(x, z + 1)) * 0.25;
     let bulge = ((field.height(x, z) - around) * 1.6 + 0.5).clamp(0.0, 1.0);
-    [wet, foot, bulge, 1.0]
+    let crest = if rim > 0.0 { 0.2 + 0.8 * smoothstep(1.0, 2.8, rim) } else { 0.0 };
+    [wet, foot, bulge, crest]
 }
 
 /// The ground mesh of one chunk.

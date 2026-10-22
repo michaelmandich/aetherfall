@@ -315,19 +315,31 @@ simulation is still 2D and nothing in it reads heights.
   light and shadows stay) reads a per-cell terrain-id texture, blends the
   four nearest cells with noise-warped weights (organic borders, no
   staircase), and paints each terrain procedurally in world space:
-  * grass: lush green with lighter meadow and darker patches and fine
-    speckles of wildflowers; richer and darker near water;
+  * grass: a deep, lush green painted from large to small: broad darker
+    swathes (a hundred metres and more), lighter yellow-green and olive
+    meadows between them, now and then a field-like plot of pasture, hay
+    or clover with faint stripes, lusher hollows and sunny rises a view
+    across, dry spots; fine detail (clumps, specks of wildflowers) kept
+    soft, since the game is seen from 40-66 m; richer and darker near
+    water;
   * sand: warm pale sand with ripples; beaches lighter;
   * rock (highlands, mountains): grey with variation and strata, darker
     crevices, green at the foot, snow on gentle slopes above about 7 m;
+  * a meteor site's rim (its `cliff`): a raised lip of heaved, scorched
+    rock, big blocks split by dark joints along its crest, screes of
+    angular stones down its flanks, a shaded ring at its feet; the lip's
+    swell is in the shading only (bumped normals), the cells units climb
+    on stay at their ground;
   * marsh: dark wet olive with puddles;
   * scar: dark basalt with slowly pulsing aether veins (emissive);
   * thicket ground: dark leaf litter (the brambles are props, 6.3).
-* Palette (sRGB): meadow #5E9A3A with shade #3F7A2E, sunlit #7DB348 and
-  dry accents #A5A957; forest floor #3B5A2A; dirt #8A6A48; beach sand
-  #D8C38E, dune sand #E3D3A2; marsh #556B3A with dark water #2F4A4A; rock
-  #A4A6A8 / #7E8184 / #55585C with lichen #B9BE8C; snow #EEF3F8 shading to
-  #C9D6E6; scar #3A3436 / #241F22 with aether violet #BF73FF in the veins.
+* Palette (sRGB): meadow #3E702D with deep swathes #2B5224, yellow-green
+  meadows #548230, olive #617338 and dry accents #8F8C54 (fields: pasture
+  #578033, hay #807D45, clover #38612A); forest floor #3B5A2A; dirt
+  #8A6A48; beach sand #D8C38E, dune sand #E3D3A2; marsh #556B3A with dark
+  water #2F4A4A; rock #A4A6A8 / #7E8184 / #55585C with lichen #B9BE8C;
+  site rims #8F8A85 / #66625F / #3D393B; snow #EEF3F8 shading to #C9D6E6;
+  scar #3A3436 / #241F22 with aether violet #BF73FF in the veins.
   Grass and water stay a step below the team colours in saturation (Sylvan
   green, Tide cyan and Ironhold blue must still read on them).
 * Fog of war is drawn by the terrain, water and prop shaders from
@@ -335,9 +347,13 @@ simulation is still 2D and nothing in it reads heights.
   and desaturated. The flat overlay plane goes, since it cannot sit over
   mountains.
 * Around the map a 60-80 m **skirt** of out-of-bounds land continues the
-  terrain (meadow, forest-coloured ground and mountains; ocean beyond ocean
-  edges) darkened and desaturated so it reads as off the map. The frame
-  boxes go.
+  terrain (meadow, distant forest seen from above as a soft green canopy,
+  and mountains; ocean beyond ocean edges) darkened and desaturated so it
+  reads as off the map. Rivers carry on along their own lines, winding on
+  and narrowing into the distance rather than running out straight; the
+  first ring of cells beyond the edge always continues the edge's water,
+  which is what the ground units walk on assumes there
+  (`af_core::ext::render::off_map_terrain`). The frame boxes go.
 
 ### 6.2 Water
 
@@ -365,8 +381,15 @@ never placed on top of one:
 * brambles: dense dark thorny bushes over every thicket cell (no berries);
 * reeds and rushes along shores and in marsh;
 * scree and rock spurs grown out of mountain feet and highland edges;
-* charred, ore-less meteor fragments in the meteor sites, and the giant
-  pale crystal spire for `Spire`.
+* charred, ore-less meteor fragments in the meteor sites, screes of
+  angular stones down the sites' rims and jagged spurs along their crests;
+* the Starspire for `Spire`: a giant dormant crystal, long six-sided
+  prisms with pointed tips leaning out from a common base (three tall
+  ones at its heart, up to 10.2 m, a ring of shorter ones and slimmer ones
+  fanning out low, and smaller clusters breaking through toward the edge
+  of its impassable footing), pale smoky white-violet with darker facets; only
+  their feet glow a soft violet, well under a twentieth of the surface. It
+  casts its shadow. (A modelled spire may replace it later.)
 
 A prop must never look like something a worker can gather (the style
 guide's node colour code): no loose grey boulder piles (stone), no red
@@ -378,7 +401,12 @@ charred rock (adamant), no scorched rings (vent), no free-standing trees
 
 A brighter, warmer afternoon: a warm sun, sky-tinted ambient light, a light
 hazy blue sky colour with distance fog matched to it, a touch of extra
-saturation in the colour grading and a soft bloom so aether glows.
+saturation in the colour grading and a soft bloom so aether glows. The
+haze scales with the camera's distance from what it looks at: it starts
+just beyond the focus and only softens the top of the view, the far
+horizon and the skirt by the same amount at every play zoom (25-210 m),
+and thins out from a few hundred metres up, so the dev overview from
+kilometres away stays clear and saturated.
 
 ### 6.5 How it is built
 

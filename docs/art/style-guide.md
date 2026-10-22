@@ -183,7 +183,7 @@ textures), so these colours are the shaders' palette:
 
 | Surface | sRGB | Notes |
 |---|---|---|
-| Meadow | `#5E9A3A` | base; shade `#3F7A2E`, sunlit `#7DB348`, dry accents `#A5A957`; wildflower specks white, yellow, pale blue (never red: berries) |
+| Meadow | `#3E702D` | base, deep and lush rather than lime; darker swathes `#2B5224`, yellow-green meadows `#548230`, olive `#617338`, dry accents `#8F8C54`, now and then a field-like plot (pasture `#578033`, hay `#807D45`, clover `#38612A`); strong variation from a hundred metres down to a view across, fine detail soft; wildflower specks white, yellow, pale blue (never red: berries) |
 | Forest floor (thickets, off-map woods) | `#3B5A2A` | moss `#4E6E2E`, leaf litter `#6B5434` |
 | Dirt | `#8A6A48` | |
 | Sand | dunes `#E3D3A2`, beaches `#D8C38E` | wind ripples, pebbles, grass tufts at meadow edges |
@@ -191,11 +191,13 @@ textures), so these colours are the shaders' palette:
 | Rock (highlands, mountains) | `#A4A6A8` / `#7E8184` / `#55585C` | lichen `#B9BE8C`; lighter on ridges, darker in gullies |
 | Snow | `#EEF3F8` shading to `#C9D6E6` | gentle slopes above about 7 m |
 | Meteor site floor | `#3A3436` / `#241F22` | cracked basalt; aether veins `#BF73FF`, the only glow on the land |
+| Meteor site rim | `#8F8A85` / `#66625F` / `#3D393B` | a raised lip of heaved, scorched rock: blocks along the crest, screes down the flanks |
+| The Starspire | `#D2C9E4` / `#A497C4` / `#665A8C` | a cluster of long pointed prisms, pale smoky white-violet with darker facets, tips `#EDE8F6`; a soft violet glow `#A16FF0` at the feet only |
 | Shallows, fords | `#6FC0EA` | the shores' clear turquoise |
 | River | `#3C9BE0` | foam `#F2F8FB` streaking downstream, white water over fords |
 | Lake | `#1F5BA8` | |
 | Sea | `#173E7A` to `#0F2A57` | swell and surf on beaches |
-| Sky and haze | `#A1BFDB` | the distance fog and the skirt's far edge fade into it |
+| Sky and haze | `#A1BFDB` | the distance fog and the skirt's far edge fade into it; the haze scales with the zoom, softening only the far edge of the view, so the land never turns milky |
 
 Rules:
 
@@ -214,7 +216,8 @@ Rules:
   crystals (the Starspire is pale), no gold in charred rock, no scorched
   rings, no free-standing trees (every tree is a wood node).
 - **Off the map** the land carries on, greyed and darkened, fading into the
-  haze; never a frame or a void.
+  haze; never a frame or a void. Its woods read as distant forest (a soft
+  green canopy, never black stains) and its rivers wind on, narrowing.
 - **The fog of war** is drawn into the land: out of sight darkened and
   greyed, unexplored near black.
 - **Scenery models** made later (mountain pieces, crater rims, reeds, ...)

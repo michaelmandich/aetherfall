@@ -33,8 +33,13 @@ pub struct GroundParams {
     /// xy: 1 / the fog grid's size in metres, z: 1 while the fog of war is
     /// drawn, w: the skirt's width (metres).
     pub fog: Vec4,
-    /// The sky and haze colour (linear), which the skirt fades into.
+    /// What the skirt fades into toward its far edge (linear): the sky and
+    /// haze colour, or the dark of unexplored ground while the fog of war
+    /// is drawn.
     pub sky: Vec4,
+    /// The sky the water mirrors (linear): always the sky, whatever the
+    /// fog of war does to the skirt.
+    pub reflection: Vec4,
 }
 
 /// The ground's extension: the fog of war and the two class images.
