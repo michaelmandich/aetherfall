@@ -3352,6 +3352,50 @@ fn the_front_faces_along_the_way_to_the_middle() {
     assert!(plan.rally.x > 131.0, "the rally point stays on the home bank: {}", plan.rally);
 }
 
+/// At the Starspire the middle is a spire of rock 10 m round, wider than a
+/// path goal is looked for round: the way there ends on the open ring round
+/// it, so the front still bends round the river by the ford.
+#[test]
+fn the_front_faces_along_the_way_to_the_starspire() {
+    use af_core::ext::map::{MapSize, MeteorSite, ResolvedMapOptions, SiteKind, WaterLevel};
+
+    let mut m = Match::new(&["ironhold", "dune"]);
+    m.hall(0);
+    m.workers(0, 3, m.start(0));
+    m.tick();
+    let middle = Vec2::splat(MAP * 0.5);
+    let mountain = m.data.terrain_id("mountain").expect("mountain").0;
+    let world = m.app.world_mut();
+    {
+        let mut nav = world.resource_mut::<Nav>();
+        for y in 85..115 {
+            for x in 85..115 {
+                let c = IVec2::new(x, y);
+                if nav.cell_center(c).distance(middle) < 10.0 {
+                    nav.set_terrain(c, mountain);
+                }
+            }
+        }
+    }
+    world.insert_resource(MapFeatures {
+        options: ResolvedMapOptions { size: MapSize::Small, water: WaterLevel::Dry, rivers: 1, site: SiteKind::Spire },
+        land_min: Vec2::ZERO,
+        land_max: Vec2::splat(MAP),
+        ocean_edges: Vec::new(),
+        sites: vec![MeteorSite { kind: SiteKind::Spire, center: middle, radius: 22.0 }],
+        rivers: Vec::new(),
+        mountains: Vec::new(),
+    });
+    m.river(125..131, Some(("ford", 170..177)));
+    let snap = m.snapshot(0);
+    let view = m.view(0, &snap);
+    let (mobility, radius) = view.unit_class(view.worker_kind());
+    let regions = view.regions.expect("regions");
+    assert!(regions.route(m.start(0), middle, mobility, radius).is_none(), "no route to the spire itself");
+    let plan = Plan::new(&view, &AiMemory::default());
+    assert!(plan.front.y > 0.5, "toward the ford, up the bank: {}", plan.front);
+}
+
 /// A remote wood cluster across the river is passed over for a farther
 /// one the workers can walk to.
 #[test]

@@ -9,9 +9,12 @@
 //!
 //! Automatic choices (the next node, a free field, the drop site) only take
 //! what the worker can get to over the terrain (see `reach`): a tree across
-//! the river is never picked, and the drop site is the nearest by the way
-//! round among the nearest few. A source or drop site the terrain keeps out
-//! of reach is remembered so until the regions change.
+//! a river no ford crosses is never picked. Over a forded river a tree
+//! counts as far as the way round by the ford, so one on the worker's own
+//! bank wins unless it is that much farther; the drop site is the nearest
+//! by the way round among the nearest few. A free field is the nearest in
+//! a straight line. A source or drop site the terrain keeps out of reach is
+//! remembered so until the regions change.
 
 use af_core::ext::movement::NavRegions;
 use af_core::prelude::*;
@@ -28,6 +31,10 @@ use crate::tuning::*;
 
 /// Drop sites compared by the way round (the nearest in a straight line first).
 const DEPOT_CHOICES: usize = 3;
+
+/// Nodes weighed by the way round at most when picking the next one (see
+/// `Harvest::nearest_workable`).
+const NODE_CHOICES: usize = 3;
 
 /// Below this a node, field or load counts as empty / full.
 const EPSILON: f32 = 1e-4;
@@ -588,8 +595,12 @@ impl Harvest<'_, '_> {
 
     /// Nearest entry (by box edge distance from `at`, within `radius`)
     /// passing `wanted` that the worker can get to over the terrain and
-    /// that is [`workable`](Self::workable): the costly test runs only on
-    /// the entries passing `wanted`, nearest first, until one passes.
+    /// that is [`workable`](Self::workable), counting how much longer than
+    /// the straight line the worker's way to it is (a tree over a forded
+    /// river is as far as the way round by the ford). The costly tests run
+    /// only on the entries passing `wanted`, nearest first, until none left
+    /// can beat the best, and the way round is weighed for [`NODE_CHOICES`]
+    /// of them at most.
     fn nearest_workable(&self, u: &WorkerItem, reach: &Reach, at: Vec2, radius: f32, mut wanted: impl FnMut(&SpatialEntry) -> bool) -> Option<Entity> {
         let mut found: Vec<(f32, SpatialEntry)> = Vec::new();
         let within = u.node_reach();
@@ -600,7 +611,23 @@ impl Harvest<'_, '_> {
             }
         });
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.entity.cmp(&b.1.entity)));
-        found.into_iter().find(|(_, e)| self.workable(u, &e.obb)).map(|(_, e)| e.entity)
+        let mut best: Option<(f32, Entity)> = None;
+        let mut weighed = 0;
+        for (d, e) in found {
+            // Nothing farther in a straight line can be nearer by the way round.
+            if weighed == NODE_CHOICES || best.is_some_and(|(b, _)| d >= b) {
+                break;
+            }
+            if !self.workable(u, &e.obb) {
+                continue;
+            }
+            weighed += 1;
+            let cost = d + reach.way_round(e.pos);
+            if best.is_none_or(|(b, _)| cost < b) {
+                best = Some((cost, e.entity));
+            }
+        }
+        best.map(|(_, e)| e)
     }
 
     /// Is there open ground within a worker's reach of the node box `obb`?

@@ -50,6 +50,24 @@ fn a_worker_moves_on_to_a_tree_on_its_own_bank() {
     assert_eq!(sim.current_order(worker), Some(Order::Gather { target: this_side }), "not {across}");
 }
 
+/// With a ford 30 m up the river the tree across is in reach, but it is
+/// the way round by the ford away: the worker still moves on to the tree on
+/// its own bank, a little farther in a straight line.
+#[test]
+fn a_worker_moves_on_to_a_tree_on_its_own_bank_though_a_ford_leads_over() {
+    let mut sim = Sim::new(&[("ironhold", 0)]);
+    river(&mut sim, Some(70..78));
+    sim.building(P0, "town_center", Vec2::new(40.0, 40.0), true);
+    let worker = sim.unit(P0, "peasant", Vec2::new(52.0, 40.0));
+    let first = sim.node("oak", Vec2::new(56.0, 40.0), Some(2.0));
+    let across = sim.node("oak", Vec2::new(69.0, 40.0), None);
+    let this_side = sim.node("oak", Vec2::new(50.0, 27.0), None);
+    sim.order(P0, &[worker], CommandKind::Gather(first));
+    sim.run_secs(12.0);
+    assert!(!sim.alive(first));
+    assert_eq!(sim.current_order(worker), Some(Order::Gather { target: this_side }), "not {across}");
+}
+
 /// A worker sent to a tree across the river takes one like it on its own
 /// bank instead of walking to the water and failing there.
 #[test]
@@ -137,4 +155,37 @@ fn soldiers_engage_across_the_water_only_what_their_weapons_reach() {
     assert!(sim.get::<AttackTarget>(spear).is_none(), "the spearman stays");
     assert!(sim.has::<Idle>(spear));
     assert_eq!(sim.get::<AttackTarget>(archer).map(|a| a.entity), Some(enemy), "the archer shoots across");
+}
+
+/// With a ford far up the river the way round to the enemy is long either
+/// way, but the archer gets within its bow's reach of it on its own bank:
+/// it shoots across, while the spearman, which would have to go round,
+/// stays.
+#[test]
+fn an_archer_shoots_across_a_forded_river_from_its_bank() {
+    let mut sim = Sim::new(&[("ironhold", 0), ("dune", 1)]);
+    river(&mut sim, Some(112..120));
+    let spear = sim.unit(P0, "spearman", Vec2::new(58.5, 44.0));
+    let archer = sim.unit(P0, "archer", Vec2::new(57.0, 50.0));
+    let enemy = sim.unit(P1, "peasant", Vec2::new(66.5, 47.0));
+    sim.run_secs(1.0);
+    assert!(sim.get::<AttackTarget>(spear).is_none(), "the spearman stays");
+    assert!(sim.has::<Idle>(spear));
+    assert_eq!(sim.get::<AttackTarget>(archer).map(|a| a.entity), Some(enemy), "the archer shoots across");
+}
+
+/// Three armed hostiles over a forded river outrank an enemy house the
+/// spearman already reaches, and each is a long way round by the ford: the
+/// spearman passes them over and attacks the house.
+#[test]
+fn a_soldier_takes_what_it_reaches_past_hostiles_round_by_the_ford() {
+    let mut sim = Sim::new(&[("ironhold", 0), ("dune", 1)]);
+    river(&mut sim, Some(112..120));
+    let spear = sim.unit(P0, "spearman", Vec2::new(58.5, 44.0));
+    for y in [42.0, 44.0, 46.0] {
+        sim.unit(P1, "spearman", Vec2::new(66.5, y));
+    }
+    let house = sim.building(P1, "house", Vec2::new(55.5, 44.0), true);
+    sim.run_secs(1.0);
+    assert_eq!(sim.get::<AttackTarget>(spear).map(|a| a.entity), Some(house));
 }

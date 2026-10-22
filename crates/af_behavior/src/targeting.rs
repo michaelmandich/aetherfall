@@ -7,8 +7,9 @@
 //!
 //! A ground unit only takes on, and keeps chasing, hostiles it can get
 //! within weapon reach of over the terrain (see `reach`): not a camp across
-//! the river that only a long detour by the ford leads to, nor anything on
-//! an island. What its weapons already reach is always fair game.
+//! the river that only a long detour by the ford leads to (unless it can
+//! shoot it from its bank), nor anything on an island. What its weapons
+//! already reach is always fair game.
 
 use af_core::ext::combat::{edge_distance, in_weapon_range, weapon_reach, TargetClass};
 use af_core::ext::movement::NavRegions;
@@ -22,7 +23,9 @@ use crate::motion::{Engagement, Plan};
 use crate::reach::Reach;
 use crate::tuning::*;
 
-/// The best-scoring hostiles a chase is checked for detours, in order.
+/// Chases a scan checks for detours at most (each may cost a coarse
+/// search): the best-scoring hostiles out of weapon reach, in order. What
+/// the weapons already reach needs no check.
 const DETOUR_CHECKS: usize = 3;
 
 /// Longest reach of any of these weapons; `None` when unarmed.
@@ -191,13 +194,14 @@ impl Sight<'_, '_> {
     /// weapons can already fire at. Walls and hostiles we could not reach
     /// lately are never picked automatically, nor (by a ground unit, unless
     /// in range) ones it cannot get within weapon reach of over the terrain,
-    /// or only by a long detour (see [`CHASE_DETOUR`]). Returns the entity
-    /// and its score.
+    /// or only by a long detour (see [`CHASE_DETOUR`]; past the first
+    /// [`DETOUR_CHECKS`] chases, only what needs none is taken). Returns the
+    /// entity and its score.
     pub(crate) fn best_hostile(&self, me: &Seeker, radius: f32, in_range: bool) -> Option<(Entity, f32)> {
         let team = self.team(me.owner);
         let reach = if in_range { None } else { self.reach(me) };
         let weapon = longest_reach(&self.data, me.stats, me.weapons).unwrap_or(0.0);
-        let mut found: Vec<(f32, Entity, Option<Vec2>)> = Vec::new();
+        let mut found: Vec<(f32, Entity, Option<Obb>)> = Vec::new();
         self.spatial.for_each_near(me.pos, radius, |e| {
             if e.kind == SpatialKind::Node
                 || e.entity == me.entity
@@ -219,11 +223,18 @@ impl Sight<'_, '_> {
             let gap = edge_distance(&me.obb, &e.obb);
             let score = gap + self.penalty(me, e.entity, e.kind == SpatialKind::Building, e.under_construction);
             // Out of weapon reach: the chase's way is checked below.
-            found.push((score, e.entity, (gap > weapon).then_some(e.pos)));
+            found.push((score, e.entity, (gap > weapon).then_some(e.obb)));
         });
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let direct = |chase: Option<Vec2>| chase.zip(reach.as_ref()).is_none_or(|(p, r)| !r.detour(p));
-        found.into_iter().take(DETOUR_CHECKS).find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
+        let mut checks = 0;
+        let mut direct = |chase: Option<Obb>| match chase.zip(reach.as_ref()) {
+            Some((obb, r)) => {
+                checks += 1;
+                checks <= DETOUR_CHECKS && !r.detour(&obb, weapon)
+            }
+            None => true,
+        };
+        found.into_iter().find(|f| direct(f.2)).map(|(s, e, _)| (e, s))
     }
 
     /// How our weapons stand against `target`, whoever it belongs to (a

@@ -200,7 +200,7 @@ impl Intake<'_, '_> {
     fn open_spot(&self, e: Entity, p: Vec2) -> Vec2 {
         let Ok(a) = self.actors.get(e) else { return p };
         let (mask, radius, team) = (a.mobile.mobility.0, a.mobile.radius, self.players.team(a.owner.0));
-        let p = Reach::of(self.regions.as_deref(), a.pos.0, a.mobile).nearest(self.nav.clamp_point(p, radius));
+        let p = Reach::of(self.regions.as_deref(), a.pos.0, a.mobile).nearest(self.nav.clamp_point(p, radius), &self.nav);
         if self.nav.clear_at(p, mask, radius, team) {
             p
         } else {
