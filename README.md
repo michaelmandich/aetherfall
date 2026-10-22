@@ -18,9 +18,16 @@ cargo run -p aetherfall
 ```
 
 That opens the skirmish menu: pick one of six factions, the number of AI
-opponents, teams and fog, then Start. The menu also works from the
-keyboard: Left/Right pick the faction, + and - the number of opponents, T
-toggles teams, F fog, Enter starts and S spectates. Shortcuts:
+opponents, teams and fog, then the map: its size (Small, Medium, Large,
+Huge), its water on a five-step scale (Dry: rivers only; Ponds; Lakes;
+Coast: one edge of the map is sea; Seas: two are), one or two rivers or
+either at random, and how the star fell (the meteor site: a rimmed crater,
+a shattered fall of small craters, a flooded crater lake, a long scar of
+basins, a crystal spire, or one at random). Then Start. The menu also
+works from the keyboard: Left/Right pick the faction, + and - the number
+of opponents, T toggles teams, F fog, M steps the map size, W the water, R
+the rivers and C the meteor site (Shift+M, W, R or C step back), Enter
+starts and S spectates. Shortcuts:
 
 ```bash
 cargo run -p aetherfall -- --quick --faction ironhold --players 3
@@ -29,6 +36,14 @@ cargo run -p aetherfall -- --quick --faction ironhold --players 3
 ```bash
 cargo run -p aetherfall -- --quick --spectate --players 6 --reveal --speed 4
 ```
+
+```bash
+cargo run -p aetherfall -- --quick --map large --water coast --rivers 2 --site lake
+```
+
+The map flags (`--map small|medium|large|huge`, `--water 0-4` or its name,
+`--rivers 1|2|random`, `--site crater|shattered|lake|scar|spire|random`)
+also work headless, and without `--quick` the menu opens with them chosen.
 
 `cargo run -p aetherfall -- --help` lists every option. The first build
 compiles Bevy (about 5 minutes); later builds are incremental. Build output
@@ -53,7 +68,7 @@ cannot go.
 | Action | Input |
 |---|---|
 | Pan camera | arrow keys, screen edges, middle-mouse drag; left click or drag on the minimap |
-| Zoom | mouse wheel |
+| Zoom | mouse wheel (further out on Large and Huge maps) |
 | Select | left click; drag a box (units first, else buildings); double-click or Ctrl+click = every one of that type on screen; Shift+click adds or removes |
 | Narrow a multi-selection | click a type in the selection panel (Shift+click drops it) |
 | Command (move / attack / gather / build / repair / rally) | right click, also on the minimap (Shift queues) |
@@ -233,4 +248,11 @@ cargo test --workspace
 
 ```bash
 cargo run -p aetherfall -- --headless --players 2 --minutes 15 --report-every 60
+```
+
+A screenshot of a whole map without the HUD (`--camera site` frames the
+meteor site instead; `--help` lists every dev flag):
+
+```bash
+cargo run -p aetherfall -- --spectate --reveal --map huge --camera overview --no-hud --screenshot out/map.png --screenshot-at 2
 ```

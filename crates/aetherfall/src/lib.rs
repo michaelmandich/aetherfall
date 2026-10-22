@@ -3,13 +3,15 @@
 //! * [`add_sim_plugins`] — everything the simulation needs (headless-safe).
 //! * [`add_client_plugins`] — input, UI and rendering (needs a window).
 //! * [`headless_app`] / [`run_headless`] — fast-forward a match with no window.
-//! * [`skirmish_setup`] — a `MatchSetup` from simple options.
+//! * [`skirmish_setup`] — a `MatchSetup` from simple options (their
+//!   `MapOptions` go next to it: [`skirmish_app`] does both, headless).
 //! * [`match_report`] — a text summary of the current match state.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
+use af_core::ext::map::MapOptions;
 use af_core::prelude::*;
 use af_core::CorePlugin;
 use bevy::prelude::*;
@@ -48,7 +50,11 @@ pub struct SkirmishOptions {
     pub human: bool,
     pub fog: bool,
     pub reveal: bool,
+    /// Map side in metres; 0 = by `map.size` and the player count.
     pub map_size: f32,
+    /// How the map is generated (size, water, rivers, meteor site): a
+    /// resource next to the `MatchSetup`.
+    pub map: MapOptions,
     pub start_age: u8,
     pub res_mult: f32,
     /// Teams: None = free for all.
@@ -65,6 +71,7 @@ impl Default for SkirmishOptions {
             fog: true,
             reveal: false,
             map_size: 0.0,
+            map: MapOptions::default(),
             start_age: 1,
             res_mult: 1.0,
             teams: None,
@@ -103,7 +110,18 @@ pub fn skirmish_setup(data: &GameData, o: &SkirmishOptions) -> Result<MatchSetup
     })
 }
 
+/// A windowless app for the skirmish `o` describes: its `MatchSetup` and,
+/// next to it, its `MapOptions` (see [`headless_app`]).
+pub fn skirmish_app(data: Arc<GameData>, o: &SkirmishOptions, ticks_per_update: u32) -> Result<App, String> {
+    let setup = skirmish_setup(&data, o)?;
+    let mut app = headless_app(data, setup, ticks_per_update);
+    app.insert_resource(o.map);
+    Ok(app)
+}
+
 /// A windowless app that runs `ticks_per_update` sim ticks per `update()`.
+/// It has no `MapOptions` (the default map) unless one is inserted before
+/// the first update.
 pub fn headless_app(data: Arc<GameData>, setup: MatchSetup, ticks_per_update: u32) -> App {
     let mut app = App::new();
     app.set_error_handler(bevy::ecs::error::warn);

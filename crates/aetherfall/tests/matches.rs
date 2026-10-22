@@ -54,6 +54,24 @@ fn every_faction_starts() {
     }
 }
 
+/// The map options of a skirmish reach the match next to its setup and
+/// the match runs; once the map is built from them, its published
+/// features carry the options asked for.
+#[test]
+fn map_options_reach_the_match() {
+    use af_core::ext::map::{MapFeatures, MapOptions, MapSize, RiverCount, SiteChoice, SiteKind, WaterLevel};
+    let map = MapOptions { size: MapSize::Small, water: WaterLevel::Coast, rivers: RiverCount::Two, site: SiteChoice::Kind(SiteKind::Spire) };
+    let opts = SkirmishOptions { seed: 5, players: 2, human: false, map, ..Default::default() };
+    let mut app = skirmish_app(data(), &opts, 30).expect("setup");
+    run_secs(&mut app, 1.0);
+    assert_eq!(app.world().get_resource::<MapOptions>(), Some(&map));
+    assert!(app.world().resource::<SimClock>().tick > 0, "the match runs");
+    if let Some(features) = app.world().get_resource::<MapFeatures>() {
+        let o = features.options;
+        assert_eq!((o.size, o.water, o.rivers, o.site), (MapSize::Small, WaterLevel::Coast, 2, SiteKind::Spire));
+    }
+}
+
 /// Two AIs build an economy in the first minutes: they gather, train
 /// workers, construct buildings.
 #[test]
