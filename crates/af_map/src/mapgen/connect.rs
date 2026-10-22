@@ -108,34 +108,42 @@ pub(crate) fn reachable(nav: &mut NavGrid, from: Vec2, seed_radius: f32, mobilit
 
 impl Gen<'_> {
     /// Check every class and target; carve a route for anything cut off and
-    /// check again, up to [`MAX_CARVES`] rounds. Records the carved routes
-    /// in `carved` and what stays cut off in `cut_off`, and returns how many
-    /// (class, place) pairs stay cut off (0 normally; warns otherwise).
+    /// check again, up to [`MAX_CARVES`] rounds. Records the routes actually
+    /// carved in `carved` and what stays cut off in `cut_off`, and returns
+    /// how many (class, place) pairs stay cut off (0 normally; warns
+    /// otherwise). A (class, place) that no route can be carved to is not
+    /// tried again.
     pub(super) fn ensure_connectivity(&mut self) -> usize {
         let targets = self.targets();
-        let mut carved_any = false;
+        let mut hopeless = vec![[false; CLASSES.len()]; targets.len()];
+        let mut missed_any = false;
         for _ in 0..MAX_CARVES {
             let mut carved = false;
             let mut nav = self.obstacle_nav();
-            for class in CLASSES {
+            for (c, class) in CLASSES.into_iter().enumerate() {
                 let seen = self.flood(&mut nav, class);
-                let missing: Vec<&Target> = targets.iter().filter(|t| !(t.foot_only && class.flag != MoveFlag::Foot) && !self.reached(&nav, &seen, t)).collect();
-                for t in missing {
-                    self.carve_to(&nav, &seen, t, class);
-                    self.carved.push(describe(class, t));
-                    carved = true;
+                let missing: Vec<usize> = (0..targets.len())
+                    .filter(|k| !hopeless[*k][c] && !(targets[*k].foot_only && class.flag != MoveFlag::Foot) && !self.reached(&nav, &seen, &targets[*k]))
+                    .collect();
+                missed_any |= !missing.is_empty();
+                for k in missing {
+                    if self.carve_to(&nav, &seen, &targets[k], class) {
+                        self.carved.push(describe(class, &targets[k]));
+                        carved = true;
+                    } else {
+                        hopeless[k][c] = true;
+                    }
                 }
                 if carved {
                     // The terrain changed: the next class sees the new grid.
                     nav = self.obstacle_nav();
                 }
             }
-            carved_any |= carved;
             if !carved {
                 break;
             }
         }
-        self.cut_off = if carved_any { self.cut_off_places(&targets) } else { Vec::new() };
+        self.cut_off = if missed_any { self.cut_off_places(&targets) } else { Vec::new() };
         if !self.cut_off.is_empty() {
             warn!("map gen: still cut off after carving: {}", self.cut_off.join("; "));
         }
@@ -267,8 +275,9 @@ impl Gen<'_> {
     /// lead points first) to ground `seen` already reaches. The route keeps
     /// the class's clearance square clear of buildings and layout nodes
     /// (which carving never removes), so the class fits along it once it is
-    /// carved.
-    fn carve_to(&mut self, nav: &NavGrid, seen: &[bool], t: &Target, class: Class) {
+    /// carved. Returns whether anything changed (false: no route exists, or
+    /// none needed carving).
+    fn carve_to(&mut self, nav: &NavGrid, seen: &[bool], t: &Target, class: Class) -> bool {
         let mobility = Mobility::of(class.flag);
         let blocks = self.blocks();
         let w = self.w as usize;
@@ -279,8 +288,9 @@ impl Gen<'_> {
         let k = nav.clearance_cells(class.radius) as f32;
         let fits = |i: usize| room[i] > k * std::f32::consts::SQRT_2 + 0.01;
         let half = class.radius + CARVE_MARGIN;
+        let mut changed = false;
         for leg in t.lead.windows(2) {
-            self.carve_segment(leg[0], leg[1], half, mobility);
+            changed |= self.carve_segment(leg[0], leg[1], half, mobility);
         }
         // From open ground near the target (its centre may sit among nodes).
         let (at, within) = match t.lead.last() {
@@ -299,9 +309,10 @@ impl Gen<'_> {
         }
         if let Some(path) = self.cheapest_way(seen, &blocks, &fits, &starts, mobility) {
             for p in path {
-                self.carve_disc(p, half, mobility);
+                changed |= self.carve_disc(p, half, mobility);
             }
         }
+        changed
     }
 
     /// Cells (as centres) of the cheapest way from any of `starts` to any
@@ -376,37 +387,44 @@ impl Gen<'_> {
         None
     }
 
-    fn carve_segment(&mut self, a: Vec2, b: Vec2, half: f32, mobility: Mobility) {
+    /// [`Gen::carve_disc`] along `a`-`b`; whether anything changed.
+    fn carve_segment(&mut self, a: Vec2, b: Vec2, half: f32, mobility: Mobility) -> bool {
         let steps = (a.distance(b) / 0.5).ceil().max(1.0) as usize;
+        let mut changed = false;
         for k in 0..=steps {
-            self.carve_disc(a.lerp(b, k as f32 / steps as f32), half, mobility);
+            changed |= self.carve_disc(a.lerp(b, k as f32 / steps as f32), half, mobility);
         }
+        changed
     }
 
     /// Make every cell within `half` of `p` passable for `mobility` (water
     /// becomes a ford, anything else grass; never the sea) and remove the
-    /// removable nodes there.
-    fn carve_disc(&mut self, p: Vec2, half: f32, mobility: Mobility) {
+    /// removable nodes there. Returns whether anything changed.
+    fn carve_disc(&mut self, p: Vec2, half: f32, mobility: Mobility) -> bool {
         let ids = (self.ids.ocean, self.ids.deep, self.ids.shallow, self.ids.ford, self.ids.grass);
         let data = self.data;
+        let mut repainted = 0;
         self.paint_disc(p, half, |cell| {
             let (ocean, deep, shallow, ford, grass) = ids;
             let t = cell.terrain;
-            if t == ocean || data.terrain_passable(t, mobility) {
+            let to = if t == ocean || data.terrain_passable(t, mobility) {
                 None
             } else if t == deep || t == shallow {
                 Some(ford)
             } else {
                 Some(grass)
-            }
+            };
+            repainted += to.is_some() as usize;
+            to
         });
-        let first = self.layout_nodes;
+        let (first, before) = (self.layout_nodes, self.nodes.len());
         let mut k = 0;
         self.nodes.retain(|n| {
             k += 1;
             let def = data.node(n.kind);
             k - 1 < first || !def.blocking || Obb::from_size(n.pos, def.size, n.yaw).distance_to_point(p) > half + 0.3
         });
+        repainted > 0 || self.nodes.len() < before
     }
 }
 
@@ -466,8 +484,31 @@ mod tests {
         let start = g.layout.starts[0];
         let ocean = g.ids.ocean;
         g.paint_disc(start, 20.0, |cell| ((cell.center.distance(start) - 16.0).abs() <= 2.0).then_some(ocean));
+        let terrain = g.terrain.clone();
         assert_eq!(g.ensure_connectivity(), 4);
         let still = g.idx_at(start + Vec2::X * 16.0).map(|i| g.terrain[i]);
         assert_eq!(still, Some(ocean));
+        // Nothing could be carved: nothing is listed as carved and the
+        // terrain is untouched.
+        assert!(g.carved.is_empty(), "{:?}", g.carved);
+        assert_eq!(g.terrain, terrain);
+        assert!(g.cut_off.len() == 4 && g.cut_off.iter().all(|c| c.contains("start 0")), "{:?}", g.cut_off);
+    }
+
+    #[test]
+    fn only_routes_actually_carved_are_listed() {
+        let data = test_data();
+        let mut g = Gen::bare(&data, 2, 224.0, 8);
+        g.place_halls(&default_setup(&data));
+        // Start 0 behind the sea (never carved), start 1 behind a cliff
+        // ring (carved once for each class that needs it, then reached).
+        let (a, b) = (g.layout.starts[0], g.layout.starts[1]);
+        let (ocean, cliff) = (g.ids.ocean, g.ids.cliff);
+        g.paint_disc(a, 20.0, |cell| ((cell.center.distance(a) - 16.0).abs() <= 2.0).then_some(ocean));
+        g.paint_disc(b, 20.0, |cell| ((cell.center.distance(b) - 16.0).abs() <= 1.5).then_some(cliff));
+        assert_eq!(g.ensure_connectivity(), 4, "only start 0 stays cut off: {:?}", g.cut_off);
+        assert!(g.cut_off.iter().all(|c| c.contains("start 0")), "{:?}", g.cut_off);
+        assert!(!g.carved.is_empty() && g.carved.len() <= 4, "{:?}", g.carved);
+        assert!(g.carved.iter().all(|c| c.contains("start 1")), "{:?}", g.carved);
     }
 }
