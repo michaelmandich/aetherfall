@@ -434,7 +434,15 @@ pub fn outline_boxes(half: Vec2, y: f32, min_width: f32) -> [(Vec3, Vec3); 4] {
     let small = half.min_element();
     let t = (small * 0.15).clamp(0.06, 0.25).max(min_width);
     let m = (small * 0.15).clamp(0.08, 0.4);
-    let (ox, oz) = (half.x + m, half.y + m);
+    frame_boxes(half, m, t, y)
+}
+
+/// The four flat boxes of a rectangular frame `gap` metres outside half
+/// extents `half`, sides `t` wide, at local height `y` (selection outlines,
+/// click-marker and placement-slam frames): (centre, size) for front,
+/// back, left, right. They touch at the corners and never overlap.
+pub fn frame_boxes(half: Vec2, gap: f32, t: f32, y: f32) -> [(Vec3, Vec3); 4] {
+    let (ox, oz) = (half.x + gap, half.y + gap);
     let h = 0.04;
     [
         (Vec3::new(0.0, y, oz + t * 0.5), Vec3::new(2.0 * (ox + t), h, t)),

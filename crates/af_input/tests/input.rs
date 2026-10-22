@@ -2,7 +2,7 @@
 //! through `ButtonInput` / `CursorWorld` (and a fake window + camera for
 //! picking and drag selection).
 
-use af_core::ext::input::{ControlGroups, PlacementPreview, RtsCamera};
+use af_core::ext::input::{ClickMark, ControlGroups, OrderMark, PlacementPreview, RtsCamera};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use af_input::{rig_transform, view_axes, RtsInputPlugin, FOV_DEG};
@@ -175,6 +175,33 @@ impl Match {
         let world = self.app.world_mut();
         let mut q = world.query::<&ClickPing>();
         q.iter(world).copied().collect()
+    }
+
+    /// Click markers and the order each one shows (nothing despawns them
+    /// here: af_render is absent).
+    fn marks(&mut self) -> Vec<(ClickPing, ClickMark)> {
+        let world = self.app.world_mut();
+        let mut q = world.query::<(&ClickPing, &ClickMark)>();
+        q.iter(world).map(|(p, k)| (*p, *k)).collect()
+    }
+
+    /// The order marked at `pos` (the only marker there).
+    fn mark_at(&mut self, pos: Vec2) -> ClickMark {
+        let found: Vec<(ClickPing, ClickMark)> = self.marks().into_iter().filter(|(p, _)| p.pos == pos).collect();
+        assert_eq!(found.len(), 1, "one marker at {pos}: {found:?}");
+        let (ping, mark) = found[0];
+        assert_eq!(ping.color, mark.kind.color(), "the ping is coloured for its order");
+        assert_eq!(ping.time_left, mark.life());
+        mark
+    }
+
+    /// Forget the markers made so far.
+    fn clear_marks(&mut self) {
+        let world = self.app.world_mut();
+        let pings: Vec<Entity> = world.query_filtered::<Entity, With<ClickPing>>().iter(world).collect();
+        for e in pings {
+            world.despawn(e);
+        }
     }
 
     /// Give the app a 1280x720 window and make the RTS camera project like
@@ -582,6 +609,7 @@ fn right_click_issues_smart_with_ping() {
     assert_eq!(issued.len(), 1);
     assert_eq!(issued[0], PlayerCommand::new(m.me, vec![a], CommandKind::Smart { point: Vec2::new(70.0, 70.0), target: None }));
     assert!(m.pings().iter().any(|p| p.pos == Vec2::new(70.0, 70.0) && p.color[1] > p.color[0]), "green move ping");
+    assert_eq!(m.mark_at(Vec2::new(70.0, 70.0)), ClickMark::new(OrderMark::Move, None, false));
 
     m.hold(KeyCode::ShiftLeft);
     m.point(Vec2::new(40.0, 60.0), Some(enemy));
@@ -592,6 +620,56 @@ fn right_click_issues_smart_with_ping() {
     assert!(issued[0].queue, "shift queues");
     assert_eq!(issued[0].kind, CommandKind::Smart { point: Vec2::new(40.0, 60.0), target: Some(enemy) });
     assert!(m.pings().iter().any(|p| p.pos == Vec2::new(40.0, 60.0) && p.color[0] > p.color[1]), "red attack ping");
+    assert_eq!(m.mark_at(Vec2::new(40.0, 60.0)), ClickMark::new(OrderMark::Attack, Some(enemy), true), "hugs the enemy, queued");
+}
+
+/// The right-click marker guesses what `Smart` will do with what is
+/// selected: the sim decides per unit, the marker for the selection.
+#[test]
+fn right_click_markers_show_the_order_it_becomes() {
+    let mut m = Match::new(false);
+    let me = m.me;
+    let worker = m.unit(me, m.worker_kind(me), Vec2::new(90.0, 60.0));
+    let soldier = m.unit(me, m.soldier_kind(me), Vec2::new(92.0, 60.0));
+    let node_kind = m.data().node_ids().next().expect("a node type");
+    let node = with_commands(&mut m.app, |c, data, _| spawn_node(c, data, node_kind, Vec2::new(60.0, 90.0), 0.0, None));
+    let house = m.building_kind(me, Tag::House);
+    let foundation = with_commands(&mut m.app, |c, data, players| spawn_building(c, data, players.get(me), house, Vec2::new(30.0, 30.0), 0.0, false));
+    let damaged = m.building(me, house, Vec2::new(30.0, 60.0));
+    let hall_kind = m.building_kind(me, Tag::TownCenter);
+    let hall = m.building(me, hall_kind, Vec2::new(100.0, 100.0));
+    m.settle();
+    m.app.world_mut().get_mut::<Health>(damaged).unwrap().hp *= 0.5;
+    let right_click = |m: &mut Match, at: Vec2, on: Option<Entity>| -> ClickMark {
+        m.clear_marks();
+        m.point(at, on);
+        m.click(MouseButton::Right);
+        m.mark_at(at)
+    };
+    m.select(&[worker]);
+    let cases = [
+        (Vec2::new(60.0, 90.0), Some(node), OrderMark::Gather, true),
+        (Vec2::new(30.0, 30.0), Some(foundation), OrderMark::Build, true),
+        (Vec2::new(30.0, 60.0), Some(damaged), OrderMark::Repair, true),
+        (Vec2::new(92.0, 60.0), Some(soldier), OrderMark::Move, true),
+        (Vec2::new(100.0, 100.0), Some(hall), OrderMark::Move, false),
+        (Vec2::new(70.0, 70.0), None, OrderMark::Move, false),
+    ];
+    for (at, on, kind, hugs) in cases {
+        let mark = right_click(&mut m, at, on);
+        assert_eq!((mark.kind, mark.target), (kind, on.filter(|_| hugs)), "a worker on {on:?}");
+    }
+    // A soldier cannot gather or build: it walks there.
+    m.tap(KeyCode::Escape);
+    m.select(&[soldier]);
+    for (at, on) in [(Vec2::new(60.0, 90.0), node), (Vec2::new(30.0, 30.0), foundation)] {
+        assert_eq!(right_click(&mut m, at, Some(on)), ClickMark::new(OrderMark::Move, None, false));
+    }
+    // Buildings alone set their rally.
+    m.tap(KeyCode::Escape);
+    m.select(&[hall]);
+    assert_eq!(right_click(&mut m, Vec2::new(70.0, 70.0), None), ClickMark::new(OrderMark::Rally, None, false));
+    assert_eq!(right_click(&mut m, Vec2::new(60.0, 90.0), Some(node)), ClickMark::new(OrderMark::Rally, Some(node), false));
 }
 
 #[test]
@@ -696,6 +774,23 @@ fn target_mode_click_issues_the_action() {
     m.release(KeyCode::ShiftLeft);
     assert_eq!(m.issued(), vec![PlayerCommand::new(m.me, vec![a], CommandKind::Move(Vec2::new(60.0, 61.0))).queued(true)]);
     assert_eq!(m.mode(), InputMode::Target(TargetAction::Move), "shift keeps the mode");
+    assert_eq!(m.mark_at(Vec2::new(60.0, 61.0)), ClickMark::new(OrderMark::Move, None, true));
+    assert_eq!(m.mark_at(Vec2::new(40.0, 60.0)), ClickMark::new(OrderMark::Attack, Some(enemy), false));
+
+    // Each targeting order marks its kind.
+    let node_kind = m.data().node_ids().next().expect("a node type");
+    let node = with_commands(&mut m.app, |c, data, _| spawn_node(c, data, node_kind, Vec2::new(60.0, 90.0), 0.0, None));
+    m.settle();
+    let cases = [
+        (TargetAction::Patrol, Vec2::new(61.0, 70.0), None, ClickMark::new(OrderMark::Patrol, None, false)),
+        (TargetAction::AttackMove, Vec2::new(62.0, 70.0), None, ClickMark::new(OrderMark::AttackMove, None, false)),
+        (TargetAction::Gather, Vec2::new(60.0, 90.0), Some(node), ClickMark::new(OrderMark::Gather, Some(node), false)),
+    ];
+    for (action, at, on, mark) in cases {
+        m.set_mode(InputMode::Target(action));
+        m.click_on(at, on);
+        assert_eq!(m.mark_at(at), mark, "{action:?}");
+    }
 }
 
 /// The command card's Attack button starts `TargetAction::AttackMove`: a
@@ -719,6 +814,7 @@ fn attack_button_attacks_the_enemy_clicked() {
         assert_eq!(m.issued(), vec![PlayerCommand::new(m.me, vec![a], CommandKind::Attack(target))]);
         assert_eq!(m.mode(), InputMode::Normal);
         assert!(m.pings().iter().any(|p| p.pos == at && p.color[0] > p.color[1]), "red attack ping");
+        assert_eq!(m.mark_at(at), ClickMark::new(OrderMark::Attack, Some(target), false), "hugs what it attacks");
     }
     let ground = Vec2::new(60.0, 70.0);
     for hovered in [None, Some(mate), Some(node)] {
@@ -865,6 +961,7 @@ fn placing_a_building_needs_builders_and_room() {
     assert_eq!(issued[0].entities, vec![worker], "only builders are sent");
     assert_eq!(issued[0].kind, CommandKind::PlaceBuilding { kind: house, pos: Vec2::new(60.0, 100.0), facing: 0.0 });
     assert_eq!(m.mode(), InputMode::Normal);
+    assert_eq!(m.mark_at(Vec2::new(60.0, 100.0)), ClickMark::new(OrderMark::Place { kind: house, facing: 0.0 }, None, false), "the footprint flashes");
     assert!(m.app.world().resource::<PlacementPreview>().ghosts.is_empty());
 
     // On top of an existing building: refused with the reason, mode kept.
@@ -883,6 +980,8 @@ fn placing_a_building_needs_builders_and_room() {
     assert_eq!(m.issued().len(), 1);
     assert!(m.issued()[0].queue);
     assert!(matches!(m.mode(), InputMode::Place { .. }));
+    assert!(m.mark_at(Vec2::new(60.0, 80.0)).queued);
+    assert!(!m.marks().iter().any(|(p, _)| p.pos == Vec2::new(40.0, 100.0)), "a refused placement is not marked");
 }
 
 #[test]
@@ -996,6 +1095,10 @@ fn walls_take_two_clicks() {
     m.click_on(to, None);
     assert_eq!(m.issued(), vec![PlayerCommand::new(m.me, vec![worker], CommandKind::PlaceWall { kind: wall, from: Vec2::new(40.0, 110.0), to })]);
     assert_eq!(m.mode(), InputMode::Normal);
+    // The marker outlines the line's last segment.
+    let last = preview.ghosts[3];
+    assert_eq!(m.mark_at(last.pos), ClickMark::new(OrderMark::Place { kind: wall, facing: last.facing }, None, false));
+    assert_eq!(m.marks().len(), 1, "one marker for the line");
 }
 
 #[test]

@@ -12,8 +12,8 @@ use crate::statics::Remnants;
 use crate::terrain::TerrainState;
 
 /// Every top-level entity af_render spawns for a match (light, terrain,
-/// fog overlay, ghosts, markers, corpses, felled trees, stumps). Despawned
-/// on leaving `GameState::Playing`.
+/// fog overlay, ghosts, rally markers, placement slams, corpses, felled
+/// trees, stumps). Despawned on leaving `GameState::Playing`.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct RenderScene;
 

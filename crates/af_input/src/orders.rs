@@ -1,17 +1,15 @@
 //! Turning clicks into `PlayerCommand`s: right-click `Smart`, and the click
-//! that completes a placement or targeting `InputMode`.
+//! that completes a placement or targeting `InputMode`. Every order given
+//! also spawns a click marker (`ClickPing` + `ClickMark`) saying which
+//! order it was, for af_render to draw.
 
+use af_core::ext::input::{ClickMark, OrderMark};
 use af_core::prelude::*;
+use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::placement::{plan_building, plan_wall, wall_end, PlaceCtx, PlacementWorld};
-
-/// Click marker colours (af_render draws them).
-pub(crate) const PING_MOVE: [f32; 3] = [0.3, 1.0, 0.35];
-pub(crate) const PING_ATTACK: [f32; 3] = [1.0, 0.25, 0.2];
-/// Seconds a click marker lives.
-const PING_SECS: f32 = 0.7;
 
 /// Sends commands, notices and click markers for the local player.
 #[derive(SystemParam)]
@@ -31,8 +29,9 @@ impl Issuer<'_, '_> {
         self.notices.push(player, kind, text, None, self.clock.elapsed);
     }
 
-    pub fn ping(&mut self, pos: Vec2, color: [f32; 3]) {
-        self.commands.spawn(ClickPing { pos, time_left: PING_SECS, color });
+    /// A click marker at `pos` for the order just sent.
+    pub fn mark(&mut self, pos: Vec2, mark: ClickMark) {
+        self.commands.spawn(mark.ping(pos));
     }
 }
 
@@ -83,6 +82,124 @@ impl OwnSelection<'_, '_> {
         out.sort();
         out
     }
+
+    /// What the own selected units can do, for guessing a right-click's order.
+    fn crew(&self) -> Crew {
+        let mut crew = Crew::default();
+        let Some(me) = self.local.0 else { return crew };
+        for (_, owner, unit) in &self.units {
+            if owner.0 != me {
+                continue;
+            }
+            crew.units = true;
+            if let Some(g) = &self.data.unit(unit.kind).gatherer {
+                crew.gathers |= g.capacity > 0.0;
+                crew.builds |= g.builds;
+                crew.repairs |= g.repair > 0.0;
+            }
+        }
+        crew
+    }
+}
+
+/// What the own selection can do, as far as a right-click's marker cares.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Crew {
+    /// Some own unit is selected (else only buildings, which set a rally).
+    units: bool,
+    gathers: bool,
+    builds: bool,
+    repairs: bool,
+}
+
+/// Whatever a right-click points at.
+#[derive(QueryData)]
+pub(crate) struct Pointee {
+    pos: &'static Position,
+    owner: Option<&'static Owner>,
+    health: Option<&'static Health>,
+    stats: Option<&'static Stats>,
+    unit: Has<Unit>,
+    building: Has<Building>,
+    node: Has<ResourceNode>,
+    field: Has<ResourceField>,
+    foundation: Has<UnderConstruction>,
+}
+
+/// What a right-clicked entity is, from the local player's side.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Pointed {
+    /// Owned by a player hostile to the local one.
+    hostile: bool,
+    /// Owned by the local player or an ally.
+    allied: bool,
+    /// Owned by the local player.
+    own: bool,
+    /// Has hit points (can be attacked).
+    mortal: bool,
+    damaged: bool,
+    mechanical: bool,
+    unit: bool,
+    building: bool,
+    node: bool,
+    field: bool,
+    foundation: bool,
+}
+
+impl Pointed {
+    fn of(t: &PointeeItem, me: PlayerId, players: &Players) -> Pointed {
+        let owner = t.owner.map(|o| o.0);
+        Pointed {
+            hostile: owner.is_some_and(|o| players.hostile(me, o)),
+            allied: owner.is_some_and(|o| players.allied(me, o)),
+            own: owner == Some(me),
+            mortal: t.health.is_some(),
+            damaged: t.health.is_some_and(|h| h.hp < h.max),
+            mechanical: t.stats.is_some_and(|s| s.tags.contains(Tag::Mechanical)),
+            unit: t.unit,
+            building: t.building,
+            node: t.node,
+            field: t.field,
+            foundation: t.foundation,
+        }
+    }
+}
+
+/// The marker for a right-click: what the order will most likely do, and
+/// whether it hugs the entity pointed at. The sim resolves `Smart` per
+/// unit (af_behavior's intake); this mirrors it for the selection as a
+/// whole: attack a foe, gather a node or an own field, build an allied
+/// foundation, repair an own damaged building or machine, follow an allied
+/// unit, else move to the point. A selection of buildings only sets its
+/// rally there.
+fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
+    if !crew.units {
+        return (OrderMark::Rally, pointed.is_some());
+    }
+    let Some(t) = pointed else { return (OrderMark::Move, false) };
+    let hug = |mark| (mark, true);
+    if t.hostile && t.mortal {
+        return hug(OrderMark::Attack);
+    }
+    if t.node {
+        return if crew.gathers { hug(OrderMark::Gather) } else { (OrderMark::Move, false) };
+    }
+    if t.building && t.allied {
+        return if t.foundation {
+            if crew.builds { hug(OrderMark::Build) } else { (OrderMark::Move, false) }
+        } else if t.own && t.field && crew.gathers {
+            hug(OrderMark::Gather)
+        } else if t.own && t.damaged && crew.repairs {
+            hug(OrderMark::Repair)
+        } else {
+            (OrderMark::Move, false)
+        };
+    }
+    if t.unit && t.allied {
+        // Allied units are followed; a damaged own machine is repaired.
+        return hug(if t.own && t.mechanical && t.damaged && crew.repairs { OrderMark::Repair } else { OrderMark::Move });
+    }
+    (OrderMark::Move, false)
 }
 
 pub(crate) fn shift_held(keys: &ButtonInput<KeyCode>) -> bool {
@@ -97,7 +214,7 @@ pub(crate) fn smart_command(
     mode: Res<InputMode>,
     cursor: Res<CursorWorld>,
     own: OwnSelection,
-    targets: Query<(&Position, Option<&Owner>)>,
+    targets: Query<Pointee>,
     players: Res<Players>,
     mut issuer: Issuer,
 ) {
@@ -112,10 +229,11 @@ pub(crate) fn smart_command(
     let target = cursor.hovered;
     let target_info = target.and_then(|t| targets.get(t).ok());
     // A flyer against the sky has no ground point under the cursor.
-    let Some(point) = cursor.ground.or(target_info.map(|(p, _)| p.0)) else { return };
-    let hostile = target_info.and_then(|(_, o)| o).is_some_and(|o| players.hostile(me, o.0));
-    issuer.send(PlayerCommand::new(me, entities, CommandKind::Smart { point, target }).queued(shift_held(&keys)));
-    issuer.ping(point, if hostile { PING_ATTACK } else { PING_MOVE });
+    let Some(point) = cursor.ground.or(target_info.as_ref().map(|t| t.pos.0)) else { return };
+    let queued = shift_held(&keys);
+    issuer.send(PlayerCommand::new(me, entities, CommandKind::Smart { point, target }).queued(queued));
+    let (kind, hug) = smart_mark(own.crew(), target_info.map(|t| Pointed::of(&t, me, &players)));
+    issuer.mark(point, ClickMark::new(kind, target.filter(|_| hug), queued));
 }
 
 /// Clicks while placing or targeting: left click completes the mode,
@@ -163,9 +281,9 @@ pub(crate) fn mode_clicks(
         }
         InputMode::Target(action) => match target_command(me, &own, action, ground, Clicked::new(me, cursor.hovered, &mortals, &players)) {
             Ok(None) => InputMode::Normal,
-            Ok(Some((command, color))) => {
+            Ok(Some((command, mark))) => {
                 issuer.send(command.queued(shift));
-                issuer.ping(ground, color);
+                issuer.mark(ground, ClickMark { queued: shift, ..mark });
                 if shift { current } else { InputMode::Normal }
             }
             Err(why) => {
@@ -185,8 +303,9 @@ enum Placed {
     NoBuilders,
     /// Nothing fits there (why): stay in the mode and try elsewhere.
     Invalid(String),
-    /// Ready to send; the building or line ends at the point.
-    Ready(PlayerCommand, Vec2),
+    /// Ready to send; the building or line ends at `end`. `marked` is
+    /// where the click marker goes and what it shows.
+    Ready { command: PlayerCommand, end: Vec2, marked: (Vec2, OrderMark) },
 }
 
 impl Placed {
@@ -202,8 +321,9 @@ impl Placed {
                 issuer.notice(Some(me), NoticeKind::Warning, why);
                 current
             }
-            Placed::Ready(command, end) => {
+            Placed::Ready { command, end, marked: (at, mark) } => {
                 issuer.send(command.queued(shift));
+                issuer.mark(at, ClickMark::new(mark, None, shift));
                 if shift { keep(end) } else { InputMode::Normal }
             }
         }
@@ -220,7 +340,8 @@ fn place_building(me: PlayerId, ctx: &PlaceCtx, builders: Vec<Entity>, kind: Bui
         return Placed::Invalid(err.describe(ctx.data()));
     }
     let command = CommandKind::PlaceBuilding { kind, pos: ghost.pos, facing: ghost.facing };
-    Placed::Ready(PlayerCommand::new(me, builders, command), ghost.pos)
+    let marked = (ghost.pos, OrderMark::Place { kind, facing: ghost.facing });
+    Placed::Ready { command: PlayerCommand::new(me, builders, command), end: ghost.pos, marked }
 }
 
 /// Place a wall line `from` -> `to` with `builders` if at least one segment
@@ -238,7 +359,9 @@ fn place_wall(me: PlayerId, ctx: &PlaceCtx, builders: Vec<Entity>, kind: Buildin
         return Placed::Invalid(err.describe(ctx.data()));
     }
     let end = wall_end(ctx.data(), kind, from, to, ghosts.len());
-    Placed::Ready(PlayerCommand::new(me, builders, CommandKind::PlaceWall { kind, from, to }), end)
+    // The marker outlines the line's last segment that fits.
+    let marked = ghosts.iter().rev().find(|g| g.error.is_none()).map_or((end, OrderMark::Build), |g| (g.pos, OrderMark::Place { kind, facing: g.facing }));
+    Placed::Ready { command: PlayerCommand::new(me, builders, CommandKind::PlaceWall { kind, from, to }), end, marked }
 }
 
 /// What a targeting click landed on.
@@ -261,7 +384,7 @@ impl Clicked {
     }
 }
 
-/// The command a targeting click issues, with its marker colour.
+/// The command a targeting click issues, with its click marker (unqueued).
 /// `Ok(None)`: nothing selected can do it (leave the mode);
 /// `Err`: the click needs a target it did not hit (stay in the mode).
 ///
@@ -274,22 +397,68 @@ fn target_command(
     action: TargetAction,
     point: Vec2,
     clicked: Clicked,
-) -> Result<Option<(PlayerCommand, [f32; 3])>, &'static str> {
-    let (entities, kind, color) = match (action, clicked.hovered) {
-        (TargetAction::Move, _) => (own.units(), CommandKind::Move(point), PING_MOVE),
+) -> Result<Option<(PlayerCommand, ClickMark)>, &'static str> {
+    let on = |target| ClickMark::new(OrderMark::of_target(action), target, false);
+    let (entities, kind, mark) = match (action, clicked.hovered) {
+        (TargetAction::Move, _) => (own.units(), CommandKind::Move(point), on(None)),
         (TargetAction::AttackMove | TargetAction::Attack, _) => {
             let target = if action == TargetAction::Attack { clicked.mortal } else { clicked.foe };
-            (own.units(), target.map_or(CommandKind::AttackMove(point), CommandKind::Attack), PING_ATTACK)
+            let mark = target.map_or(on(None), |t| ClickMark::new(OrderMark::Attack, Some(t), false));
+            (own.units(), target.map_or(CommandKind::AttackMove(point), CommandKind::Attack), mark)
         }
-        (TargetAction::Patrol, _) => (own.units(), CommandKind::Patrol(point), PING_MOVE),
-        (TargetAction::Rally, target) => (own.buildings(), CommandKind::SetRally { point, target }, PING_MOVE),
-        (TargetAction::Gather, Some(t)) => (own.units(), CommandKind::Gather(t), PING_MOVE),
-        (TargetAction::Repair, Some(t)) => (own.units(), CommandKind::Repair(t), PING_MOVE),
+        (TargetAction::Patrol, _) => (own.units(), CommandKind::Patrol(point), on(None)),
+        (TargetAction::Rally, target) => (own.buildings(), CommandKind::SetRally { point, target }, on(target)),
+        (TargetAction::Gather, Some(t)) => (own.units(), CommandKind::Gather(t), on(Some(t))),
+        (TargetAction::Repair, Some(t)) => (own.units(), CommandKind::Repair(t), on(Some(t))),
         (TargetAction::Gather, None) => return Err("Choose a resource to gather"),
         (TargetAction::Repair, None) => return Err("Choose something to repair"),
     };
     if entities.is_empty() {
         return Ok(None);
     }
-    Ok(Some((PlayerCommand::new(me, entities, kind), color)))
+    Ok(Some((PlayerCommand::new(me, entities, kind), mark)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smart_marks_mirror_how_the_sim_resolves_a_right_click() {
+        let workers = Crew { units: true, gathers: true, builds: true, repairs: true };
+        let soldiers = Crew { units: true, ..Crew::default() };
+        let halls = Crew::default();
+        let own = Pointed { own: true, allied: true, mortal: true, ..Pointed::default() };
+        let foe = Pointed { hostile: true, mortal: true, unit: true, ..Pointed::default() };
+        let node = Pointed { node: true, ..Pointed::default() };
+        let foundation = Pointed { building: true, foundation: true, ..own };
+        let allied_foundation = Pointed { own: false, ..foundation };
+        let field = Pointed { building: true, field: true, ..own };
+        let damaged_hall = Pointed { building: true, damaged: true, ..own };
+        let hall = Pointed { building: true, ..own };
+        let machine = Pointed { unit: true, mechanical: true, damaged: true, ..own };
+        let friend = Pointed { unit: true, ..own };
+        let cases = [
+            (workers, None, (OrderMark::Move, false)),
+            (workers, Some(foe), (OrderMark::Attack, true)),
+            (soldiers, Some(foe), (OrderMark::Attack, true)),
+            (workers, Some(node), (OrderMark::Gather, true)),
+            (soldiers, Some(node), (OrderMark::Move, false)),
+            (workers, Some(foundation), (OrderMark::Build, true)),
+            (workers, Some(allied_foundation), (OrderMark::Build, true)),
+            (soldiers, Some(foundation), (OrderMark::Move, false)),
+            (workers, Some(field), (OrderMark::Gather, true)),
+            (workers, Some(damaged_hall), (OrderMark::Repair, true)),
+            (soldiers, Some(damaged_hall), (OrderMark::Move, false)),
+            (workers, Some(hall), (OrderMark::Move, false)),
+            (workers, Some(machine), (OrderMark::Repair, true)),
+            (soldiers, Some(machine), (OrderMark::Move, true)),
+            (soldiers, Some(friend), (OrderMark::Move, true)),
+            (halls, None, (OrderMark::Rally, false)),
+            (halls, Some(foe), (OrderMark::Rally, true)),
+        ];
+        for (crew, pointed, want) in cases {
+            assert_eq!(smart_mark(crew, pointed), want, "{crew:?} on {pointed:?}");
+        }
+    }
 }

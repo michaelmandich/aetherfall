@@ -1,5 +1,6 @@
-//! The shared cube mesh and the material cache, and the [`Painter`] system
-//! param every drawing system uses to turn [`Part`]s into entities.
+//! The shared cube mesh (and the few marker shapes), the material cache,
+//! and the [`Painter`] system param every drawing system uses to turn
+//! [`Part`]s into entities.
 
 use bevy::ecs::system::SystemParam;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
@@ -20,11 +21,19 @@ use crate::parts::Part;
 const GLOW_BASE: f32 = 0.45;
 const GLOW_STRENGTH: f32 = 1.1;
 
-/// The 1x1x1 cube every box is drawn with, and one material per [`MatKey`].
-/// Inserted at startup; materials are created on first use and reused.
+/// The 1x1x1 cube every box is drawn with, the click markers' shapes
+/// ([`crate::markers`]), and one material per [`MatKey`]. Inserted at
+/// startup; materials are created on first use and reused.
 #[derive(Resource)]
 pub struct BoxAssets {
     pub cube: Handle<Mesh>,
+    /// An arrow one metre long pointing along +Z: a square shaft and a
+    /// four-sided head ([`arrow_mesh`]).
+    pub arrow: Handle<Mesh>,
+    /// A flat ring of outer radius 1 lying in the ground plane, facing up.
+    pub ring: Handle<Mesh>,
+    /// A flat disc of radius 1 lying in the ground plane, facing up.
+    pub disc: Handle<Mesh>,
     materials: HashMap<MatKey, Handle<StandardMaterial>>,
 }
 
@@ -35,8 +44,38 @@ impl BoxAssets {
     }
 }
 
+/// Inner radius of [`BoxAssets::ring`] (its outer radius is 1).
+pub const RING_INNER: f32 = 0.8;
+
 pub(crate) fn init_box_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    commands.insert_resource(BoxAssets { cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)), materials: HashMap::default() });
+    // 2D shapes lie in the XY plane facing +Z; turned to face up (+Y).
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    commands.insert_resource(BoxAssets {
+        cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        arrow: meshes.add(arrow_mesh()),
+        ring: meshes.add(Mesh::from(Annulus::new(RING_INNER, 1.0).mesh().resolution(40)).rotated_by(flat)),
+        disc: meshes.add(Mesh::from(Circle::new(1.0).mesh().resolution(32)).rotated_by(flat)),
+        materials: HashMap::default(),
+    });
+}
+
+/// Share of an arrow's length taken by its head.
+const ARROW_HEAD: f32 = 0.42;
+
+/// The click markers' arrow, one metre long along +Z (tail at -0.5, tip at
+/// +0.5): a square shaft and a four-sided pyramid head twice as wide, so it
+/// reads as an arrow from any side.
+pub fn arrow_mesh() -> Mesh {
+    let shaft_len = 1.0 - ARROW_HEAD;
+    let mut arrow = Mesh::from(Cuboid::new(0.16, 0.16, shaft_len)).translated_by(Vec3::Z * (-0.5 + shaft_len * 0.5));
+    // The cone points along +Y; turn it to +Z, a square base edge-on.
+    let head = Mesh::from(Cone { radius: 0.34, height: ARROW_HEAD }.mesh().resolution(4))
+        .rotated_by(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))
+        .translated_by(Vec3::Z * (0.5 - ARROW_HEAD * 0.5));
+    if let Err(e) = arrow.merge(&head) {
+        warn!("click marker arrow drawn without its head: {e}");
+    }
+    arrow
 }
 
 /// How rough every box is: matte, with a broad, dim highlight.
@@ -97,6 +136,18 @@ impl Painter<'_> {
         self.assets.cube.clone()
     }
 
+    pub fn arrow(&self) -> Handle<Mesh> {
+        self.assets.arrow.clone()
+    }
+
+    pub fn ring(&self) -> Handle<Mesh> {
+        self.assets.ring.clone()
+    }
+
+    pub fn disc(&self) -> Handle<Mesh> {
+        self.assets.disc.clone()
+    }
+
     /// The cached material for a look.
     pub fn material(&mut self, look: Look) -> Handle<StandardMaterial> {
         let key = MatKey::new(look);
@@ -129,6 +180,13 @@ impl Painter<'_> {
         e.id()
     }
 
+    /// Spawn a shadowless `mesh` drawn with `look` at `transform` as a
+    /// child of `parent` (marker arrows, rings and discs).
+    pub fn spawn_shape(&mut self, commands: &mut Commands, parent: Entity, mesh: Handle<Mesh>, look: Look, transform: Transform) -> Entity {
+        let material = self.material(look);
+        commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform, Visibility::Inherited, BoxPart, no_shadows(), ChildOf(parent))).id()
+    }
+
     /// Spawn `part` as a top-level box with `extra` components.
     pub fn spawn_root(&mut self, commands: &mut Commands, part: &Part, extra: impl Bundle) -> Entity {
         let bundle = self.bundle(part);
@@ -154,6 +212,19 @@ pub fn node(transform: Transform, visibility: Visibility) -> impl Bundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_arrow_has_a_shaft_and_a_head_pointing_forward() {
+        let arrow = arrow_mesh();
+        let cube = Mesh::from(Cuboid::new(1.0, 1.0, 1.0)).count_vertices();
+        assert!(arrow.count_vertices() > cube, "the head was merged onto the shaft");
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = arrow.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("positions") };
+        let (min, max) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p))));
+        assert!((min.z + 0.5).abs() < 1e-4 && (max.z - 0.5).abs() < 1e-4, "one metre along +Z: {min} {max}");
+        // The widest points are the head's, near the front.
+        let widest = points.iter().map(|p| Vec3::from(*p)).max_by(|a, b| a.x.abs().total_cmp(&b.x.abs())).unwrap();
+        assert!(widest.z > 0.0 && widest.x.abs() > 0.16, "{widest}");
+    }
 
     #[test]
     fn materials_follow_their_key() {

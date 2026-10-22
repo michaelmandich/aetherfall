@@ -6,6 +6,7 @@
 //! |---|---|
 //! | `key <combo>` | taps a key, with modifiers (`key Z`, `key ctrl+1`, `key shift+R`, `key Esc`) |
 //! | `move <x>,<y>` | moves the stand-in mouse (logical window px) |
+//! | `aim <x>,<z>` | moves the stand-in mouse onto that ground point (world metres), where the camera shows it |
 //! | `click [left\|right] [shift\|ctrl]` | clicks in the world at the stand-in mouse |
 //! | `down [left\|right]` / `up [left\|right]` | holds / releases a button (drags) |
 //! | `press <label>` | presses the HUD button with that label, as `--press` |
@@ -23,6 +24,7 @@
 
 use std::path::PathBuf;
 
+use af_core::ext::input::RtsCamera;
 use af_core::prelude::*;
 use bevy::prelude::*;
 
@@ -33,6 +35,8 @@ use super::{CameraArg, Pick, PickWorld, VirtualCursor};
 pub(super) enum Step {
     Key { mods: Vec<KeyCode>, key: KeyCode },
     Move(Vec2),
+    /// The stand-in mouse onto a ground point (world x, z).
+    Aim(Vec2),
     Click { button: MouseButton, mods: Vec<KeyCode> },
     Down(MouseButton),
     Up(MouseButton),
@@ -48,7 +52,7 @@ pub(super) enum Step {
 impl Step {
     /// Applied by [`script_input`] (PreUpdate) rather than [`script_world`] (Update).
     fn is_input(&self) -> bool {
-        matches!(self, Step::Key { .. } | Step::Move(_) | Step::Click { .. } | Step::Down(_) | Step::Up(_) | Step::Shot(_))
+        matches!(self, Step::Key { .. } | Step::Move(_) | Step::Aim(_) | Step::Click { .. } | Step::Down(_) | Step::Up(_) | Step::Shot(_))
     }
 }
 
@@ -91,6 +95,7 @@ pub(super) fn parse(data: &GameData, script: &str) -> Result<Vec<(f32, Step)>, S
                 Step::Key { mods, key }
             }
             "move" => Step::Move(super::pair("--script move", arg).map_err(|e| err(&e))?),
+            "aim" => Step::Aim(super::pair("--script aim", arg).map_err(|e| err(&e))?),
             "click" | "down" | "up" => {
                 let mut button = MouseButton::Left;
                 let mut mods = Vec::new();
@@ -122,7 +127,7 @@ pub(super) fn parse(data: &GameData, script: &str) -> Result<Vec<(f32, Step)>, S
                 Step::Damage(Pick::parse(data, what.trim())?, fraction)
             }
             "shot" if !arg.is_empty() => Step::Shot(PathBuf::from(arg)),
-            _ => return Err(err("unknown action (key, move, click, down, up, press, select, camera, defeat, damage, shot)")),
+            _ => return Err(err("unknown action (key, move, aim, click, down, up, press, select, camera, defeat, damage, shot)")),
         };
         steps.push((at, step));
     }
@@ -232,13 +237,15 @@ fn key_code(name: &str) -> Option<KeyCode> {
 
 /// PreUpdate, after Bevy's input systems: release last frame's taps, then
 /// apply the due input steps (any number of mouse moves, then at most one
-/// key or button) so the frame's `Update` sees them as a real press.
+/// key or button) so the frame's `Update` sees them as a real press. An
+/// `aim` waits for the RTS camera and points through last frame's view.
 pub(super) fn script_input(
     mut script: ResMut<Script>,
     clock: Res<SimClock>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut cursor: ResMut<VirtualCursor>,
+    cameras: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
 ) {
     let s = &mut *script;
     for k in s.taps.drain(..) {
@@ -252,6 +259,16 @@ pub(super) fn script_input(
         match step {
             Step::Move(p) => {
                 cursor.0 = Some(p);
+                continue;
+            }
+            Step::Aim(p) => {
+                let on_screen = cameras.single().ok().and_then(|(camera, view)| camera.world_to_viewport(view, Vec3::new(p.x, 0.0, p.y)).ok());
+                let Some(at) = on_screen else {
+                    // No camera yet: try again next frame.
+                    s.next -= 1;
+                    break;
+                };
+                cursor.0 = Some(at);
                 continue;
             }
             // Taken by the shot plan.
@@ -347,9 +364,11 @@ mod tests {
     #[test]
     fn scripts_parse_in_time_order() {
         let data = test_data();
-        let steps = parse(&data, "2 key ctrl+1; 1.5 select workers; 1.5 press Economy ;3 move 800,450; 3.1 click right shift; 4 shot a.png").unwrap();
+        let mut steps = parse(&data, "2 key ctrl+1; 1.5 select workers; 1.5 press Economy ;3 move 800,450; 3.1 click right shift; 4 shot a.png; 3.05 aim 40,52.5").unwrap();
         let times: Vec<f32> = steps.iter().map(|(t, _)| *t).collect();
-        assert_eq!(times, vec![1.5, 1.5, 2.0, 3.0, 3.1, 4.0]);
+        assert_eq!(times, vec![1.5, 1.5, 2.0, 3.0, 3.05, 3.1, 4.0]);
+        let aim = steps.remove(4);
+        assert_eq!(aim.1, Step::Aim(Vec2::new(40.0, 52.5)));
         assert_eq!(steps[0].1, Step::Select(Pick::Workers));
         assert_eq!(steps[1].1, Step::Press("Economy".into()), "same time keeps the given order");
         assert_eq!(steps[2].1, Step::Key { mods: vec![KeyCode::ControlLeft], key: KeyCode::Digit1 });
@@ -373,7 +392,7 @@ mod tests {
         assert_eq!(key("."), Some((vec![], KeyCode::Period)));
         assert_eq!(key("F1"), Some((vec![], KeyCode::F1)));
         assert_eq!(key("hyper+q"), None);
-        for bad in ["key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3", "1 damage hall", "1 damage hall 0", "1 damage hall 1.5", "1 damage nothing 0.5"] {
+        for bad in ["key", "x key Q", "-1 key Q", "1 dance", "1 click sideways", "1 down shift", "1 select everything", "1 press", "1 move 3", "1 aim 3", "1 damage hall", "1 damage hall 0", "1 damage hall 1.5", "1 damage nothing 0.5"] {
             assert!(parse(&data, bad).is_err(), "{bad}");
         }
         assert!(parse(&data, " ; ;").unwrap().is_empty());

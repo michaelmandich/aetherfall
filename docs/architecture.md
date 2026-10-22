@@ -77,6 +77,24 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 `CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
 
+**Click markers** (`ClickPing` contract). Every order the local player
+gives spawns a client entity (never a unit) carrying a `ClickPing` (point,
+colour, life) and a `ClickMark` (`af_core::ext::input`: the `OrderMark`
+kind, the entity it targets, whether it was shift-queued), both made by
+`ClickMark::ping`. af_input writes them for right-click `Smart` (the kind
+guessed from what is pointed at and what the selection can do, as the sim
+resolves it per unit; buildings alone mark a rally), targeted commands,
+placements (`Place`: the snapped footprint and facing; a wall line marks
+its last segment) and af_ui for minimap commands. af_render
+(`markers`) dresses each ping with its parts as children, plays it in real
+time (also while paused), follows a targeted entity while the local team
+sees it, keeps at most 16 alive and despawns the ping when its life runs
+out; a ping without a `ClickMark` is drawn as a plain point marker in its
+colour. af_input and af_map also despawn leftover pings when a match ends.
+A foundation of the local player (`Added<UnderConstruction>`, seen in an
+`Update` system, never inside the sim tick) gets a placement slam, a
+top-level `RenderScene` effect.
+
 ## Visual models
 
 Units listed in the visual registry are drawn with animated glTF models,
