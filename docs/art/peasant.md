@@ -181,7 +181,9 @@ them, with these differences:
   names them differently and the build renames them (`art/units/README.md`,
   "Source notes"). The API's extra `head_end` joint is kept, unanimated.
 - **Rigid models** (vehicles, siege, mounts, beasts, flyers): no skin, no
-  animation, `clips: {}` in the manifest, `height` = the model's height.
+  animation, `clips: {}` in the manifest, `height` = the model's height
+  (or more, for a model fitted to its box's width or depth as well: it is
+  then drawn lower than its box; `FIT` in `art/units/README.md`).
   The engine draws them in their bind pose with no animation player,
   scaled to the box height like any model; they move, fight and die
   without clips, and their corpse sinks its full height (nothing lies

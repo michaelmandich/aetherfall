@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit tide_bucentaur; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/tide_bucentaur/tide_bucentaur.glb",
+    height: 0.979,
+    clips: {
+    },
+)

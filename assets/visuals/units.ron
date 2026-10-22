@@ -94,5 +94,17 @@
         "titan": "models/titan/titan.model.ron",
         "trebuchet": "models/trebuchet/trebuchet.model.ron",
         "war_balloon": "models/war_balloon/war_balloon.model.ron",
+        // Late-game units modelled in Tripo Studio (art/tripo/studio_imports.json).
+        "dune_sand_engine": "models/dune_sand_engine/dune_sand_engine.model.ron",
+        "dune_sandskiff": "models/dune_sandskiff/dune_sandskiff.model.ron",
+        "ironhold_forgefather": "models/ironhold_forgefather/ironhold_forgefather.model.ron",
+        "starborn_archon": "models/starborn_archon/starborn_archon.model.ron",
+        "starborn_orbital_lance": "models/starborn_orbital_lance/starborn_orbital_lance.model.ron",
+        "steppe_jet_lancer": "models/steppe_jet_lancer/steppe_jet_lancer.model.ron",
+        "steppe_skyrider": "models/steppe_skyrider/steppe_skyrider.model.ron",
+        "steppe_war_ordu": "models/steppe_war_ordu/steppe_war_ordu.model.ron",
+        "sylvan_starstag_rider": "models/sylvan_starstag_rider/sylvan_starstag_rider.model.ron",
+        "sylvan_wisp_swarm": "models/sylvan_wisp_swarm/sylvan_wisp_swarm.model.ron",
+        "tide_bucentaur": "models/tide_bucentaur/tide_bucentaur.model.ron",
     },
 )

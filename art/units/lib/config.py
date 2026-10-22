@@ -60,6 +60,12 @@ siege, mounts, beasts, flyers), drawn as it is, with no clips.
                                      # default: the highest point near the
                                      # back); band: its height as a fraction
                                      # of the model's (default 0.5)
+    FIT = ("height", "depth")        # the unit's box dimensions the model must
+                                     # fit in game (default ("height",): the
+                                     # engine scales it to the box height); a
+                                     # model much longer or wider than its box
+                                     # is then drawn lower than the box, at the
+                                     # largest size that fits every one listed
 """
 
 import importlib.util
@@ -77,8 +83,9 @@ FALLBACK_SOURCE = "peasant/source/peasant_meshy.glb"
 
 HUMANOID = {"KIND", "SOURCE", "PROPS", "HELD", "CARRY", "CARRY_SKIP", "INHERIT", "CLIPS", "CLIPS_FROM", "SASH",
             "SOURCE_CLIPS", "TEXTURE", "TEXTURE_NAME", "BODY_MATERIAL"}
-RIGID = {"KIND", "SOURCE", "YAW", "TRIANGLES", "TEXTURE", "CUT_PLATE", "MARKER", "MARKER_AT"}
+RIGID = {"KIND", "SOURCE", "YAW", "TRIANGLES", "TEXTURE", "CUT_PLATE", "MARKER", "MARKER_AT", "FIT"}
 MARKERS = ("pennant", "band", None)
+BOX_DIMENSIONS = ("width", "height", "depth")
 
 
 class UnitError(RuntimeError):
@@ -133,6 +140,10 @@ class Unit:
             if self.marker not in MARKERS:
                 raise UnitError(f"{path}: MARKER must be one of {MARKERS}, not {self.marker!r}")
             self.marker_at = get("MARKER_AT")
+            fit = get("FIT", ("height",))
+            self.fit = (fit,) if isinstance(fit, str) else tuple(fit)
+            if not self.fit or any(d not in BOX_DIMENSIONS for d in self.fit):
+                raise UnitError(f"{path}: FIT lists box dimensions out of {BOX_DIMENSIONS}, not {fit!r}")
             return
         self.props = dict(get("PROPS", {}))
         try:

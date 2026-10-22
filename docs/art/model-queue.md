@@ -43,6 +43,12 @@ matches it appears in.
 Faction-unique units and late-age things each appear in under half the
 games and come after all of these.
 
+**Status:** every unit in `assets/data` now has a model
+(`assets/visuals/units.ron`, 95 units). The last eleven, late-game units
+whose Meshy concepts were picked but never modelled, were made in Tripo
+Studio instead ([art/tripo/studio_imports.json](../../art/tripo/studio_imports.json),
+`art/units/README.md` "Tripo Studio sources").
+
 ## Batches
 
 1. **Trees: pine, oak, palm.** Nine out of ten objects on the map are trees.

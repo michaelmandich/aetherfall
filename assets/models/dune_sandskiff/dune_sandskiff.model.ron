@@ -1,0 +1,8 @@
+// Written by art/units/build_unit.py --unit dune_sandskiff; do not edit by hand.
+// A rigid model: no clips, drawn as it is (height in metres).
+(
+    model: "models/dune_sandskiff/dune_sandskiff.glb",
+    height: 0.479,
+    clips: {
+    },
+)
