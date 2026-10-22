@@ -1,5 +1,6 @@
 //! Attack, AttackMove, Patrol and Hold orders.
 
+use af_core::ext::behavior::patrol_points;
 use af_core::prelude::*;
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
@@ -77,15 +78,35 @@ pub(crate) fn run_fight_orders(
                     u.orders.queue.pop_front();
                 }
             }
-            Some(Order::Patrol { a, b }) => {
-                let leg_end = if u.brain.patrol_back { a } else { b };
+            Some(Order::Patrol { b, .. }) => {
+                // The route: this patrol and the ones queued straight behind
+                // it, as a loop (two points: back and forth).
+                let leg = patrol_leg(&u.orders, u.brain.patrol_leg, u.brain.patrol_to);
+                let points = patrol_points(&u.orders.queue).count();
+                let next = (leg + 1) % points;
+                let leg_end = patrol_points(&u.orders.queue).nth(next).unwrap_or(b);
+                (u.brain.patrol_leg, u.brain.patrol_to) = (leg, Some(leg_end));
                 if advance(&ctx, &mut commands, &mut u, leg_end) {
-                    u.brain.patrol_back = !u.brain.patrol_back;
+                    (u.brain.patrol_leg, u.brain.patrol_to) = (next, None);
                 }
             }
             Some(Order::Hold) => hold(&ctx, &mut commands, &mut u),
             _ => {}
         }
+    }
+}
+
+/// The patrol leg to walk along the route at the front of `orders`
+/// ([`patrol_points`]): `leg`, unless points shift-queued since have moved
+/// `to`, the point it led to, along the route; then the leg that still
+/// ends there (the first one on from `leg`), so the unit keeps on its way.
+fn patrol_leg(orders: &Orders, leg: usize, to: Option<Vec2>) -> usize {
+    let n = patrol_points(&orders.queue).count().max(1);
+    let point = |i: usize| patrol_points(&orders.queue).nth(i % n);
+    let leg = leg % n;
+    match to {
+        Some(to) if point(leg + 1) != Some(to) => (leg + 1..=leg + n).find(|&i| point(i) == Some(to)).map_or(leg, |i| (i - 1) % n),
+        _ => leg,
     }
 }
 

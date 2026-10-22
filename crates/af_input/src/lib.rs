@@ -11,7 +11,8 @@
 //!    [`CursorOverride`](af_core::ext::input::CursorOverride)) ->
 //!    `CursorWorld` (ground point, hovered entity the local team can see);
 //! 3. hotkeys: Esc, R, control groups, idle worker, main hall (H), army (F2), centre,
-//!    Delete, pause, speed;
+//!    Delete, pause, speed, unit paths (P, and Shift while held:
+//!    [`ShowPaths`](af_core::ext::input::ShowPaths));
 //! 4. selection: click / shift / ctrl / double-click / drag-box (`DragSelect`);
 //! 5. orders: right-click `Smart`, then clicks that complete an `InputMode`;
 //! 6. placement preview (`PlacementPreview`) and pruning of selected
@@ -33,7 +34,7 @@ mod placement;
 mod selection;
 mod viewer;
 
-use af_core::ext::input::{ControlGroups, PlacementPreview};
+use af_core::ext::input::{ControlGroups, PlacementPreview, ShowPaths};
 use af_core::prelude::*;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
@@ -51,6 +52,8 @@ impl Plugin for RtsInputPlugin {
             .init_resource::<AccumulatedMouseScroll>()
             .init_resource::<ControlGroups>()
             .init_resource::<PlacementPreview>()
+            // A preference: never reset between matches.
+            .init_resource::<ShowPaths>()
             .init_resource::<camera::StartFocus>()
             .init_resource::<selection::Gesture>()
             .add_systems(OnEnter(GameState::Playing), camera::spawn_camera)
@@ -72,6 +75,7 @@ impl Plugin for RtsInputPlugin {
                         hotkeys::centre_camera,
                         hotkeys::delete_selected,
                         hotkeys::game_speed,
+                        hotkeys::toggle_paths,
                         selection::selection_gesture,
                         orders::smart_command,
                         orders::mode_clicks,

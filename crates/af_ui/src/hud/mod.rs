@@ -1,6 +1,7 @@
 //! The in-match HUD (`GameState::Playing`): top bar, idle workers, notices,
 //! control groups, selection panel, command card with its tooltip, minimap,
-//! drag box, placement hint, and the pause and game-over overlays.
+//! drag box, placement hint, the unit paths toggle, and the pause and
+//! game-over overlays.
 //!
 //! The node tree is spawned once on entering the match and updated in
 //! place; panels hide with `Display::None`/`Visibility::Hidden` instead of
@@ -12,6 +13,7 @@ pub(crate) mod groups;
 pub(crate) mod minimap;
 pub(crate) mod notices;
 pub(crate) mod overlays;
+pub(crate) mod paths;
 pub(crate) mod selection;
 pub(crate) mod topbar;
 
@@ -79,6 +81,7 @@ pub(crate) fn plugin(app: &mut App) {
     card_view::plugin(app);
     minimap::plugin(app);
     overlays::plugin(app);
+    paths::plugin(app);
 }
 
 /// Fresh per-match HUD state (the previous match's selection, card page,
@@ -133,6 +136,9 @@ fn spawn_hud(mut commands: Commands, data: Res<Data>, mut images: ResMut<Assets<
                     });
                 card_view::spawn(bottom);
             });
+            // Before the tooltips and the full-screen panels, which stack
+            // over it (later siblings draw on top).
+            paths::spawn(root);
             card_view::spawn_tooltip(root);
             overlays::spawn(root);
         });

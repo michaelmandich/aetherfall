@@ -1,11 +1,11 @@
 //! The keys af_input owns (the other letters are af_ui's command-card
 //! hotkeys): Esc, R (placement), H (main hall, not on the card), digits
 //! (control groups), Period/F1 (idle worker), F2 (army), Home/Space (centre), Delete,
-//! Pause/F3 and +/- (game speed).
+//! Pause/F3 and +/- (game speed), P (unit paths; Shift shows them while held).
 
 use std::f32::consts::TAU;
 
-use af_core::ext::input::ControlGroups;
+use af_core::ext::input::{ControlGroups, ShowPaths};
 use af_core::ext::ui::CardPage;
 use af_core::prelude::*;
 use bevy::prelude::*;
@@ -43,6 +43,10 @@ fn pressed_digit(keys: &ButtonInput<KeyCode>) -> Option<usize> {
 
 fn ctrl_held(keys: &ButtonInput<KeyCode>) -> bool {
     keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
+}
+
+fn ctrl_or_alt_held(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::AltLeft, KeyCode::AltRight])
 }
 
 /// The next game speed up (or down) the ladder from `current`.
@@ -120,7 +124,7 @@ pub(crate) fn select_hall(
     mut last: Local<Option<Entity>>,
     mut commands: Commands,
 ) {
-    if !keys.just_pressed(KeyCode::KeyH) || keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::AltLeft, KeyCode::AltRight]) {
+    if !keys.just_pressed(KeyCode::KeyH) || ctrl_or_alt_held(&keys) {
         return;
     }
     let Some(me) = local.0 else { return };
@@ -263,6 +267,20 @@ pub(crate) fn delete_selected(keys: Res<ButtonInput<KeyCode>>, own: OwnSelection
     let entities = own.all();
     if !entities.is_empty() {
         issuer.send(PlayerCommand::new(me, entities, CommandKind::Delete));
+    }
+}
+
+/// P shows or hides the selected units' routes ([`ShowPaths`]) and says
+/// which in a notice; while Shift is held (queued orders being given) they
+/// show whatever P says.
+pub(crate) fn toggle_paths(keys: Res<ButtonInput<KeyCode>>, local: Res<LocalPlayer>, mut paths: ResMut<ShowPaths>, mut issuer: Issuer) {
+    let held = shift_held(&keys);
+    if paths.held != held {
+        paths.held = held;
+    }
+    if keys.just_pressed(KeyCode::KeyP) && !ctrl_or_alt_held(&keys) {
+        paths.on = !paths.on;
+        issuer.notice(local.0, NoticeKind::Info, if paths.on { "Unit paths shown (P)" } else { "Unit paths hidden (P)" });
     }
 }
 

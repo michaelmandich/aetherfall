@@ -45,6 +45,16 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   economy, UI and AI.
 * Deterministic RNG: `SimRng`. Deaths: insert `Dead` + write `EntityDied`;
   af_core despawns in `Cleanup`.
+* Patrols: consecutive `Order::Patrol` entries at the front of the queue
+  (shift-clicked patrol points, each queued from the last one's `b`) are
+  one route, `[front.a, front.b, q1.b, ...]`
+  (`af_core::ext::behavior::patrol_points`), walked in order and from the
+  last point back to the first, forever; a single patrol is the a <-> b
+  beat. The leg is af_behavior's `Brain::patrol_leg`, reset with the task
+  when the front order changes; points shift-queued onto a running patrol
+  join the loop, and the unit carries on to the point it was walking to
+  (`Brain::patrol_to`, the leg that still ends there). A patrol never
+  pops, so orders queued after the patrols are never reached.
 * What a unit is busy with: `Activity` (af_core `components.rs`), written
   only by af_behavior at the end of `SimSet::Orders`: `Gather(WorkStyle)`
   (at the node or field), `Build`, `Repair` (at the target), `Heal`,
@@ -160,6 +170,47 @@ pings when a match ends.
 A foundation of the local player (`Added<UnderConstruction>`, seen in an
 `Update` system, never inside the sim tick) gets a placement slam, a
 top-level `RenderScene` effect.
+
+### Unit routes
+
+* **Toggle:** `ShowPaths { on, held }` (`af_core::ext::input`): af_input
+  initialises it (never reset between matches: a preference), flips `on`
+  with P (with a notice) and sets `held` while Shift is down; af_ui's
+  "Paths" button under Menu flips `on` and shows it.
+* **Overlay** (`af_render::paths`, `RenderStep::Overlay`): `plan_paths`
+  turns the local player's own selected units' `Orders`, `PathState`,
+  `MoveGoal` and `AttackTarget` into polylines (`plan_route`, pure): the
+  current leg from the unit through `waypoints[next..]` to the live goal
+  (straight while `Pending`, for flyers and for a goal the waypoints are
+  not for yet; stopped with a cross where a partial path ends), then each
+  queued order chained on to its target, coloured by order. Entity
+  targets of other teams are placed where the local team believes they
+  are (the rally flags' `believed_rally_point`), a chase after one out of
+  sight is drawn straight, and enemy units' routes are never planned. The
+  pathfinder sees the whole map, so a path's turns trace what it goes
+  round: only the turns the team has in sight (`in_sight`: the stretch to
+  the turn and the cells round it) are drawn, and from the first one it
+  does not, the leg runs straight to its goal (nor is a partial path's
+  end marked there). Point targets are drawn where the orders put them:
+  af_behavior's intake nudges a slot off obstacles with the whole map in
+  view too, so one in the fog can stand up to `SLOT_SEARCH` (6 m) off the
+  click, as the unit's own walk there shows. The chain stops at an order
+  that never ends (a patrol, a hold). A selected unit whose current order
+  is a patrol always shows its loop, the leg it walks lit (read off
+  `MoveGoal.target`, kept while it fights); with the paths shown, the
+  unit's current leg carries that highlight and the loop keeps a plain
+  track there. `draw_paths` draws it with Bevy gizmos (registered only
+  with `GizmoPlugin`, so headless apps plan without drawing): a few
+  pixels wide at any zoom, no entities (nothing is inserted on units),
+  terrain-following points on `Ground::surface`, marching dashes and
+  chevrons on real time (they run while paused), and a faint
+  always-on-top copy so routes behind buildings still read. Only the
+  stretches on screen are cut into pieces (`View`, the camera's view of
+  the ground, a little widened), with at most so many dashes and
+  chevrons to a stretch, so the cost follows what is on screen, not how
+  long the routes are. At most `MAX_ROUTES` (64) units are drawn, those
+  nearest the centre of the view; `RoutesShown` (`af_core::ext::render`)
+  tells af_ui, whose Paths button then reads "64 of N routes shown".
 
 ## Visual models
 

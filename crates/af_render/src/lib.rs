@@ -20,7 +20,7 @@
 //! |---|---|
 //! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/click markers; a slam for each new own foundation; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
 //! | `Animate` | tick interpolation (`Prev* -> *` by `Time<Fixed>::overstep_fraction`), weapon animation, shields, cargo, flyer shadows, foundations (boxes or models rising), node shrink, FX, placement slams; model clips and props, corpses; felled trees and stumps |
-//! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, placement ghosts, click markers (after the units moved, so a marker on a unit follows it) |
+//! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, the selected units' routes and patrol loops ([`paths`]), placement ghosts, click markers (after the units moved, so a marker on a unit follows it) |
 //! | `Fog` | hide what the local team cannot see; the fog overlay texture; remembered dead buildings and nodes |
 //!
 //! Sim entities get `Transform` + `Visibility` and a child "visual root"
@@ -42,6 +42,7 @@ pub mod model;
 pub mod motion;
 pub mod overlay;
 pub mod parts;
+pub mod paths;
 pub mod registry;
 pub mod scene;
 pub mod statics;
@@ -49,7 +50,9 @@ pub mod terrain;
 
 use af_core::ext::fog::FogGhosts;
 use af_core::ext::input::PlacementPreview;
+use af_core::ext::render::RoutesShown;
 use af_core::prelude::*;
+use bevy::gizmos::GizmoPlugin;
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 
@@ -73,9 +76,16 @@ pub struct BoxRenderPlugin;
 impl Plugin for BoxRenderPlugin {
     fn build(&self, app: &mut App) {
         let has_statics = resource_exists::<statics::StaticLibrary>;
+        // Route lines are gizmos: only where Bevy draws gizmos (headless
+        // apps still plan the routes).
+        if app.is_plugin_added::<GizmoPlugin>() {
+            paths::register_gizmos(app);
+        }
         app.init_resource::<terrain::TerrainState>()
             .init_resource::<ghost::GhostPool>()
             .init_resource::<overlay::RallyPool>()
+            .init_resource::<paths::PathOverlay>()
+            .init_resource::<RoutesShown>()
             .init_resource::<fog::FogOverlay>()
             .init_resource::<fog::MemoryPool>()
             .init_resource::<model::rig::TeamTints>()
@@ -135,7 +145,8 @@ impl Plugin for BoxRenderPlugin {
             .add_systems(
                 Update,
                 (
-                    (overlay::update_bars, overlay::update_outlines, overlay::update_rally).run_if(resource_exists::<Players>),
+                    (overlay::update_bars, overlay::update_outlines, overlay::update_rally, (paths::plan_paths, paths::draw_paths.run_if(paths::gizmos_ready)).chain())
+                        .run_if(resource_exists::<Players>),
                     ghost::update_ghosts.run_if(resource_exists::<PlacementPreview>),
                     markers::animate_markers,
                 )

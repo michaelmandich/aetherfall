@@ -53,3 +53,21 @@ pub fn terrain_ground(def: &TerrainDef) -> f32 {
     let surface = if def.passable.contains(&MoveFlag::Climber) { def.height } else { def.height.min(0.0) };
     surface.clamp(-MAX_GROUND_OFFSET, MAX_GROUND_OFFSET)
 }
+
+/// How many of the local player's selected units have their routes drawn
+/// by af_render's path overlay (at most so many, those nearest the centre
+/// of the view): `drawn` of the `wanted` whose routes would show (all of
+/// them with the paths shown, else the patrolling ones). Kept up to date
+/// by af_render each frame of a match; af_ui says so when some are left out.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RoutesShown {
+    pub drawn: usize,
+    pub wanted: usize,
+}
+
+impl RoutesShown {
+    /// Some routes are left out.
+    pub fn capped(&self) -> bool {
+        self.wanted > self.drawn
+    }
+}

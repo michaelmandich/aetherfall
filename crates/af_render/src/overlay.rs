@@ -1,5 +1,6 @@
 //! Status overlays: health/shield/progress bars, selection outlines and
-//! rally markers.
+//! rally markers (whose fog rules [`crate::paths`] shares for the entities
+//! units have orders on).
 
 use af_core::ext::fog::{SeenBy, team_sees_box};
 use af_core::ext::input::RtsCamera;
@@ -261,7 +262,7 @@ struct RallyMarker {
 /// What the viewing team last knew of an entity rally target it does not
 /// own.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Sighting {
+pub(crate) struct Sighting {
     /// Where the team last saw it.
     pos: Vec2,
     /// It was in sight the last frame it was looked up.
@@ -284,7 +285,7 @@ pub struct RallyPool {
 }
 
 #[allow(clippy::type_complexity)]
-type RallyTargets<'w, 's> =
+pub(crate) type RallyTargets<'w, 's> =
     Query<'w, 's, (&'static Position, Option<&'static Owner>, Option<&'static Footprint>, Option<&'static Facing>, Option<&'static SeenBy>, Has<Unit>)>;
 
 /// Where the viewing `team` (`None`: nothing hidden) believes the entity
@@ -293,7 +294,7 @@ type RallyTargets<'w, 's> =
 /// unit's position while some of its box is in sight, else where it was
 /// last seen (also after it dies out of sight, which the team cannot know);
 /// a building or node's (they never move) once the team has seen it.
-fn believed_rally_point(t: Entity, team: Option<u8>, fog: &FogOfWar, players: &Players, targets: &RallyTargets, sightings: &mut HashMap<Entity, Sighting>) -> Option<Vec2> {
+pub(crate) fn believed_rally_point(t: Entity, team: Option<u8>, fog: &FogOfWar, players: &Players, targets: &RallyTargets, sightings: &mut HashMap<Entity, Sighting>) -> Option<Vec2> {
     let Ok((pos, owner, fp, facing, seen, is_unit)) = targets.get(t) else {
         return match sightings.get(&t) {
             Some(s) if !s.in_sight => Some(s.pos),
