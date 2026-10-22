@@ -18,6 +18,7 @@ use bevy::prelude::*;
 
 use super::{HudSet, SelectionInfo};
 use crate::format::{self, num};
+use crate::skin::{ButtonSkin, SkinPanel};
 use crate::theme::{self, set_color, set_display, set_text, text, Tip, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
 use crate::tooltip;
 
@@ -129,6 +130,7 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                 ..default()
             }),
             theme::panel_colors(),
+            SkinPanel::Panel,
             // Hidden rather than removed, so the control group bar above stays put.
             Visibility::Hidden,
         ))
@@ -146,7 +148,11 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                 v.spawn(Node { column_gap: px(4), ..default() }).with_children(|row| {
                     for i in 1..=QUEUE_SLOTS {
                         row.spawn((
-                            theme::button(Node { width: px(60), height: px(26), padding: UiRect::ZERO, overflow: Overflow::clip(), display: Display::None, ..default() }, theme::group_color(crate::card::ActionGroup::Train)),
+                            theme::skinned_button(
+                                Node { width: px(60), height: px(26), padding: UiRect::ZERO, overflow: Overflow::clip(), display: Display::None, ..default() },
+                                theme::group_color(crate::card::ActionGroup::Train),
+                                ButtonSkin::Train,
+                            ),
                             QueueSlot(i),
                             Tip::default(),
                         ))

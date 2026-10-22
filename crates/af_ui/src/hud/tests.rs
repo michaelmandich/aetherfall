@@ -19,6 +19,8 @@ use super::overlays::{GameOverScreen, GameOverState, LeavePanel};
 use super::selection::QueueSlot;
 use super::{HudRoot, HudView, SelectionInfo};
 use crate::card::{BuildCategory, CardAction, CardMenu};
+use crate::fx::{Burst, Particle};
+use crate::skin::{ButtonSkin, SkinButton, SkinPanel, SkinState, Skinned, UiSkin};
 use crate::{HudPlugin, MinimapGeometry};
 
 fn add_client_resources(app: &mut App) {
@@ -848,4 +850,176 @@ fn top_bar_names_its_values() {
     for name in ["Food", "Wood", "Stone", "Copper", "Iron", "Silicon", "Aether", "Adamant", "Pop"] {
         assert!(t.iter().any(|s| s == name), "{name} missing from {t:?}");
     }
+}
+
+// The painted skin and the press feedback.
+
+fn card_slot(app: &mut App, slot: usize) -> Entity {
+    let world = app.world_mut();
+    world.query::<(Entity, &CardSlot)>().iter(world).find(|(_, s)| s.0 == slot).map(|(e, _)| e).unwrap()
+}
+
+fn slot_of(app: &App, action: CardAction) -> usize {
+    app.world().resource::<CardState>().slots.iter().position(|a| *a == Some(action)).unwrap_or_else(|| panic!("no {action:?} on the card"))
+}
+
+fn scale_of(app: &App, e: Entity) -> f32 {
+    app.world().get::<UiTransform>(e).unwrap().scale.x
+}
+
+fn shift_of(app: &App, e: Entity) -> f32 {
+    match app.world().get::<UiTransform>(e).unwrap().translation.x {
+        Val::Px(x) => x,
+        _ => 0.0,
+    }
+}
+
+fn count<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> usize {
+    let world = app.world_mut();
+    world.query_filtered::<(), F>().iter(world).count()
+}
+
+/// The glow over a skinned button.
+fn glow_of(app: &App, e: Entity) -> Color {
+    let glow = app.world().get::<Skinned>(e).and_then(|s| s.glow).unwrap();
+    app.world().get::<ImageNode>(glow).unwrap().color
+}
+
+/// The HUD app with the skin's textures in memory (blank images), as if
+/// they had loaded from disk.
+fn skinned_hud_app() -> App {
+    let mut app = hud_app();
+    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+    let skin = UiSkin::new(|_| images.add(Image::default()));
+    app.insert_resource(skin);
+    run_ticks(&mut app, 2);
+    assert_eq!(app.world().resource::<UiSkin>().state, SkinState::Ready);
+    app
+}
+
+#[test]
+fn without_its_textures_the_ui_keeps_its_flat_look() {
+    // The tests have no PNG loader (nor the files): the skin never loads.
+    let mut app = hud_app();
+    let tc = spawn_building_at(&mut app, 0, "town_center", Vec2::new(40.0, 40.0));
+    select(&mut app, &[tc]);
+    run_ticks(&mut app, 3);
+    assert_ne!(app.world().resource::<UiSkin>().state, SkinState::Ready);
+    assert_eq!(count::<With<Skinned>>(&mut app), 0);
+    assert_eq!(count::<(With<ImageNode>, Or<(With<SkinPanel>, With<SkinButton>)>)>(&mut app), 0, "no textures on any panel or button");
+    let peasant = card_slot(&mut app, 0);
+    let flat = crate::theme::shade(crate::theme::group_color(crate::card::ActionGroup::Train), Interaction::None);
+    assert_eq!(app.world().get::<BackgroundColor>(peasant).map(|b| b.0), Some(flat));
+    // Presses still squash the button (no flash or burst without the textures).
+    press_slot(&mut app, 0);
+    app.update();
+    assert!(scale_of(&app, peasant) < 0.99, "{}", scale_of(&app, peasant));
+    assert_eq!(count::<With<Burst>>(&mut app), 0);
+    let menu = button(&mut app, "Menu (F10)");
+    press(&mut app, menu);
+    app.update();
+    assert!(scale_of(&app, menu) < 1.0, "plain buttons squash too");
+    run_ticks(&mut app, 12);
+    assert_eq!(app.world().get::<UiTransform>(peasant), Some(&UiTransform::IDENTITY), "and settle");
+    assert_eq!(app.world().get::<UiTransform>(menu), Some(&UiTransform::IDENTITY));
+}
+
+#[test]
+fn the_skin_dresses_panels_and_buttons_by_family() {
+    let mut app = skinned_hud_app();
+    let worker = spawn_unit_at(&mut app, 0, "peasant", Vec2::new(40.0, 40.0));
+    spawn_unit_at(&mut app, 0, "peasant", Vec2::new(42.0, 40.0));
+    select(&mut app, &[worker]);
+    run_ticks(&mut app, 2);
+    assert_eq!(count::<(Or<(With<SkinPanel>, With<SkinButton>)>, Without<Skinned>)>(&mut app), 0, "everything marked is dressed");
+    let world = app.world_mut();
+    // Panels: planks, with a frame over them that never takes the pointer.
+    let panels: Vec<(Entity, Vec<Entity>)> =
+        world.query_filtered::<(Entity, &Children), With<SkinPanel>>().iter(world).map(|(e, c)| (e, c.iter().collect())).collect();
+    assert!(panels.len() >= 6, "{}", panels.len());
+    for (panel, children) in panels {
+        assert!(world.get::<ImageNode>(panel).is_some());
+        let frame = children.iter().find(|c| world.get::<ZIndex>(**c).is_some_and(|z| z.0 > 0)).copied().unwrap();
+        assert!(world.get::<ImageNode>(frame).is_some() && world.get::<Pickable>(frame) == Some(&Pickable::IGNORE));
+        assert_eq!(world.get::<BackgroundColor>(panel).map(|b| b.0), Some(Color::NONE), "the flat fill is gone");
+    }
+    // Buttons wear their family; the build page buttons each their own.
+    let skin = app.world().resource::<UiSkin>().clone();
+    let image = |app: &mut App, action: CardAction| {
+        let slot = slot_of(app, action);
+        let e = card_slot(app, slot);
+        app.world().get::<ImageNode>(e).unwrap().image.clone()
+    };
+    assert_eq!(image(&mut app, CardAction::Move), skin.button(ButtonSkin::Command));
+    assert_eq!(image(&mut app, CardAction::Stance(Stance::Defensive)), skin.button(ButtonSkin::Stance));
+    for (cat, family) in [(BuildCategory::Economy, ButtonSkin::Economy), (BuildCategory::Military, ButtonSkin::Military), (BuildCategory::Defence, ButtonSkin::Defence)] {
+        assert_eq!(image(&mut app, CardAction::BuildPage(cat)), skin.button(family), "{cat:?}");
+    }
+    // The military page's buildings are military; Back is a nav button.
+    tap(&mut app, KeyCode::KeyX);
+    app.update();
+    let barracks = test_data().building_id("barracks").unwrap();
+    assert_eq!(image(&mut app, CardAction::Build(barracks)), skin.button(ButtonSkin::Military));
+    assert_eq!(image(&mut app, CardAction::Back), skin.button(ButtonSkin::Nav));
+    // Hovered: lit and glowing; unaffordable: darker than the rest.
+    let slot = slot_of(&app, CardAction::Build(barracks));
+    let slot = card_slot(&mut app, slot);
+    let normal = app.world().get::<ImageNode>(slot).unwrap().color;
+    app.world_mut().entity_mut(slot).insert(Interaction::Hovered);
+    app.update();
+    assert!(app.world().get::<ImageNode>(slot).unwrap().color.luminance() > normal.luminance());
+    assert!(glow_of(&app, slot).alpha() > 0.2);
+    app.world_mut().entity_mut(slot).insert(Interaction::None);
+    app.world_mut().resource_mut::<Players>().list[0].resources = ResAmounts::ZERO;
+    app.update();
+    assert!(app.world().get::<ImageNode>(slot).unwrap().color.luminance() < normal.luminance() * 0.8);
+    assert_eq!(glow_of(&app, slot).alpha(), 0.0);
+    // The skin adds no text: the eight resources read 0, and nothing else does.
+    let t = texts(&mut app);
+    assert_eq!(t.iter().filter(|s| *s == "0").count(), 8, "{t:?}");
+}
+
+#[test]
+fn presses_squash_flash_and_burst_or_shake_when_refused() {
+    let mut app = skinned_hud_app();
+    let tc = spawn_building_at(&mut app, 0, "town_center", Vec2::new(40.0, 40.0));
+    select(&mut app, &[tc]);
+    run_ticks(&mut app, 2);
+    let peasant = test_data().unit_id("peasant").unwrap();
+    let slot = slot_of(&app, CardAction::Train(peasant));
+    let button = card_slot(&mut app, slot);
+    // Training: a full press, with a burst of light out of the button.
+    press_slot(&mut app, slot);
+    assert_eq!(count::<With<Burst>>(&mut app), 1);
+    let particles = count::<With<Particle>>(&mut app);
+    assert!(particles > 1 && particles <= crate::fx::MAX_PARTICLES, "{particles}");
+    app.update();
+    assert!(scale_of(&app, button) < 0.97, "squashed: {}", scale_of(&app, button));
+    let flash = glow_of(&app, button);
+    assert!(flash.alpha() > 0.5, "flashing: {flash:?}");
+    let mut most = 0.0f32;
+    for _ in 0..25 {
+        app.update();
+        most = most.max(scale_of(&app, button));
+    }
+    assert!(most > 1.02, "springs back past its size: {most}");
+    assert_eq!(app.world().get::<UiTransform>(button), Some(&UiTransform::IDENTITY), "then rests");
+    assert_eq!(count::<With<Particle>>(&mut app), 0, "the burst is over");
+    assert_eq!(count::<With<Burst>>(&mut app), 0);
+    // Unaffordable: refused with a shake and a red flash, and no burst.
+    app.world_mut().resource_mut::<Players>().list[0].resources = ResAmounts::ZERO;
+    app.update();
+    press_slot(&mut app, slot);
+    assert_eq!(count::<With<Burst>>(&mut app), 0);
+    app.update();
+    let red = glow_of(&app, button).to_srgba();
+    assert!(red.alpha > 0.3 && red.red > 2.0 * red.green, "{red:?}");
+    let shifts: Vec<f32> = (0..6)
+        .map(|_| {
+            app.update();
+            shift_of(&app, button)
+        })
+        .collect();
+    assert!(shifts.iter().any(|x| *x > 0.5) && shifts.iter().any(|x| *x < -0.5), "shakes both ways: {shifts:?}");
+    assert!((scale_of(&app, button) - 1.0).abs() < 1e-6, "without a squash");
 }

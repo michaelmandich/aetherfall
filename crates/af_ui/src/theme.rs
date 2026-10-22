@@ -1,10 +1,13 @@
 //! Colours, sizes and small spawn helpers shared by the menu and the HUD:
 //! dark translucent panels, the default font at 14-18 px, buttons that
-//! shade on hover, and hover tips.
+//! shade on hover, and hover tips. These flat colours are what the UI
+//! looks like until (or unless) the painted skin ([`crate::skin`]) loads.
 
 use bevy::prelude::*;
 
 use crate::card::ActionGroup;
+use crate::fx::PressFx;
+use crate::skin::{ButtonSkin, SkinButton, Skinned};
 
 /// Labels, tooltips, panel details.
 pub const FONT_SMALL: f32 = 14.0;
@@ -109,8 +112,14 @@ pub struct ShadedButton {
     pub base: Color,
 }
 
-/// A button: centred content, rounded border, shaded on hover.
+/// A button: centred content, rounded border, shaded on hover, squashed
+/// when pressed; in the skin, a [`ButtonSkin::Plain`] one.
 pub fn button(node: Node, base: Color) -> impl Bundle {
+    skinned_button(node, base, ButtonSkin::Plain)
+}
+
+/// A [`button`] that wears `skin` (and `base` until the skin loads).
+pub fn skinned_button(node: Node, base: Color, skin: ButtonSkin) -> impl Bundle {
     (
         Button,
         Node {
@@ -124,6 +133,8 @@ pub fn button(node: Node, base: Color) -> impl Bundle {
         BackgroundColor(base),
         BorderColor::all(PANEL_BORDER),
         ShadedButton { base },
+        SkinButton(skin),
+        PressFx::on_click(),
     )
 }
 
@@ -132,7 +143,9 @@ pub fn button(node: Node, base: Color) -> impl Bundle {
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Tip(pub String);
 
-pub(crate) fn shade_buttons(mut q: Query<(&Interaction, &ShadedButton, &mut BackgroundColor), Changed<Interaction>>) {
+/// Flat buttons follow hover and press; skinned ones are tinted by the skin.
+#[allow(clippy::type_complexity)]
+pub(crate) fn shade_buttons(mut q: Query<(&Interaction, &ShadedButton, &mut BackgroundColor), (Changed<Interaction>, Without<Skinned>)>) {
     for (interaction, b, mut bg) in &mut q {
         bg.0 = shade(b.base, *interaction);
     }

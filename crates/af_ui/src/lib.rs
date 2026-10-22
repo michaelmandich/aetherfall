@@ -1,7 +1,8 @@
 //! Aetherfall UI: skirmish menu, HUD, resource bar, selection panel, command card, minimap, notices, game over.
 //!
-//! Everything is a Bevy UI node (boxes, fittingly) drawn with the default
-//! font on dark translucent panels.
+//! Everything is a Bevy UI node drawn with the default font: wooden panels
+//! in metal frames and framed buttons from the painted [`skin`] (flat dark
+//! panels until its textures load), with card-game press feedback ([`fx`]).
 //!
 //! * `ClientSet::Pointer`: [`pointer`] sets `CursorWorld::over_ui` from the
 //!   picking hover map, so af_input ignores world clicks on the HUD.
@@ -19,9 +20,11 @@
 
 pub mod card;
 pub mod format;
+pub mod fx;
 mod hud;
 pub mod menu;
 mod pointer;
+pub mod skin;
 pub mod theme;
 pub mod tooltip;
 
@@ -36,7 +39,8 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (pointer::update_over_ui.in_set(ClientSet::Pointer), theme::shade_buttons.in_set(ClientSet::Ui)));
+        app.add_systems(Update, (pointer::update_over_ui.in_set(ClientSet::Pointer), theme::shade_buttons.in_set(ClientSet::Ui).before(skin::SkinSet)));
+        skin::plugin(app);
         menu::plugin(app);
         hud::plugin(app);
     }

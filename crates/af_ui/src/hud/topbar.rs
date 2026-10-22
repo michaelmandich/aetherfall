@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use super::{HudSet, HudView, SpectatorChoice};
 use crate::format;
+use crate::skin::SkinPanel;
 use crate::theme::{self, rgb, set_color, set_display, set_text, text, Tip, FONT_BODY, FONT_SMALL, TEXT, TEXT_DIM};
 
 /// Width of the spectator's "viewing" name, and the characters of the
@@ -93,6 +94,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands, data: &GameData) {
             ..default()
         }),
         theme::panel_colors(),
+        SkinPanel::Bar,
     ))
     .with_children(|bar| {
         for r in data.resource_ids() {

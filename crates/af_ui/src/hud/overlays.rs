@@ -16,6 +16,7 @@ use bevy::window::PrimaryWindow;
 
 use super::HudSet;
 use crate::format;
+use crate::skin::{ButtonSkin, SkinPanel};
 use crate::tooltip;
 use crate::theme::{self, set_display, set_text, text, Tip, FONT_BODY, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
 
@@ -111,8 +112,10 @@ const STATS_NAME_CHARS: usize = 30;
 /// Which columns hold numbers (right-aligned); the rest are words.
 const STATS_NUMERIC: [bool; 10] = [false, false, true, false, true, true, true, true, true, true];
 const STATS_COLUMN_GAP: f32 = 18.0;
-/// Padding of the game-over panel (the table keeps clear of its border).
-const GAME_OVER_PADDING: f32 = 24.0;
+/// Padding of the game-over panel: the table keeps clear of its border
+/// and the skin's frame (Bevy lays the table out a little wider than the
+/// panel measures it, so it spills a few px into this padding).
+const GAME_OVER_PADDING: f32 = 32.0;
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<GameOverState>()
@@ -134,6 +137,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
         HoverTip,
         theme::panel_node(Node { position_type: PositionType::Absolute, max_width: px(360), padding: UiRect::axes(px(8), px(4)), display: Display::None, ..default() }),
         theme::panel_colors(),
+        SkinPanel::Bar,
         Pickable::IGNORE,
     ))
     .with_child((text("", FONT_SMALL, TEXT), Pickable::IGNORE));
@@ -151,7 +155,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
     ))
     .with_children(|row| {
         // Only an indicator: world clicks and the wheel pass through it.
-        row.spawn((theme::panel_node(Node { padding: UiRect::axes(px(28), px(10)), ..default() }), theme::panel_colors(), Pickable::IGNORE))
+        row.spawn((theme::panel_node(Node { padding: UiRect::axes(px(28), px(10)), ..default() }), theme::panel_colors(), SkinPanel::Bar, Pickable::IGNORE))
             .with_child((text("PAUSED", 32.0, theme::HIGHLIGHT), Pickable::IGNORE));
     });
     // Top right, under the bar (the idle-worker button is on the left).
@@ -190,6 +194,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
                 // Opaque: the world's bars and boxes must not show through the table.
                 BackgroundColor(theme::PANEL_BG.with_alpha(1.0)),
                 BorderColor::all(theme::PANEL_BORDER),
+                SkinPanel::Panel,
             ))
             .with_children(|panel| {
                 panel.spawn((text("", 48.0, theme::HIGHLIGHT), GameOverText::Title));
@@ -210,7 +215,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
                     },
                 ));
                 panel.spawn(Node { column_gap: px(16), margin: UiRect::top(px(8)), ..default() }).with_children(|r| {
-                    r.spawn((theme::button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37)), GameOverButton::BackToMenu))
+                    r.spawn((theme::skinned_button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command), GameOverButton::BackToMenu))
                         .with_child(text("Back to menu", FONT_LARGE, TEXT));
                     r.spawn((theme::button(Node { width: px(200), height: px(44), ..default() }, theme::BUTTON), GameOverButton::KeepWatching))
                         .with_child(text("Keep watching", FONT_LARGE, TEXT));
@@ -244,12 +249,13 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
                 }),
                 BackgroundColor(theme::PANEL_BG.with_alpha(1.0)),
                 BorderColor::all(theme::PANEL_BORDER),
+                SkinPanel::Panel,
             ))
             .with_children(|panel| {
                 panel.spawn(text("Leave the match?", 32.0, theme::HIGHLIGHT));
                 panel.spawn(text("The match goes on without you.", FONT_BODY, TEXT_DIM));
                 panel.spawn(Node { column_gap: px(16), margin: UiRect::top(px(8)), ..default() }).with_children(|r| {
-                    r.spawn((theme::button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37)), LeaveButton::Leave))
+                    r.spawn((theme::skinned_button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command), LeaveButton::Leave))
                         .with_child(text("Leave to menu", FONT_LARGE, TEXT));
                     r.spawn((theme::button(Node { width: px(200), height: px(44), ..default() }, theme::BUTTON), LeaveButton::Resume))
                         .with_child(text("Resume", FONT_LARGE, TEXT));
