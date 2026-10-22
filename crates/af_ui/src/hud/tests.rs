@@ -3,6 +3,7 @@
 //! states the way those plugins would.
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy};
+use af_core::ext::input::ShowPaths;
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use bevy::ecs::entity::EntityHashMap;
@@ -426,6 +427,28 @@ fn spectators_switch_players_and_get_no_card() {
     tap(&mut app, KeyCode::Tab);
     app.update();
     assert_eq!(app.world().resource::<HudView>().player, Some(PlayerId(1)));
+}
+
+#[test]
+fn the_paths_button_flips_the_toggle_and_shows_its_state() {
+    let mut app = hud_app();
+    // af_input owns it; without it the button does nothing.
+    click(&mut app, "Paths: off (P)");
+    app.init_resource::<ShowPaths>();
+    click(&mut app, "Paths: off (P)");
+    assert!(app.world().resource::<ShowPaths>().on);
+    app.update();
+    let shown = button(&mut app, "Paths: on (P)");
+    assert_ne!(app.world().get::<Node>(shown).unwrap().display, Display::None);
+    // P (af_input) flips it back; the label follows.
+    app.world_mut().resource_mut::<ShowPaths>().on = false;
+    app.update();
+    let t = texts(&mut app);
+    assert!(t.contains(&"Paths: off (P)".to_string()), "{t:?}");
+    // Spectators command no units.
+    app.insert_resource(LocalPlayer(None));
+    app.update();
+    assert_eq!(app.world().get::<Node>(shown).unwrap().display, Display::None);
 }
 
 #[test]

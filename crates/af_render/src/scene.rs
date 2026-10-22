@@ -8,6 +8,7 @@ use af_core::ext::render::FogTexture;
 use crate::fog::{FogOverlay, MemoryPool};
 use crate::ghost::GhostPool;
 use crate::overlay::RallyPool;
+use crate::paths::PathOverlay;
 use crate::statics::Remnants;
 use crate::terrain::TerrainState;
 
@@ -52,6 +53,7 @@ pub(crate) fn teardown_scene(
     mut fog: ResMut<FogOverlay>,
     mut memories: ResMut<MemoryPool>,
     mut remnants: ResMut<Remnants>,
+    mut paths: ResMut<PathOverlay>,
 ) {
     for e in &scene {
         commands.entity(e).try_despawn();
@@ -59,6 +61,7 @@ pub(crate) fn teardown_scene(
     terrain.reset();
     *ghosts = GhostPool::default();
     *rally = RallyPool::default();
+    *paths = PathOverlay::default();
     fog.reset();
     memories.reset();
     remnants.reset();

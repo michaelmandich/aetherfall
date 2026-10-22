@@ -2,7 +2,7 @@
 //! through `ButtonInput` / `CursorWorld` (and a fake window + camera for
 //! picking and drag selection).
 
-use af_core::ext::input::{ControlGroups, PlacementPreview, RtsCamera};
+use af_core::ext::input::{ControlGroups, PlacementPreview, RtsCamera, ShowPaths};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use af_input::{rig_transform, view_axes, RtsInputPlugin, FOV_DEG};
@@ -1216,6 +1216,33 @@ fn speed_keys_step_the_virtual_clock() {
         m.tap(KeyCode::NumpadAdd);
     }
     assert_eq!(m.app.world().resource::<Time<Virtual>>().relative_speed(), 8.0);
+}
+
+#[test]
+fn p_toggles_unit_paths_and_shift_shows_them_while_held() {
+    let mut m = Match::new(false);
+    let paths = |m: &Match| *m.app.world().resource::<ShowPaths>();
+    assert_eq!(paths(&m), ShowPaths::default(), "hidden to begin with");
+    m.tap(KeyCode::KeyP);
+    assert!(paths(&m).on && paths(&m).visible());
+    assert!(m.notices().iter().any(|t| t == "Unit paths shown (P)"));
+    m.tap_with(KeyCode::ControlLeft, KeyCode::KeyP);
+    assert!(paths(&m).on, "Ctrl+P is not P");
+    m.tap(KeyCode::KeyP);
+    assert!(!paths(&m).visible());
+    assert!(m.notices().iter().any(|t| t == "Unit paths hidden (P)"));
+    m.hold(KeyCode::ShiftRight);
+    m.step();
+    assert!(paths(&m).held && paths(&m).visible() && !paths(&m).on, "Shift peeks without toggling");
+    m.release(KeyCode::ShiftRight);
+    m.step();
+    assert!(!paths(&m).visible());
+    // A preference: the next match keeps it.
+    m.tap(KeyCode::KeyP);
+    m.app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Menu);
+    m.step();
+    m.step();
+    assert!(paths(&m).on, "kept after leaving the match");
 }
 
 #[test]

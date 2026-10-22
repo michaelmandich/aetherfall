@@ -109,3 +109,25 @@ impl PlacementPreview {
         !self.ghosts.is_empty() && self.ghosts.iter().all(|g| g.error.is_none())
     }
 }
+
+/// Whether af_render draws the routes of the local player's selected
+/// units: where each is walking and the orders it has queued (a selected
+/// patrolling unit's patrol loop is drawn either way). af_input
+/// initialises it, flips `on` with P and sets `held` each frame while
+/// Shift is down (queued orders are being given, as in StarCraft); af_ui's
+/// HUD button flips `on` too. A preference: it survives into the next
+/// match.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShowPaths {
+    /// The player's choice (P, or the HUD button).
+    pub on: bool,
+    /// Shift is held this frame.
+    pub held: bool,
+}
+
+impl ShowPaths {
+    /// Routes are drawn this frame.
+    pub fn visible(&self) -> bool {
+        self.on || self.held
+    }
+}

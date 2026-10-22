@@ -1,7 +1,7 @@
 //! The renderer driven headless: real plugin, real content, no GPU.
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy, team_bit};
-use af_core::ext::input::{PlacementGhost, PlacementPreview};
+use af_core::ext::input::{PlacementGhost, PlacementPreview, ShowPaths};
 use af_core::ext::render::{MAX_GROUND_OFFSET, terrain_ground};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
@@ -11,6 +11,7 @@ use af_render::entities::{BoxVisual, VisualSig};
 use af_render::fog::{FogMemory, MemoryPool};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
+use af_render::paths::{LegKind, PathOverlay};
 use af_render::scene::RenderScene;
 use af_render::terrain::{TerrainBox, terrain_top};
 use bevy::prelude::*;
@@ -504,4 +505,76 @@ fn rally_flags_on_enemy_units_show_what_the_team_saw() {
     app.world_mut().resource_mut::<FogOfWar>().enabled = false;
     run_ticks(app, 1);
     assert_eq!(flags(app), vec![Vec3::new(50.0, 0.0, 30.0)]);
+}
+
+/// Give a unit orders and a goal straight to `goal` (af_behavior and
+/// af_movement are absent: nothing changes them).
+fn send(app: &mut App, e: Entity, orders: &[Order], goal: Vec2) {
+    let mut unit = app.world_mut().entity_mut(e);
+    unit.insert((Orders { queue: orders.iter().copied().collect() }, MoveGoal::point(goal, 0.35), Selected));
+}
+
+/// The planned legs, as (points, kind).
+fn legs(app: &App) -> Vec<(Vec<Vec2>, LegKind)> {
+    let plan = &app.world().resource::<PathOverlay>().plan;
+    plan.legs.iter().map(|l| (plan.leg_points(l).to_vec(), l.kind)).collect()
+}
+
+#[test]
+fn routes_show_only_own_units_and_what_the_team_saw() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    // Team 0 sees the west half of the map (x < 32).
+    app.world_mut().insert_resource(fog_seeing((0..32).flat_map(|y| (0..16).map(move |x| (x, y)))));
+    let (me, enemy) = (w.own_unit, w.enemy_unit);
+    place(app, enemy, Vec2::new(30.0, 50.0), 0.0);
+    // Ours: a move, then an attack on the enemy queued behind it. Theirs,
+    // selected too (for its stats): a move of its own.
+    send(app, me, &[Order::Move { target: Vec2::new(20.0, 20.0) }, Order::Attack { target: enemy }], Vec2::new(20.0, 20.0));
+    send(app, enemy, &[Order::Move { target: Vec2::new(60.0, 60.0) }], Vec2::new(60.0, 60.0));
+    run_ticks(app, 1);
+    let mine = vec![(vec![Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0)], LegKind::Move), (vec![Vec2::new(20.0, 20.0), Vec2::new(30.0, 50.0)], LegKind::Attack)];
+    assert_eq!(legs(app), mine, "the enemy's route is never planned");
+    // It walks into the fog: the attack leg ends where it was last seen.
+    place(app, enemy, Vec2::new(50.0, 50.0), 0.0);
+    assert_eq!(legs(app), mine, "its moves in the fog stay hidden");
+    // Fog off: everything is known.
+    app.world_mut().resource_mut::<FogOfWar>().enabled = false;
+    run_ticks(app, 1);
+    assert_eq!(legs(app)[1].0, vec![Vec2::new(20.0, 20.0), Vec2::new(50.0, 50.0)]);
+    // Paths hidden: nothing (no patrol among them).
+    app.world_mut().resource_mut::<ShowPaths>().on = false;
+    run_ticks(app, 1);
+    let overlay = app.world().resource::<PathOverlay>();
+    assert!(overlay.plan.legs.is_empty() && overlay.plan.loops.is_empty());
+    // Shift held shows them meanwhile.
+    app.world_mut().resource_mut::<ShowPaths>().held = true;
+    run_ticks(app, 1);
+    assert_eq!(legs(app).len(), 2);
+}
+
+#[test]
+fn a_selected_patrol_always_shows_its_loop() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let (a, b, c) = (Vec2::new(10.0, 10.0), Vec2::new(20.0, 10.0), Vec2::new(20.0, 20.0));
+    // Walking from b to c (af_behavior points the goal at the leg's end).
+    send(app, w.own_unit, &[Order::Patrol { a, b }, Order::Patrol { a: b, b: c }], c);
+    send(app, w.enemy_unit, &[Order::Patrol { a: Vec2::new(50.0, 50.0), b: Vec2::new(40.0, 50.0) }], Vec2::new(40.0, 50.0));
+    run_ticks(app, 1);
+    let overlay = app.world().resource::<PathOverlay>();
+    assert!(overlay.plan.legs.is_empty(), "paths are off (no ShowPaths at all here)");
+    assert_eq!(overlay.plan.loops.len(), 1, "only our own patrol");
+    let route = &overlay.plan.loops[0];
+    assert_eq!(overlay.plan.loop_points(route), &[a, b, c]);
+    assert_eq!((route.active, route.walking), (true, Some(1)));
+    // Off fighting (its goal on a foe): the leg it was on stays lit.
+    app.world_mut().entity_mut(w.own_unit).insert(MoveGoal::entity(w.enemy_unit, Vec2::new(50.0, 50.0), 1.0));
+    run_ticks(app, 1);
+    assert_eq!(app.world().resource::<PathOverlay>().plan.loops[0].walking, Some(1));
+    // Deselected: gone.
+    app.world_mut().entity_mut(w.own_unit).remove::<Selected>();
+    run_ticks(app, 1);
+    assert!(app.world().resource::<PathOverlay>().plan.loops.is_empty());
 }

@@ -86,6 +86,32 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
 `CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
 
+### Unit routes
+
+* **Toggle:** `ShowPaths { on, held }` (`af_core::ext::input`): af_input
+  initialises it (never reset between matches: a preference), flips `on`
+  with P (with a notice) and sets `held` while Shift is down; af_ui's
+  "Paths" button under Menu flips `on` and shows it.
+* **Overlay** (`af_render::paths`, `RenderStep::Overlay`): `plan_paths`
+  turns the local player's own selected units' `Orders`, `PathState`,
+  `MoveGoal` and `AttackTarget` into polylines (`plan_route`, pure): the
+  current leg from the unit through `waypoints[next..]` to the live goal
+  (straight while `Pending`, for flyers and for a goal the waypoints are
+  not for yet; stopped with a cross where a partial path ends), then each
+  queued order chained on to its target, coloured by order. Entity
+  targets of other teams are placed where the local team believes they
+  are (the rally flags' `believed_rally_point`), a chase after one out of
+  sight is drawn straight, and enemy units' routes are never planned, so
+  nothing leaks through the fog. A selected unit whose current order is a
+  patrol always shows its loop, the leg it walks lit (read off
+  `MoveGoal.target`, kept while it fights). `draw_paths` draws it with
+  Bevy gizmos (registered only with `GizmoPlugin`, so headless apps plan
+  without drawing): a few pixels wide at any zoom, no entities (nothing is
+  inserted on units), terrain-following points on `Ground::surface`,
+  marching dashes and chevrons on real time (they run while paused), and
+  a faint always-on-top copy so routes behind buildings still read. At
+  most 64 units are drawn, those nearest the centre of the view.
+
 ## Visual models
 
 Units listed in the visual registry are drawn with animated glTF models,
