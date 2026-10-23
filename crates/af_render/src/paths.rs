@@ -72,10 +72,14 @@ const STEP: f32 = 1.0;
 const PIXEL_PER_DISTANCE: f32 = 0.00064;
 /// Gizmo line width (px).
 const LINE_PX: f32 = 3.0;
-/// Pull lines this far toward the camera in depth (see `GizmoConfig`), so
-/// a line over a step in the terrain is not cut by its edge, while units
-/// and buildings standing on it still hide it.
-const DEPTH_BIAS: f32 = -0.01;
+/// Pull lines toward the camera in depth (see `GizmoConfig`), so a line
+/// over a step in the terrain is not cut by its edge, while units and
+/// buildings standing on it still hide it. Bevy's line shader scales a
+/// negative bias exponentially: a line `d` metres away is drawn as deep as
+/// one at `d * (d / near)^bias`, so the pull grows with the distance
+/// (about 5 cm at 25 m, 16 cm at the start view's 66 m and 43 cm at
+/// 150 m with the RTS camera's 0.5 m near plane; tested below).
+const DEPTH_BIAS: f32 = -0.0005;
 /// Dashes of a queued leg: length and gap (px).
 const DASH_PX: f32 = 12.0;
 const GAP_PX: f32 = 9.0;
@@ -1247,6 +1251,24 @@ mod tests {
         let mut n = 0;
         dashes(&[p(0.0, 0.0), p(1.0, 0.0)], 0.0, 1.0, 0.0, |_, _| n += 1);
         assert_eq!(n, 0, "no period, no dashes");
+    }
+
+    /// How far (m) a gizmo depth `bias` (negative) pulls a line `d` metres
+    /// in front of a camera with its near plane at `near` toward it: Bevy's
+    /// lines.wgsl scales the reverse-Z depth `near / d` by `(d / near)^-bias`.
+    fn depth_pull(d: f32, near: f32, bias: f32) -> f32 {
+        d - d * (d / near).powf(bias)
+    }
+
+    #[test]
+    fn routes_are_pulled_toward_the_camera_only_a_little() {
+        // af_input's camera: near plane 0.5 m, 25 to 150 m from its focus.
+        for d in [25.0, 66.0, 100.0, 150.0] {
+            let pull = depth_pull(d, 0.5, DEPTH_BIAS);
+            assert!(pull > 0.03 && pull < 0.5, "{pull} m at {d} m: units standing on a route must still hide it");
+        }
+        // The x-ray pass draws at the near plane, over everything.
+        assert!((depth_pull(150.0, 0.5, -1.0) - 149.5).abs() < 1e-3);
     }
 
     #[test]

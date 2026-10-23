@@ -23,13 +23,15 @@
 //! * shift-queued orders are smaller and quicker and leave a dot (or, on
 //!   an entity, a faint hug) that lingers, so a chain of them reads.
 //!
-//! Colours are the order's (`OrderMark::color`, also the ping's). Markers
-//! are drawn over the fog overlay ([`Shade::Marker`]), so a click into
-//! unexplored black shows in full. Arrows, rings, flashes and dots grow
-//! with the camera distance so they read at any zoom ([`marker_size`]);
-//! frames and hugging rings keep the footprint's size and a readable line
-//! width. At most [`MAX_MARKERS`] play at once: a burst of clicks drops
-//! the oldest.
+//! Colours are the order's (`OrderMark::color`, also the ping's, and the
+//! routes' of [`crate::paths`]). Markers are drawn over the fog overlay
+//! ([`Shade::Marker`]), so a click into unexplored black shows in full;
+//! only a route's stroke crossing one shows over it (Bevy draws gizmos
+//! before every blended mesh, writing depth). Arrows, rings, flashes and
+//! dots grow with the camera distance so they read at any zoom
+//! ([`marker_size`]); frames and hugging rings keep the footprint's size
+//! and a readable line width. At most [`MAX_MARKERS`] play at once: a
+//! burst of clicks drops the oldest.
 //!
 //! **Placement slam.** When a foundation of the local player appears, a
 //! stamp ([`SLAM_SECS`]): its footprint flashes, a shockwave the shape of

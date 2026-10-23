@@ -177,7 +177,8 @@ colour. Its arrows come in along the screen's diagonals, each at the same
 angle to the camera's line of sight (so none is seen tail-on from the
 pitched camera), and its materials (`Shade::Marker`) sort after
 everything else blended, the fog overlay included: a click into fog or
-unexplored black shows in full. af_input and af_map also despawn leftover
+unexplored black shows in full (only a unit route's stroke, a gizmo,
+shows across one). af_input and af_map also despawn leftover
 pings when a match ends.
 A foundation of the local player (`Added<UnderConstruction>`, seen in an
 `Update` system, never inside the sim tick) gets a placement slam, a
@@ -220,13 +221,19 @@ top-level `RenderScene` effect.
   with `GizmoPlugin`, so headless apps plan without drawing): a few
   pixels wide at any zoom, no entities (nothing is inserted on units),
   terrain-following points on `Ground::surface`, marching dashes and
-  chevrons on real time (they run while paused), and a faint
-  always-on-top copy so routes behind buildings still read. Only the
+  chevrons on real time (they run while paused), lifted off the ground
+  by a small depth bias (`DEPTH_BIAS`: Bevy scales it with the distance,
+  5 to 43 cm over the zoom range, so units standing on a route still
+  hide it), and a faint always-on-top copy so routes behind buildings
+  still read. Gizmos draw before every blended mesh and write depth (the
+  copy at the near plane), so a route's stroke shows over the fog
+  overlay and over a click marker it crosses. Only the
   stretches on screen are cut into pieces (`View`, the camera's view of
   the ground, a little widened), with at most so many dashes and
   chevrons to a stretch, so the cost follows what is on screen, not how
-  long the routes are. At most `MAX_ROUTES` (64) units are drawn, those
-  nearest the centre of the view; `RoutesShown` (`af_core::ext::render`)
+  long the routes are. At most `MAX_ROUTES` (64) units with a route are
+  drawn (an idle or holding unit has none), those nearest the centre of
+  the view; `RoutesShown` (`af_core::ext::render`)
   tells af_ui, whose Paths button then reads "64 of N routes shown".
 
 ## Visual models
