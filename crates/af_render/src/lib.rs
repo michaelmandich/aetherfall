@@ -18,7 +18,7 @@
 //!
 //! | step | what |
 //! |---|---|
-//! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/click markers; a slam for each new own foundation; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
+//! | `Build` | terrain once per map; how the local team sees each building (live, or as last seen in the fog); visuals for new units/buildings/nodes/FX/click markers; a slam for each new own foundation; the routes' x-ray camera for a new RTS camera; rebuilds on upgrade, completed construction or a model that finished loading; rigging of spawned model scenes |
 //! | `Animate` | tick interpolation (`Prev* -> *` by `Time<Fixed>::overstep_fraction`), weapon animation, shields, cargo, flyer shadows, foundations (boxes or models rising), node shrink, FX, placement slams; model clips and props, corpses; felled trees and stumps |
 //! | `Overlay` | health/shield/progress bars, selection outlines, rally markers, the selected units' routes and patrol loops ([`paths`]), placement ghosts, click markers (after the units moved, so a marker on a unit follows it) |
 //! | `Fog` | hide what the local team cannot see; the fog overlay texture; remembered dead buildings and nodes |
@@ -29,7 +29,9 @@
 //! placement slams, corpses, felled trees, stumps) carry
 //! [`scene::RenderScene`] and are despawned on leaving `Playing`; a click
 //! marker's parts are children of its `ClickPing`, which af_input and
-//! af_map despawn at the end of a match.
+//! af_map despawn at the end of a match, and the routes' x-ray camera
+//! ([`paths::XrayCamera`]) is a child of af_input's RTS camera, despawned
+//! with it.
 
 pub mod assets;
 pub mod entities;
@@ -125,6 +127,7 @@ impl Plugin for BoxRenderPlugin {
                     fx::attach_fx,
                     markers::attach_markers,
                     markers::spawn_slams,
+                    paths::attach_xray_camera.run_if(paths::gizmos_ready),
                 )
                     .in_set(RenderStep::Build),
             )
@@ -145,7 +148,7 @@ impl Plugin for BoxRenderPlugin {
             .add_systems(
                 Update,
                 (
-                    (overlay::update_bars, overlay::update_outlines, overlay::update_rally, (paths::plan_paths, paths::draw_paths.run_if(paths::gizmos_ready)).chain())
+                    (overlay::update_bars, overlay::update_outlines, overlay::update_rally, (paths::plan_paths, (paths::draw_paths, paths::wake_xray_camera).run_if(paths::gizmos_ready)).chain())
                         .run_if(resource_exists::<Players>),
                     ghost::update_ghosts.run_if(resource_exists::<PlacementPreview>),
                     markers::animate_markers,

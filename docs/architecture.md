@@ -238,10 +238,19 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
   chevrons on real time (they run while paused), lifted off the ground
   by a small depth bias (`DEPTH_BIAS`: Bevy scales it with the distance,
   5 to 43 cm over the zoom range, so units standing on a route still
-  hide it), and a faint always-on-top copy so routes behind buildings
-  still read. Gizmos draw before every blended mesh and write depth (the
-  copy at the near plane), so a route's stroke shows over the fog
-  overlay and over a click marker it crosses. Only the
+  hide it). These lit strokes draw before every blended mesh and write
+  depth, so a route shows over the fog overlay and over a click marker
+  it crosses. A faint copy over everything (the x-ray pass) keeps routes
+  behind buildings readable; it is drawn by a camera of its own
+  (`paths::XrayCamera`: a child of the RTS camera that sees only the
+  x-ray gizmos' render layer, rendered after it onto the window with a
+  depth buffer of its own). In the main view its near-plane depth hid
+  the lit strokes whenever Bevy queued it first, and that order shifts
+  as blended meshes come and go. The camera is active only while routes
+  are planned (`wake_xray_camera`: a camera costs close to a millisecond
+  a frame in a big match even with nothing to draw); while it is, it is
+  the last camera, so Bevy draws the UI with it, over the strokes, and
+  asleep it sorts first and the UI is the RTS camera's. Only the
   stretches on screen are cut into pieces (`View`, the camera's view of
   the ground, a little widened), with at most so many dashes and
   chevrons to a stretch, so the cost follows what is on screen, not how
