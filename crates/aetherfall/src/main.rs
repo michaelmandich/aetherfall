@@ -93,6 +93,8 @@
 //!                           separated by `;`, where an action is
 //!                             key <combo>        Q, 1, ctrl+1, shift+R, Esc, Space, F1...
 //!                             move <x>,<y>       the stand-in mouse (logical px)
+//!                             aim <x>,<z>        the stand-in mouse onto that
+//!                                                ground point (world metres)
 //!                             click [left|right] [shift|ctrl]   in the world
 //!                             down/up [left|right]              (drags)
 //!                             press <label>      a HUD button, as --press

@@ -4,6 +4,10 @@
 //! The 15 slot buttons are permanent. Their actions are re-laid out only
 //! when the card's context changes (selection, page, age, researched
 //! techs); availability, queue counts and highlights refresh every frame.
+//! In the skin a slot wears its action's family ([`skin::card_skin`]),
+//! its hotkey and queued count sit on the frame's two corner plaques, and
+//! a press (mouse or hotkey) plays its [`fx`] feedback; a press that turns
+//! the card's page plays on the new page's slots instead.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -15,7 +19,9 @@ use bevy::text::LineHeight;
 use super::overlays::GameOverState;
 use super::{HudSet, SelectionInfo};
 use crate::card::{self, card_for, Card, CardAction, CardMenu, CardSelection, COLS, HOTKEY_LABELS, ROWS, SLOTS};
-use crate::theme::{self, rgb, set_color, set_display, set_text, text, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
+use crate::fx::{self, PressFx, PressKind};
+use crate::skin::{self, ButtonSkin, SkinButton, SkinLook, SkinPanel, SkinPlaques, Skinned, UiSkin, Usable};
+use crate::theme::{self, rgb, set_color, set_display, set_text, text, FONT_LARGE, FONT_SMALL, GLYPH_ADVANCE, TEXT, TEXT_DIM};
 use crate::tooltip::{self, Tooltip};
 
 const SLOT_W: f32 = 84.0;
@@ -32,6 +38,18 @@ const LABEL_WIDTH: f32 = SLOT_W - 8.0;
 const LABEL_SIZES: [f32; 4] = [FONT_SMALL, 12.0, 11.0, 10.0];
 /// Lines of label that fit under a slot's hotkey row.
 const LABEL_LINES: usize = 3;
+/// Centres of the slot frame's hotkey and queued-count plaques (logical
+/// px from the slot's top-left corner: the art's 2x positions halved).
+const HOTKEY_PLAQUE: Vec2 = Vec2::new(10.0, 9.75);
+const COUNT_PLAQUE: Vec2 = Vec2::new(74.0, 9.75);
+/// Bevy's default line height, as a multiple of the font size.
+const LINE_HEIGHT: f32 = 1.2;
+/// Size of a queued count of 10 or more: two digits at `FONT_SMALL` are
+/// wider than the plaque and run onto the frame's band; at this size they
+/// fit its well.
+const COUNT_SMALL: f32 = 11.0;
+/// Hotkeys and counts in the plaques: light and warm in the dark wells.
+const PLAQUE_TEXT: Color = Color::srgb(0.95, 0.88, 0.7);
 
 /// What the card shows and which page is open.
 #[derive(Resource, Default)]
@@ -83,10 +101,36 @@ struct CostChipSwatch(usize);
 #[derive(Component, Clone, Copy)]
 struct CostChipText(usize);
 
+/// Presses of the card's slots this frame (mouse or hotkey), and how each
+/// went: recorded by [`card_input`], played by [`play_card_presses`].
+#[derive(Resource, Default)]
+pub(crate) struct CardPresses {
+    slots: [Option<PressKind>; SLOTS],
+    /// A press turned the page (a build page, More, Back). The pressed
+    /// slot is laid out again the next frame, gone or holding another
+    /// action, so [`rebuild_card`] plays a [`PressKind::Turn`] on the new
+    /// page's slots instead.
+    turned: bool,
+}
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CardState>()
         .init_resource::<CardPage>()
-        .add_systems(Update, (rebuild_card, card_input, refresh_card, update_tooltip).chain().in_set(HudSet::Panels));
+        .init_resource::<CardPresses>()
+        .add_systems(Update, (rebuild_card, card_input, refresh_card, play_card_presses, update_tooltip).chain().in_set(HudSet::Panels));
+}
+
+/// A text box `chars` characters wide of `size` px text, centred on a
+/// plaque (positions are in the slot's padding box, inside its 1 px border).
+fn on_plaque(plaque: Vec2, chars: usize, size: f32) -> Node {
+    let width = chars as f32 * size * GLYPH_ADVANCE;
+    let line = size * LINE_HEIGHT;
+    Node { position_type: PositionType::Absolute, left: px(plaque.x - 1.0 - width / 2.0), top: px(plaque.y - 1.0 - line / 2.0), ..default() }
+}
+
+/// The size a queued count is drawn at, so it stays on its plaque.
+fn count_size(n: u32) -> f32 {
+    if n >= 10 { COUNT_SMALL } else { FONT_SMALL }
 }
 
 pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
@@ -103,6 +147,7 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                 ..default()
             }),
             theme::panel_colors(),
+            SkinPanel::Panel,
             Visibility::Hidden,
         ))
         .with_children(|grid| {
@@ -110,24 +155,28 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                 grid.spawn((
                     Button,
                     CardSlot(i),
+                    // Not clipped: labels are fitted to the button, and a
+                    // press scales it past its edges.
                     Node {
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         padding: UiRect::new(px(3), px(3), px(13), px(2)),
                         border: UiRect::all(px(1)),
                         border_radius: BorderRadius::all(px(4)),
-                        overflow: Overflow::clip(),
                         ..default()
                     },
                     BackgroundColor(theme::BUTTON),
                     BorderColor::all(theme::PANEL_BORDER),
                     Visibility::Hidden,
+                    (SkinButton(ButtonSkin::Plain), SkinPlaques, SkinLook::default(), PressFx::card_slot()),
                 ))
                 .with_children(|b| {
-                    b.spawn((text(*hotkey, FONT_SMALL, TEXT_DIM), Node { position_type: PositionType::Absolute, left: px(4), top: px(0), ..default() }));
-                    b.spawn((text("", FONT_SMALL, theme::HIGHLIGHT), Node { position_type: PositionType::Absolute, right: px(4), top: px(0), ..default() }, SlotCount(i)));
+                    b.spawn((text(*hotkey, FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(HOTKEY_PLAQUE, 1, FONT_SMALL)));
+                    b.spawn((text("", FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(COUNT_PLAQUE, 1, FONT_SMALL), SlotCount(i)));
                     b.spawn((
                         text("", FONT_SMALL, TEXT),
+                        // Crisp on the lighter woods (golden oak, pale ash).
+                        theme::text_shadow(),
                         TextLayout::justify(Justify::Center),
                         // Three lines fit under the hotkey row. The lines are
                         // broken by `rebuild_card` (see `theme::fit_label`).
@@ -153,6 +202,7 @@ pub(super) fn spawn_tooltip(root: &mut ChildSpawnerCommands) {
             ..default()
         }),
         theme::panel_colors(),
+        SkinPanel::Panel,
         Pickable::IGNORE,
     ))
     .with_children(|tip| {
@@ -202,7 +252,10 @@ fn rebuild_card(
     mut panel: Query<&mut Visibility, (With<CardPanel>, Without<CardSlot>)>,
     mut slots: Query<(&CardSlot, &mut Visibility), Without<CardPanel>>,
     mut labels: Query<(&SlotLabel, &mut Text, &mut TextFont)>,
+    mut presses: ResMut<CardPresses>,
 ) {
+    // Asked for by last frame's press, so this frame's layout is the new page.
+    let turned = std::mem::take(&mut presses.turned);
     if sel.card != card.selection {
         card.selection = sel.card;
         card.menu = CardMenu::Root;
@@ -233,6 +286,11 @@ fn rebuild_card(
     }
     for (slot, mut v) in &mut slots {
         v.set_if_neq(if card.slots[slot.0].is_some() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    if turned {
+        for (press, action) in presses.slots.iter_mut().zip(card.slots) {
+            *press = action.map(|_| PressKind::Turn);
+        }
     }
     let pages = player.map_or(1, |p| card::pages_for(&data, p, &sel.card, card.menu));
     for (label, mut t, mut font) in &mut labels {
@@ -277,6 +335,7 @@ fn card_input(
     mut mode: ResMut<InputMode>,
     mut inbox: ResMut<CommandInbox>,
     mut notices: ResMut<Notices>,
+    mut presses: ResMut<CardPresses>,
 ) {
     let Some(player) = local_state(&local, players.as_deref()) else { return };
     let mut hit = [false; SLOTS];
@@ -304,7 +363,12 @@ fn card_input(
         if let Err(reason) = card::action_state(&data, player, sel.card.building, action) {
             let why = tooltip::reason_text(&data, player, sel.card.building, action, reason);
             notices.push(Some(player.id), NoticeKind::Warning, why, None, press.now);
+            presses.slots[slot] = Some(PressKind::Refused);
             continue;
+        }
+        match fx::press_kind(action) {
+            PressKind::Turn => presses.turned = true,
+            kind => presses.slots[slot] = Some(kind),
         }
         execute(action, &press, &mut card, &mut mode, &mut inbox, &queues);
     }
@@ -380,9 +444,9 @@ fn refresh_card(
     mode: Res<InputMode>,
     queues: Query<&ProductionQueue>,
     stances: Query<&Stance>,
-    mut slots: Query<(&CardSlot, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
+    mut slots: Query<(&CardSlot, &Interaction, &mut BackgroundColor, &mut BorderColor, &mut SkinButton, &mut SkinLook, Has<Skinned>)>,
     mut labels: Query<(&SlotLabel, &mut TextColor), Without<SlotCount>>,
-    mut counts: Query<(&SlotCount, &mut Text), Without<SlotLabel>>,
+    mut counts: Query<(&SlotCount, &mut Text, &mut TextFont, &mut Node), Without<SlotLabel>>,
 ) {
     let Some(player) = local_state(&local, players.as_deref()) else { return };
     let mut stance = sel.own_units.first().and_then(|e| stances.get(*e).ok()).copied();
@@ -404,13 +468,23 @@ fn refresh_card(
             _ => 0,
         };
     }
-    for (slot, interaction, mut bg, mut border) in &mut slots {
+    for (slot, interaction, mut bg, mut border, mut family, mut skin_look, skinned) in &mut slots {
         let look = looks[slot.0];
-        let Some(state) = look.state else { continue };
-        let base = match (state, card.slots[slot.0]) {
-            (Ok(()), Some(a)) => theme::group_color(a.group()),
-            _ => theme::BUTTON_DISABLED,
+        let (Some(state), Some(action)) = (look.state, card.slots[slot.0]) else { continue };
+        family.set_if_neq(SkinButton(skin::card_skin(action, card.menu, |b| card::build_category(&data, player.faction, b))));
+        let usable = match state {
+            Ok(()) => Usable::Yes,
+            Err(r) if r.is_soft() => Usable::Soon,
+            Err(_) => Usable::No,
         };
+        // The selection's stance glows steadily; an armed button pulses.
+        let accent = matches!(action, CardAction::Stance(_)).then_some(theme::HIGHLIGHT);
+        skin_look.set_if_neq(SkinLook { usable, active: look.active, accent });
+        if skinned {
+            // The skin draws it (`skin::skin_looks`).
+            continue;
+        }
+        let base = if state.is_ok() { theme::group_color(action.group()) } else { theme::BUTTON_DISABLED };
         bg.set_if_neq(BackgroundColor(theme::shade(base, *interaction)));
         border.set_if_neq(BorderColor::all(if look.active { theme::HIGHLIGHT } else { theme::PANEL_BORDER }));
     }
@@ -422,11 +496,58 @@ fn refresh_card(
         };
         set_color(&mut color, c);
     }
-    for (count, mut t) in &mut counts {
+    for (count, mut t, mut font, mut node) in &mut counts {
         let n = looks[count.0].count;
         let s = if n > 0 { n.to_string() } else { String::new() };
         set_text(&mut t, &s);
+        // Centred on its plaque however many digits it has, two or more
+        // drawn smaller so they stay on it.
+        let size = count_size(n);
+        if font.font_size != FontSize::Px(size) {
+            font.font_size = FontSize::Px(size);
+        }
+        let at = on_plaque(COUNT_PLAQUE, s.len().max(1), size);
+        if (node.left, node.top) != (at.left, at.top) {
+            (node.left, node.top) = (at.left, at.top);
+        }
     }
+}
+
+/// Plays this frame's presses on their slots: the squash or shake and the
+/// flash, and for a full press a burst of light from the slot's centre
+/// (when the skin is in, and while there is room for more particles); a
+/// page turn ripples across the card a column at a time.
+fn play_card_presses(
+    mut commands: Commands,
+    mut presses: ResMut<CardPresses>,
+    time: Res<Time<Real>>,
+    skin: Option<Res<UiSkin>>,
+    mut slots: Query<(&CardSlot, &mut PressFx, &UiGlobalTransform, &ComputedNode)>,
+    particles: Query<(), With<fx::Particle>>,
+    mut bursts: Local<u32>,
+) {
+    if presses.slots.iter().all(Option::is_none) {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let skin = skin.filter(|s| s.ready());
+    let mut live = particles.iter().count();
+    for (slot, mut press, at, node) in &mut slots {
+        let Some(kind) = presses.slots[slot.0].take() else { continue };
+        let start = if kind == PressKind::Turn { fx::turn_start(now, slot.0 % COLS) } else { now };
+        press.start(kind, start);
+        if let Some(skin) = skin.as_deref()
+            && kind == PressKind::Full
+            && live < fx::MAX_PARTICLES
+        {
+            let sparks = fx::SPARKS.min(fx::MAX_PARTICLES - live - 1);
+            let scale = node.inverse_scale_factor();
+            fx::spawn_burst(&mut commands, skin, at.translation * scale, node.size() * scale, now, *bursts, sparks);
+            *bursts = bursts.wrapping_add(1);
+            live += sparks + 1;
+        }
+    }
+    presses.slots = [None; SLOTS];
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]

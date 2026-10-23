@@ -1,16 +1,18 @@
 //! The renderer driven headless: real plugin, real content, no GPU.
 
 use af_core::ext::fog::{BuildingSighting, FogGhost, FogGhosts, LastSeen, SeenBy, team_bit};
-use af_core::ext::input::{PlacementGhost, PlacementPreview};
-use af_core::ext::render::{FogTexture, MAX_GROUND_OFFSET, MAX_TERRAIN_HEIGHT, TerrainSurface, WATER_LEVEL, ground_height, terrain_ground};
+use af_core::ext::input::{ClickMark, OrderMark, PlacementGhost, PlacementPreview, ShowPaths};
+use af_core::ext::render::{FogTexture, MAX_GROUND_OFFSET, MAX_TERRAIN_HEIGHT, RoutesShown, TerrainSurface, WATER_LEVEL, ground_height, terrain_ground};
 use af_core::prelude::*;
 use af_core::testing::{flat_world, run_ticks, sim_app, test_data, with_commands};
 use af_render::BoxRenderPlugin;
 use af_render::assets::BoxAssets;
 use af_render::entities::{BoxVisual, VisualSig};
 use af_render::fog::{FogMemory, MemoryPool};
+use af_render::markers::{MAX_MARKERS, Marker, SLAM_SECS, Slam};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
+use af_render::paths::{LegKind, MAX_ROUTES, PathOverlay};
 use af_render::scene::RenderScene;
 use af_render::terrain::{TerrainChunk, TerrainState};
 use bevy::prelude::*;
@@ -243,7 +245,7 @@ fn bars_outlines_pings_and_effects() {
     assert!(app.world().get::<BarParts>(w.enemy_unit).is_none(), "healthy, unselected: none");
     assert!(app.world().get::<OutlineParts>(w.own_unit).is_some());
     assert!(app.world().get::<Mesh3d>(fx).is_some(), "effects get a mesh");
-    assert!(app.world().get::<Mesh3d>(ping).is_some());
+    assert!(app.world().get::<Marker>(ping).is_some(), "a bare ping is drawn as a point marker");
     // 0.2 s at 1/30 s per update.
     run_ticks(app, 8);
     assert!(app.world().get_entity(ping).is_err(), "ping expired");
@@ -262,12 +264,141 @@ fn materials_are_cached_not_created_per_frame() {
     let app = &mut w.app;
     app.world_mut().entity_mut(w.own_unit).insert(Selected);
     app.world_mut().get_mut::<Health>(w.own_unit).unwrap().hp *= 0.5;
-    run_ticks(app, 3);
+    // Past the slam of the foundation placed at the start: a fading effect
+    // makes each opacity's material the first time it is seen.
+    run_ticks(app, (SLAM_SECS * 30.0) as u32 + 3);
     let before = app.world().resource::<BoxAssets>().material_count();
     let materials_before = app.world().resource::<Assets<StandardMaterial>>().len();
     run_ticks(app, 20);
     assert_eq!(app.world().resource::<BoxAssets>().material_count(), before);
     assert_eq!(app.world().resource::<Assets<StandardMaterial>>().len(), materials_before);
+}
+
+#[test]
+fn markers_and_slams_reuse_their_materials() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let (tree, enemy) = (w.tree, w.enemy_unit);
+    let barracks = test_data().building_id("barracks").unwrap();
+    // Markers of every shape and a slam, played to the end.
+    let play = |app: &mut App, at: Vec2| {
+        app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Patrol, None, true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(tree), true).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Attack, Some(enemy), false).ping(at));
+        app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: barracks, facing: 0.0 }, None, false).ping(at));
+        with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, at, 0.0, false));
+        run_ticks(app, (SLAM_SECS.max(ClickMark::QUEUED_SECS) * 30.0) as u32 + 3);
+    };
+    let count = |app: &App| (app.world().resource::<BoxAssets>().material_count(), app.world().resource::<Assets<StandardMaterial>>().len());
+    play(app, Vec2::new(40.0, 20.0));
+    let first = count(app);
+    // The same again elsewhere: every fade step's material already exists.
+    play(app, Vec2::new(40.0, 45.0));
+    assert_eq!(count(app), first);
+    let playing = app.world_mut().query_filtered::<(), Or<(With<Marker>, With<Slam>)>>().iter(app.world()).count();
+    assert_eq!(playing, 0, "all played out");
+}
+
+/// The parts of a click marker (its ping's children).
+fn marker_parts(app: &App, ping: Entity) -> Vec<Entity> {
+    app.world().get::<Children>(ping).map(|c| c.iter().collect()).unwrap_or_default()
+}
+
+/// Where a ping's marker is drawn.
+fn marker_at(app: &App, ping: Entity) -> Vec3 {
+    app.world().get::<Transform>(ping).expect("the marker is placed").translation
+}
+
+#[test]
+fn click_markers_dive_onto_points_and_expire() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let spot = Vec2::new(5.0, 5.0);
+    let ping = app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(spot)).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, ping).len(), 4 + 4 + 2, "four arrows, their shadows, the ring and the flash");
+    let at = marker_at(app, ping);
+    assert_eq!(at.xz(), spot);
+    let highest = |app: &App| marker_parts(app, ping).iter().map(|e| app.world().get::<Transform>(*e).unwrap().translation.y).fold(f32::MIN, f32::max);
+    let start = highest(app);
+    assert!(start > 1.0, "the arrows start high above the spot: {start}");
+    run_ticks(app, 6);
+    assert!(highest(app) < start - 0.3, "and come down");
+    // 0.75 s at 1/30 s per update: gone with its parts.
+    let parts = marker_parts(app, ping);
+    run_ticks(app, 20);
+    assert!(app.world().get_entity(ping).is_err(), "expired");
+    assert!(parts.iter().all(|p| app.world().get_entity(*p).is_err()), "its parts went with it");
+
+    // Queued: a lingering dot too. Placements only flash their footprint.
+    let queued = app.world_mut().spawn(ClickMark::new(OrderMark::AttackMove, None, true).ping(spot)).id();
+    let house = test_data().building_id("house").unwrap();
+    let placed = app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: house, facing: 0.0 }, None, false).ping(Vec2::new(40.0, 40.0))).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, queued).len(), 4 + 4 + 3);
+    assert_eq!(marker_parts(app, placed).len(), 4, "the footprint's frame");
+
+    // A burst of clicks keeps only the newest markers.
+    for i in 0..MAX_MARKERS + 6 {
+        app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(Vec2::new(10.0 + i as f32, 20.0)));
+        run_ticks(app, 1);
+    }
+    let alive = app.world_mut().query_filtered::<(), With<Marker>>().iter(app.world()).count();
+    assert!(alive <= MAX_MARKERS, "{alive} markers");
+}
+
+#[test]
+fn click_markers_hug_and_follow_their_target() {
+    let mut w = setup();
+    let app = &mut w.app;
+    // An attack on the enemy unit: arrows onto a ring that follows it.
+    let enemy_at = Vec2::new(50.0, 50.0);
+    let ping = app.world_mut().spawn(ClickMark::new(OrderMark::Attack, Some(w.enemy_unit), false).ping(enemy_at)).id();
+    // Gathering the tree: a frame around it.
+    let tree_at = app.world().get::<Position>(w.tree).unwrap().0;
+    let gather = app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(w.tree), false).ping(tree_at + Vec2::splat(0.2))).id();
+    run_ticks(app, 1);
+    assert_eq!(marker_parts(app, ping).len(), 4 + 4 + 1, "arrows, their shadows and the hugging ring");
+    assert_eq!(marker_parts(app, gather).len(), 4 + 4 + 4, "arrows, their shadows and the frame");
+    assert_eq!(marker_at(app, gather).xz(), tree_at, "centred on the tree, not the click");
+    place(app, w.enemy_unit, Vec2::new(53.0, 50.0), 0.0);
+    assert_eq!(marker_at(app, ping).xz(), Vec2::new(53.0, 50.0), "follows the unit");
+    // Out of sight in the fog: it stays where the unit was last seen.
+    app.world_mut().insert_resource(fog_seeing([]));
+    run_ticks(app, 1);
+    place(app, w.enemy_unit, Vec2::new(56.0, 50.0), 0.0);
+    assert_eq!(marker_at(app, ping).xz(), Vec2::new(53.0, 50.0), "does not track it through the fog");
+}
+
+#[test]
+fn own_foundations_slam_down() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let slams = |app: &mut App| app.world_mut().query::<(&Slam, &Children)>().iter(app.world()).map(|(_, c)| c.len()).collect::<Vec<_>>();
+    let start = slams(app);
+    assert_eq!(start.len(), 1, "the own foundation placed at the start");
+    assert!(start[0] >= 4 + 8 + 4, "a shockwave, dust and chips: {start:?}");
+    let barracks = test_data().building_id("barracks").unwrap();
+    // Other players' foundations and finished buildings do not slam.
+    with_commands(app, |c, d, p| {
+        spawn_building(c, d, p.get(PlayerId(1)), barracks, Vec2::new(45.0, 45.0), 0.0, false);
+        spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(45.0, 20.0), 0.0, true);
+    });
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1);
+    run_ticks(app, (SLAM_SECS * 30.0) as u32);
+    assert!(slams(app).is_empty(), "played out");
+    with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(30.0, 48.0), 0.0, false));
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1, "a new own foundation");
+    let mut roots = app.world_mut().query_filtered::<&Transform, With<Slam>>();
+    assert_eq!(roots.single(app.world()).unwrap().translation.xz(), Vec2::new(30.0, 48.0));
+    // Spectators see no slams.
+    app.world_mut().insert_resource(LocalPlayer(None));
+    with_commands(app, |c, d, p| spawn_building(c, d, p.get(PlayerId(0)), barracks, Vec2::new(14.0, 48.0), 0.0, false));
+    run_ticks(app, 1);
+    assert_eq!(slams(app).len(), 1);
 }
 
 #[test]
@@ -556,7 +687,8 @@ fn markers_lie_on_water_and_mountains_and_the_land_grows_props() {
     let data = test_data();
     assert!(ground_height(&data, app.world().resource::<Nav>(), Vec2::new(8.5, 30.0)) < WATER_LEVEL, "units wade below it");
 
-    // Pings lie on the water surface and on the rock.
+    // Click markers (pings) lie on the water surface and on the rock, the
+    // markers' lift (`markers::LIFT`, 5 cm) above them.
     let pings: Vec<Entity> = [Vec2::new(8.5, 30.0), Vec2::new(48.0, 32.0), Vec2::new(30.0, 30.0)]
         .into_iter()
         .map(|pos| app.world_mut().spawn(ClickPing { pos, time_left: 1.0, color: [1.0; 3] }).id())
@@ -565,9 +697,9 @@ fn markers_lie_on_water_and_mountains_and_the_land_grows_props() {
     let plane = with_commands(app, |c, d, p| spawn_unit(c, d, p.get(PlayerId(0)), flyer, Vec2::new(48.0, 32.0), 0.0));
     run_ticks(app, 2);
     let y = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation.y;
-    assert!((y(app, pings[0]) - (WATER_LEVEL + 0.08)).abs() < 1e-4);
-    assert!((y(app, pings[1]) - (peak + 0.08)).abs() < 1e-4);
-    assert!((y(app, pings[2]) - 0.08).abs() < 1e-4);
+    assert!((y(app, pings[0]) - (WATER_LEVEL + 0.05)).abs() < 1e-4);
+    assert!((y(app, pings[1]) - (peak + 0.05)).abs() < 1e-4);
+    assert!((y(app, pings[2]) - 0.05).abs() < 1e-4);
     let shadow = visual(app, plane).shadow.expect("flyers cast a ground shadow");
     let local = app.world().get::<Transform>(shadow).unwrap().translation.y;
     assert!((y(app, plane) + local - (peak + 0.04)).abs() < 1e-4, "the flyer's shadow lies on the mountain");
@@ -587,4 +719,156 @@ fn the_fog_texture_is_kept_for_players_only() {
     app.world_mut().insert_resource(LocalPlayer(None));
     run_ticks(app, 2);
     assert!(app.world().get_resource::<FogTexture>().is_none(), "spectators see everything");
+}
+
+/// Give a unit orders and a goal straight to `goal` (af_behavior and
+/// af_movement are absent: nothing changes them).
+fn send(app: &mut App, e: Entity, orders: &[Order], goal: Vec2) {
+    let mut unit = app.world_mut().entity_mut(e);
+    unit.insert((Orders { queue: orders.iter().copied().collect() }, MoveGoal::point(goal, 0.35), Selected));
+}
+
+/// The planned legs, as (points, kind).
+fn legs(app: &App) -> Vec<(Vec<Vec2>, LegKind)> {
+    let plan = &app.world().resource::<PathOverlay>().plan;
+    plan.legs.iter().map(|l| (plan.leg_points(l).to_vec(), l.kind)).collect()
+}
+
+#[test]
+fn routes_show_only_own_units_and_what_the_team_saw() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    // Team 0 sees the west half of the map (x < 32).
+    app.world_mut().insert_resource(fog_seeing((0..32).flat_map(|y| (0..16).map(move |x| (x, y)))));
+    let (me, enemy) = (w.own_unit, w.enemy_unit);
+    place(app, enemy, Vec2::new(30.0, 50.0), 0.0);
+    // Ours: a move, then an attack on the enemy queued behind it. Theirs,
+    // selected too (for its stats): a move of its own.
+    send(app, me, &[Order::Move { target: Vec2::new(20.0, 20.0) }, Order::Attack { target: enemy }], Vec2::new(20.0, 20.0));
+    send(app, enemy, &[Order::Move { target: Vec2::new(60.0, 60.0) }], Vec2::new(60.0, 60.0));
+    run_ticks(app, 1);
+    let mine = vec![(vec![Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0)], LegKind::Move), (vec![Vec2::new(20.0, 20.0), Vec2::new(30.0, 50.0)], LegKind::Attack)];
+    assert_eq!(legs(app), mine, "the enemy's route is never planned");
+    // It walks into the fog: the attack leg ends where it was last seen.
+    place(app, enemy, Vec2::new(50.0, 50.0), 0.0);
+    assert_eq!(legs(app), mine, "its moves in the fog stay hidden");
+    // Fog off: everything is known.
+    app.world_mut().resource_mut::<FogOfWar>().enabled = false;
+    run_ticks(app, 1);
+    assert_eq!(legs(app)[1].0, vec![Vec2::new(20.0, 20.0), Vec2::new(50.0, 50.0)]);
+    // Paths hidden: nothing (no patrol among them).
+    app.world_mut().resource_mut::<ShowPaths>().on = false;
+    run_ticks(app, 1);
+    let overlay = app.world().resource::<PathOverlay>();
+    assert!(overlay.plan.legs.is_empty() && overlay.plan.loops.is_empty());
+    // Shift held shows them meanwhile.
+    app.world_mut().resource_mut::<ShowPaths>().held = true;
+    run_ticks(app, 1);
+    assert_eq!(legs(app).len(), 2);
+}
+
+#[test]
+fn a_selected_patrol_always_shows_its_loop() {
+    let mut w = setup();
+    let app = &mut w.app;
+    let (a, b, c) = (Vec2::new(10.0, 10.0), Vec2::new(20.0, 10.0), Vec2::new(20.0, 20.0));
+    // Walking from b to c (af_behavior points the goal at the leg's end).
+    send(app, w.own_unit, &[Order::Patrol { a, b }, Order::Patrol { a: b, b: c }], c);
+    send(app, w.enemy_unit, &[Order::Patrol { a: Vec2::new(50.0, 50.0), b: Vec2::new(40.0, 50.0) }], Vec2::new(40.0, 50.0));
+    run_ticks(app, 1);
+    let overlay = app.world().resource::<PathOverlay>();
+    assert!(overlay.plan.legs.is_empty(), "paths are off (no ShowPaths at all here)");
+    assert_eq!(overlay.plan.loops.len(), 1, "only our own patrol");
+    let route = &overlay.plan.loops[0];
+    assert_eq!(overlay.plan.loop_points(route), &[a, b, c]);
+    assert_eq!((route.active, route.walking), (true, Some(1)));
+    // Off fighting (its goal on a foe): the leg it was on stays lit.
+    app.world_mut().entity_mut(w.own_unit).insert(MoveGoal::entity(w.enemy_unit, Vec2::new(50.0, 50.0), 1.0));
+    run_ticks(app, 1);
+    assert_eq!(app.world().resource::<PathOverlay>().plan.loops[0].walking, Some(1));
+    // Deselected: gone.
+    app.world_mut().entity_mut(w.own_unit).remove::<Selected>();
+    run_ticks(app, 1);
+    assert!(app.world().resource::<PathOverlay>().plan.loops.is_empty());
+}
+
+/// The pathfinder knows the whole map, so a path round an enemy building
+/// the team has not seen would trace it: the route is drawn through the
+/// turns in sight, then straight on to the goal.
+#[test]
+fn routes_never_trace_what_the_fog_hides() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    // Team 0 sees the west half of the map (x < 32); an enemy house stands
+    // in the east, unseen, between the unit and its goal.
+    app.world_mut().insert_resource(fog_seeing((0..32).flat_map(|y| (0..16).map(move |x| (x, y)))));
+    with_commands(app, |c, d, p| spawn_building(c, d, &p.list[1], d.building_id("house").unwrap(), Vec2::new(40.0, 20.0), 0.0, true));
+    let (from, to) = (Vec2::new(20.0, 20.0), Vec2::new(56.0, 20.0));
+    place(app, w.own_unit, from, 0.0);
+    send(app, w.own_unit, &[Order::Move { target: to }], to);
+    let seq = app.world().get::<MoveGoal>(w.own_unit).unwrap().seq;
+    let round = vec![Vec2::new(28.0, 20.0), Vec2::new(36.0, 14.0), Vec2::new(44.0, 14.0), to];
+    let path = PathState { waypoints: round.clone(), next: 0, status: PathStatus::Following, goal_seq: seq, ..default() };
+    app.world_mut().entity_mut(w.own_unit).insert(path);
+    run_ticks(app, 1);
+    assert_eq!(legs(app), vec![(vec![from, round[0], to], LegKind::Move)], "the turns round the house are left out");
+    // Fog off: the whole path.
+    app.world_mut().resource_mut::<FogOfWar>().enabled = false;
+    run_ticks(app, 1);
+    assert_eq!(legs(app), vec![([vec![from], round].concat(), LegKind::Move)]);
+}
+
+/// Past [`MAX_ROUTES`] selected units, those nearest the centre of the view
+/// are drawn, and the HUD is told how many.
+#[test]
+fn a_big_selection_draws_the_routes_nearest_the_view() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    app.world_mut().resource_mut::<CameraRig>().focus = Vec2::new(0.0, 40.0);
+    let peasant = app.world().resource::<Data>().unit_id("peasant").unwrap();
+    let at = |i: usize| Vec2::new(2.0 + 0.8 * i as f32, 40.0);
+    let army: Vec<Entity> = (0..70).map(|i| with_commands(app, |c, d, p| spawn_unit(c, d, &p.list[0], peasant, at(i), 0.0))).collect();
+    run_ticks(app, 1);
+    for (i, e) in army.iter().enumerate() {
+        let goal = at(i) + Vec2::new(0.0, 10.0);
+        send(app, *e, &[Order::Move { target: goal }], goal);
+    }
+    run_ticks(app, 1);
+    let starts: Vec<Vec2> = legs(app).iter().map(|(points, _)| points[0]).collect();
+    assert_eq!(starts.len(), MAX_ROUTES);
+    assert!((0..MAX_ROUTES).all(|i| starts.contains(&at(i))), "the nearest {MAX_ROUTES}: {starts:?}");
+    assert_eq!(*app.world().resource::<RoutesShown>(), RoutesShown { drawn: MAX_ROUTES, wanted: 70 });
+}
+
+/// Selected units with nowhere to go draw nothing, so they take none of
+/// the [`MAX_ROUTES`] places: a big selection standing about the view's
+/// centre leaves the routes of the few walking farther off drawn.
+#[test]
+fn idle_units_in_a_big_selection_leave_the_routes_to_those_walking() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    app.world_mut().resource_mut::<CameraRig>().focus = Vec2::new(0.0, 40.0);
+    let peasant = app.world().resource::<Data>().unit_id("peasant").unwrap();
+    let at = |i: usize| Vec2::new(2.0 + 0.8 * i as f32, 40.0);
+    let army: Vec<Entity> = (0..70).map(|i| with_commands(app, |c, d, p| spawn_unit(c, d, &p.list[0], peasant, at(i), 0.0))).collect();
+    run_ticks(app, 1);
+    // The 64 nearest the focus stand idle (one holding); the 6 beyond walk.
+    for (i, e) in army.iter().enumerate() {
+        if i < MAX_ROUTES {
+            let hold: &[Order] = if i == 0 { &[Order::Hold] } else { &[] };
+            app.world_mut().entity_mut(*e).insert((Orders { queue: hold.iter().copied().collect() }, Selected));
+        } else {
+            let goal = at(i) + Vec2::new(0.0, 10.0);
+            send(app, *e, &[Order::Move { target: goal }], goal);
+        }
+    }
+    run_ticks(app, 1);
+    let mut starts: Vec<Vec2> = legs(app).iter().map(|(points, _)| points[0]).collect();
+    starts.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(starts, (MAX_ROUTES..70).map(at).collect::<Vec<_>>());
+    assert_eq!(*app.world().resource::<RoutesShown>(), RoutesShown { drawn: 6, wanted: 6 }, "the HUD counts only routes");
 }

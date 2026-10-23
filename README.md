@@ -68,6 +68,15 @@ and how to back out; a placement ghost is green where the building fits,
 amber where it fits but you cannot pay for it yet, and red with an X where it
 cannot go.
 
+Every order you give is marked where it lands, in the order's colour (green
+move, red attack, orange attack-move, gold gather, amber build, blue repair,
+cyan patrol, pale gold rally), in fog too: four arrows swoop in onto the spot,
+or press in on a ring or frame around the unit, building or resource it
+targets, which follows it while you can see it. Shift-queued orders leave a
+dot (or a faint ring or frame on what they target) that lingers, so a chain of
+them reads. A building you place stamps down: its footprint flashes, a
+shockwave and dust roll out and chips fly.
+
 ### Controls
 
 | Action | Input |
@@ -81,6 +90,8 @@ cannot go.
 | Fixed buttons on every building | C the next age-up, V upgrade the building, B rally point (what it trains and researches fills the card from Q) |
 | Worker build pages | Z Economy, X Military, C Defence; B or Esc goes back |
 | Targeted command (Move, Attack, Patrol, Gather, Repair, Rally) | its button, then left click the target (Move, Attack, Patrol and Rally also on the minimap); Shift keeps the command armed; right click or Esc cancels |
+| Patrol route | Patrol (R), then click the far end: the unit walks there and back; Shift+click more points to make one loop it walks round and round (orders queued after a patrol are never reached) |
+| Unit paths | P, or the Paths button under Menu: show where the selected units are going (the path being walked, solid with arrows; queued orders chained on, dashed; coloured by order) and say so; hold Shift to see them meanwhile; a selected patrolling unit always shows its loop, the leg it is on lit; with more than 64 of the selected units going somewhere (idle ones have no route), those nearest the centre of the view, and the button says how many |
 | Place a building | its button, then left click (Shift keeps placing); R rotates 45°, Shift+R 15°; right click or Esc cancels |
 | Place a wall | its button, click the start, click the end (Shift chains the next line from there); segments that do not fit are skipped |
 | Cancel a queued item | click it in the selection panel's queue |

@@ -1,8 +1,10 @@
 //! Shared items added by af_input (other crates may use them).
 //! Only af_input edits this file. Never modify items in other af_core files.
 
+use crate::components::ClickPing;
 use crate::placement::PlacementError;
-use af_data::BuildingTypeId;
+use crate::resources::TargetAction;
+use af_data::{BuildingTypeId, Rgb};
 use bevy::prelude::*;
 
 /// Marks the RTS camera. af_input spawns exactly one on entering
@@ -107,5 +109,114 @@ impl PlacementPreview {
     /// True when at least one ghost exists and every ghost is valid.
     pub fn all_valid(&self) -> bool {
         !self.ghosts.is_empty() && self.ghosts.iter().all(|g| g.error.is_none())
+    }
+}
+
+/// What a click marker confirms: the kind of order the local player just
+/// gave. It picks the marker's colour ([`OrderMark::color`]) and shape.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OrderMark {
+    Move,
+    Attack,
+    AttackMove,
+    Gather,
+    Build,
+    Repair,
+    Rally,
+    Patrol,
+    /// A building placed: its footprint, centred on the ping and turned by
+    /// `facing`, flashes on the ground before the foundation appears.
+    Place { kind: BuildingTypeId, facing: f32 },
+}
+
+impl OrderMark {
+    /// The marker's colour (sRGB), also written to `ClickPing::color`.
+    pub fn color(self) -> Rgb {
+        match self {
+            OrderMark::Move => [0.3, 1.0, 0.35],
+            OrderMark::Attack => [1.0, 0.2, 0.16],
+            OrderMark::AttackMove => [1.0, 0.45, 0.1],
+            OrderMark::Gather => [1.0, 0.84, 0.22],
+            OrderMark::Build | OrderMark::Place { .. } => [1.0, 0.64, 0.2],
+            OrderMark::Repair => [0.45, 0.68, 0.98],
+            OrderMark::Rally => [1.0, 0.95, 0.72],
+            OrderMark::Patrol => [0.25, 0.9, 1.0],
+        }
+    }
+
+    /// The mark for a targeting click that hit no entity (on the ground or
+    /// the minimap): attacks there are attack-moves.
+    pub fn of_target(action: TargetAction) -> OrderMark {
+        match action {
+            TargetAction::Move => OrderMark::Move,
+            TargetAction::AttackMove | TargetAction::Attack => OrderMark::AttackMove,
+            TargetAction::Patrol => OrderMark::Patrol,
+            TargetAction::Rally => OrderMark::Rally,
+            TargetAction::Gather => OrderMark::Gather,
+            TargetAction::Repair => OrderMark::Repair,
+        }
+    }
+}
+
+/// Carried next to [`ClickPing`] on a click marker (a client entity, never
+/// a unit): which order the click gave, so af_render can draw it as that
+/// order. Written by af_input (world clicks) and af_ui (minimap clicks),
+/// spawned together with its ping by [`ClickMark::ping`]; a `ClickPing`
+/// without one is drawn as a plain point marker in its colour.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ClickMark {
+    pub kind: OrderMark,
+    /// The entity the order points at (the unit attacked or followed, the
+    /// node or field gathered, the foundation built, the building or
+    /// machine repaired, a rally's entity): the marker hugs its footprint
+    /// and follows it while it moves.
+    pub target: Option<Entity>,
+    /// A shift-queued order: drawn smaller and quicker, with a dot that
+    /// lingers so a chain of queued clicks reads.
+    pub queued: bool,
+}
+
+impl ClickMark {
+    /// Seconds a marker lives (its ping's starting `time_left`); af_render
+    /// plays the whole animation within it.
+    pub const SECS: f32 = 0.75;
+    /// Seconds a queued marker lives (its dot lingers).
+    pub const QUEUED_SECS: f32 = 1.2;
+
+    pub fn new(kind: OrderMark, target: Option<Entity>, queued: bool) -> ClickMark {
+        ClickMark { kind, target, queued }
+    }
+
+    /// The marker's whole life in seconds.
+    pub fn life(&self) -> f32 {
+        if self.queued { Self::QUEUED_SECS } else { Self::SECS }
+    }
+
+    /// What to spawn for this mark at `pos`: the ping, coloured and timed
+    /// for the order, and the mark itself.
+    pub fn ping(self, pos: Vec2) -> (ClickPing, ClickMark) {
+        (ClickPing { pos, time_left: self.life(), color: self.kind.color() }, self)
+    }
+}
+
+/// Whether af_render draws the routes of the local player's selected
+/// units: where each is walking and the orders it has queued (a selected
+/// patrolling unit's patrol loop is drawn either way). af_input
+/// initialises it, flips `on` with P and sets `held` each frame while
+/// Shift is down (queued orders are being given, as in StarCraft); af_ui's
+/// HUD button flips `on` too. A preference: it survives into the next
+/// match.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShowPaths {
+    /// The player's choice (P, or the HUD button).
+    pub on: bool,
+    /// Shift is held this frame.
+    pub held: bool,
+}
+
+impl ShowPaths {
+    /// Routes are drawn this frame.
+    pub fn visible(&self) -> bool {
+        self.on || self.held
     }
 }

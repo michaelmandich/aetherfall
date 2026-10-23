@@ -1,10 +1,13 @@
 //! Colours, sizes and small spawn helpers shared by the menu and the HUD:
 //! dark translucent panels, the default font at 14-18 px, buttons that
-//! shade on hover, and hover tips.
+//! shade on hover, and hover tips. These flat colours are what the UI
+//! looks like until (or unless) the painted skin ([`crate::skin`]) loads.
 
 use bevy::prelude::*;
 
 use crate::card::ActionGroup;
+use crate::fx::PressFx;
+use crate::skin::{ButtonSkin, SkinButton, Skinned};
 
 /// Labels, tooltips, panel details.
 pub const FONT_SMALL: f32 = 14.0;
@@ -76,9 +79,16 @@ pub fn panel_colors() -> (BackgroundColor, BorderColor) {
     (BackgroundColor(PANEL_BG), BorderColor::all(PANEL_BORDER))
 }
 
-/// The usual panel box: padded, bordered, rounded.
+/// `node`'s padding, or `default` where the caller left it unset (a zero
+/// padding means unset: no panel or button wants its content on its frame).
+fn padding_or(node: &Node, default: UiRect) -> UiRect {
+    if node.padding == UiRect::DEFAULT { default } else { node.padding }
+}
+
+/// The usual panel box: bordered, rounded and padded (8 px unless `node`
+/// asks for its own padding).
 pub fn panel_node(node: Node) -> Node {
-    Node { padding: UiRect::all(px(8)), border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(4)), ..node }
+    Node { padding: padding_or(&node, UiRect::all(px(8))), border: UiRect::all(px(1)), border_radius: BorderRadius::all(px(4)), ..node }
 }
 
 /// Base colour of a command card button of this group.
@@ -109,14 +119,28 @@ pub struct ShadedButton {
     pub base: Color,
 }
 
-/// A button: centred content, rounded border, shaded on hover.
+/// A button: centred content, rounded border, padded (10 by 5 px unless
+/// `node` asks for its own padding), shaded on hover, squashed when
+/// pressed; in the skin, a [`ButtonSkin::Plain`] one.
 pub fn button(node: Node, base: Color) -> impl Bundle {
+    skinned_button(node, base, ButtonSkin::Plain)
+}
+
+/// A [`button`] that wears `skin` (and `base` until the skin loads).
+pub fn skinned_button(node: Node, base: Color, skin: ButtonSkin) -> impl Bundle {
+    (flat_button(node, base), SkinButton(skin))
+}
+
+/// A [`button`] that keeps its flat `base` colour in the skin too: a
+/// colour swatch whose colour is what it says (the menu's water scale),
+/// too small for a frame.
+pub fn flat_button(node: Node, base: Color) -> impl Bundle {
     (
         Button,
         Node {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            padding: UiRect::axes(px(10), px(5)),
+            padding: padding_or(&node, UiRect::axes(px(10), px(5))),
             border: UiRect::all(px(1)),
             border_radius: BorderRadius::all(px(4)),
             ..node
@@ -124,6 +148,7 @@ pub fn button(node: Node, base: Color) -> impl Bundle {
         BackgroundColor(base),
         BorderColor::all(PANEL_BORDER),
         ShadedButton { base },
+        PressFx::on_click(),
     )
 }
 
@@ -132,7 +157,9 @@ pub fn button(node: Node, base: Color) -> impl Bundle {
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Tip(pub String);
 
-pub(crate) fn shade_buttons(mut q: Query<(&Interaction, &ShadedButton, &mut BackgroundColor), Changed<Interaction>>) {
+/// Flat buttons follow hover and press; skinned ones are tinted by the skin.
+#[allow(clippy::type_complexity)]
+pub(crate) fn shade_buttons(mut q: Query<(&Interaction, &ShadedButton, &mut BackgroundColor), (Changed<Interaction>, Without<Skinned>)>) {
     for (interaction, b, mut bg) in &mut q {
         bg.0 = shade(b.base, *interaction);
     }
@@ -245,6 +272,20 @@ pub fn set_display(node: &mut Mut<Node>, visible: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helpers_keep_the_padding_asked_for() {
+        let asked = UiRect::axes(px(28), px(10));
+        assert_eq!(panel_node(Node { padding: asked, ..default() }).padding, asked);
+        assert_eq!(panel_node(Node { width: px(50), ..default() }).padding, UiRect::all(px(8)), "unset: the default");
+        let mut world = World::new();
+        let mut padding = |node: Node| {
+            let e = world.spawn(button(node, BUTTON)).id();
+            world.get::<Node>(e).map(|n| n.padding)
+        };
+        assert_eq!(padding(Node { padding: UiRect::axes(px(8), px(1)), ..default() }), Some(UiRect::axes(px(8), px(1))));
+        assert_eq!(padding(Node::default()), Some(UiRect::axes(px(10), px(5))));
+    }
 
     #[test]
     fn words_wrap_greedily() {

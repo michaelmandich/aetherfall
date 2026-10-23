@@ -7,6 +7,7 @@ use af_core::prelude::*;
 use bevy::prelude::*;
 
 use super::HudSet;
+use crate::skin::SkinPanel;
 use crate::theme::{self, set_display, set_text, text, FONT_BODY};
 
 #[derive(Component)]
@@ -23,7 +24,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
         Pickable::IGNORE,
     ))
     .with_children(|row| {
-        row.spawn((theme::panel_node(Node { padding: UiRect::axes(px(16), px(6)), ..default() }), theme::panel_colors(), Pickable::IGNORE))
+        row.spawn((theme::panel_node(Node { padding: UiRect::axes(px(28), px(10)), ..default() }), theme::panel_colors(), SkinPanel::Bar, Pickable::IGNORE))
             .with_child((text("", FONT_BODY, theme::TEXT_WARN), Pickable::IGNORE));
     });
 }

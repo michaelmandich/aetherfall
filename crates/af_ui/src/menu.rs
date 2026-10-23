@@ -13,7 +13,9 @@ use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
 use crate::format;
-use crate::theme::{self, button, rgb, set_text, text, FONT_BODY, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
+use crate::fx::PressFx;
+use crate::skin::{ButtonSkin, SkinGlow, SkinLook, SkinPanel};
+use crate::theme::{self, button, rgb, set_text, skinned_button, text, FONT_BODY, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
 
 /// Most AI opponents the menu offers.
 pub const MAX_OPPONENTS: usize = 5;
@@ -226,7 +228,7 @@ struct OpponentRow(usize);
 
 /// One segment of the water scale, filled up to the chosen level.
 #[derive(Component, Clone, Copy, Debug)]
-struct WaterSegment(WaterLevel);
+pub(crate) struct WaterSegment(WaterLevel);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuLabel {
@@ -260,6 +262,7 @@ pub(crate) fn plugin(app: &mut App) {
             )
                 .chain()
                 .in_set(ClientSet::Ui)
+                .before(crate::skin::SkinSet)
                 .run_if(in_state(GameState::Menu)),
         );
 }
@@ -326,6 +329,9 @@ const CARD_WIDTH: f32 = 324.0;
 const SETTINGS_WIDTH: f32 = 540.0;
 const OPPONENT_NAME_WIDTH: f32 = 262.0;
 const OPPONENT_NAME_CHARS: usize = (OPPONENT_NAME_WIDTH / (FONT_SMALL * theme::GLYPH_ADVANCE)) as usize;
+/// Padding of the settings panel: its first and last rows clear of the
+/// frame's corner plates, with an opponent's row still fitting across.
+const SETTINGS_PADDING: UiRect = UiRect::axes(Val::Px(10.0), Val::Px(12.0));
 
 fn spawn_menu(mut commands: Commands, data: Res<Data>) {
     commands.spawn((Camera2d, DespawnOnExit(GameState::Menu)));
@@ -363,13 +369,13 @@ fn spawn_menu(mut commands: Commands, data: Res<Data>) {
                     });
                     body.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(12), width: px(SETTINGS_WIDTH), ..default() }).with_children(|right| {
                         right.spawn(text("Match", FONT_LARGE, TEXT));
-                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), ..default() }), theme::panel_colors())).with_children(spawn_settings);
+                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), padding: SETTINGS_PADDING, ..default() }), theme::panel_colors(), SkinPanel::Panel)).with_children(spawn_settings);
                         right.spawn(text("Map", FONT_LARGE, TEXT));
-                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), ..default() }), theme::panel_colors())).with_children(spawn_map_settings);
-                        right.spawn((button(Node { height: px(48), ..default() }, Color::srgb(0.16, 0.36, 0.18)), MenuButton::Start)).with_child(text("Start", FONT_LARGE, TEXT));
-                        right.spawn((button(Node { height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37)), MenuButton::Spectate))
+                        right.spawn((theme::panel_node(Node { flex_direction: FlexDirection::Column, row_gap: px(8), padding: SETTINGS_PADDING, ..default() }), theme::panel_colors(), SkinPanel::Panel)).with_children(spawn_map_settings);
+                        right.spawn((skinned_button(Node { height: px(48), ..default() }, Color::srgb(0.16, 0.36, 0.18), ButtonSkin::Train), MenuButton::Start)).with_child(text("Start", FONT_LARGE, TEXT));
+                        right.spawn((skinned_button(Node { height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command), MenuButton::Spectate))
                             .with_child(text("Spectate AI match", FONT_LARGE, TEXT));
-                        right.spawn((button(Node { height: px(44), ..default() }, Color::srgb(0.3, 0.2, 0.38)), MenuButton::Multiplayer))
+                        right.spawn((skinned_button(Node { height: px(44), ..default() }, Color::srgb(0.3, 0.2, 0.38), ButtonSkin::Research), MenuButton::Multiplayer))
                             .with_child(text("Multiplayer", FONT_LARGE, TEXT));
                         right.spawn(text(MENU_KEYS, FONT_SMALL, TEXT_DIM));
                     });
@@ -439,7 +445,8 @@ fn spawn_map_settings(panel: &mut ChildSpawnerCommands) {
         r.spawn(Node { width: px(MAP_VALUE_WIDTH), column_gap: px(WATER_GAP), ..default() }).with_children(|scale| {
             for level in WaterLevel::ALL {
                 scale.spawn((
-                    button(Node { width: px(WATER_SEGMENT), height: px(20), padding: UiRect::ZERO, ..default() }, theme::BUTTON),
+                    // Colour swatches, not framed buttons: flat in the skin too.
+                    theme::flat_button(Node { width: px(WATER_SEGMENT), height: px(20), ..default() }, theme::BUTTON),
                     MenuButton::WaterLevel(level),
                     WaterSegment(level),
                 ));
@@ -521,7 +528,7 @@ fn row() -> Node {
 }
 
 fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: MenuButton) {
-    parent.spawn((button(Node { width: px(30), height: px(26), padding: UiRect::ZERO, ..default() }, theme::BUTTON), action)).with_child(text(label, FONT_BODY, TEXT));
+    parent.spawn((button(Node { width: px(30), height: px(26), padding: UiRect::all(px(2)), ..default() }, theme::BUTTON), action)).with_child(text(label, FONT_BODY, TEXT));
 }
 
 fn labeled_button(parent: &mut ChildSpawnerCommands, action: MenuButton, label: MenuLabel, width: f32) {
@@ -546,6 +553,8 @@ fn spawn_faction_card(parent: &mut ChildSpawnerCommands, f: &FactionDef, id: Fac
             BackgroundColor(theme::PANEL_BG),
             BorderColor::all(CARD_BORDER),
             theme::ShadedButton { base: theme::PANEL_BG },
+            // In the skin: a framed panel that glows on hover and while chosen.
+            (SkinPanel::Panel, SkinGlow, SkinLook::default(), PressFx::on_click()),
         ))
         .with_children(|card| {
             // A long name wraps under itself; the swatch stays by its first line.
@@ -687,7 +696,7 @@ fn refresh_menu(
     fresh: Query<(), Added<MenuRoot>>,
     mut labels: Query<(&MenuLabel, &mut Text)>,
     mut rows: Query<(&OpponentRow, &mut Node)>,
-    mut cards: Query<(&FactionCard, &mut BorderColor)>,
+    mut cards: Query<(&FactionCard, &mut BorderColor, &mut SkinLook)>,
     mut segments: Query<(&WaterSegment, &Interaction, &mut theme::ShadedButton, &mut BackgroundColor)>,
 ) {
     if !settings.is_changed() && fresh.is_empty() {
@@ -732,9 +741,11 @@ fn refresh_menu(
             bg.0 = theme::shade(base, *interaction);
         }
     }
-    for (card, mut border) in &mut cards {
-        let c = if card.0 == settings.faction { rgb(data.faction(card.0).color) } else { CARD_BORDER };
+    for (card, mut border, mut look) in &mut cards {
+        let chosen = card.0 == settings.faction;
+        let c = if chosen { rgb(data.faction(card.0).color) } else { CARD_BORDER };
         *border = BorderColor::all(c);
+        look.set_if_neq(SkinLook { active: chosen, accent: Some(c), ..default() });
     }
 }
 

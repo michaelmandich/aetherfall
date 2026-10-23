@@ -633,6 +633,69 @@ fn patrol_walks_back_and_forth() {
     assert!(matches!(sim.current_order(unit), Some(Order::Patrol { .. })));
 }
 
+/// Patrol points shift-clicked after the first make one route, walked in
+/// order and from the last straight back to the start, round and round;
+/// an order queued after the patrols is never reached.
+#[test]
+fn shift_queued_patrol_points_walk_one_loop() {
+    let mut sim = solo();
+    let corners = [Vec2::new(20.0, 20.0), Vec2::new(30.0, 20.0), Vec2::new(30.0, 30.0)];
+    let unit = sim.unit(P0, "spearman", corners[0]);
+    sim.order(P0, &[unit], CommandKind::Patrol(corners[1]));
+    sim.queue(P0, &[unit], CommandKind::Patrol(corners[2]));
+    sim.queue(P0, &[unit], CommandKind::Move(Vec2::new(10.0, 40.0)));
+    // The corners in the order they are reached (each visit once).
+    let mut visits = vec![0];
+    for _ in 0..(40.0 * SIM_HZ as f32) as u32 {
+        sim.ticks(1);
+        let at = corners.iter().position(|c| sim.pos(unit).distance(*c) < 0.6);
+        if let Some(i) = at.filter(|i| visits.last() != Some(i)) {
+            visits.push(i);
+        }
+    }
+    assert!(visits.len() >= 7, "went round at least twice: {visits:?}");
+    for (i, corner) in visits.iter().enumerate() {
+        assert_eq!(*corner, i % 3, "a -> b -> c -> a ...: {visits:?}");
+    }
+    let orders = sim.get::<Orders>(unit).unwrap();
+    assert_eq!(orders.queue.len(), 3, "patrols never pop, so the move waits forever");
+    assert_eq!(af_core::ext::behavior::patrol_points(&orders.queue).collect::<Vec<_>>(), corners.to_vec());
+}
+
+/// A point shift-queued onto a running patrol joins the loop without
+/// turning the unit round: walking back from b to a, it carries on to a,
+/// then goes a -> b -> c -> a.
+#[test]
+fn a_point_queued_onto_a_running_patrol_keeps_the_unit_on_its_leg() {
+    let mut sim = solo();
+    let corners = [Vec2::new(20.0, 20.0), Vec2::new(30.0, 20.0), Vec2::new(30.0, 30.0)];
+    let unit = sim.unit(P0, "spearman", corners[0]);
+    sim.order(P0, &[unit], CommandKind::Patrol(corners[1]));
+    // Out to b, then part of the way back.
+    let mut at_b = false;
+    for _ in 0..(20.0 * SIM_HZ as f32) as u32 {
+        sim.ticks(1);
+        at_b |= sim.pos(unit).distance(corners[1]) < 0.6;
+        if at_b && sim.pos(unit).x < 26.0 {
+            break;
+        }
+    }
+    assert!(at_b && sim.pos(unit).x < 26.0, "walking back to a: at {}", sim.pos(unit));
+    sim.queue(P0, &[unit], CommandKind::Patrol(corners[2]));
+    let mut visits = Vec::new();
+    for _ in 0..(30.0 * SIM_HZ as f32) as u32 {
+        sim.ticks(1);
+        let at = corners.iter().position(|c| sim.pos(unit).distance(*c) < 0.6);
+        if let Some(i) = at.filter(|i| visits.last() != Some(i)) {
+            visits.push(i);
+        }
+    }
+    assert!(visits.len() >= 4, "went round: {visits:?}");
+    for (i, corner) in visits.iter().enumerate() {
+        assert_eq!(*corner, i % 3, "on to a first, then a -> b -> c -> a: {visits:?}");
+    }
+}
+
 #[test]
 fn defensive_unit_gives_up_a_long_chase_and_returns_to_its_post() {
     let mut sim = duel();

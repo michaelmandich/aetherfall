@@ -19,7 +19,8 @@
 //!   best mark moves up by what it adds (`Mover::rebase_progress`), so a
 //!   way round a wood or a wall is progress too.
 //!
-//! Time spent waiting for the path service does not count.
+//! Time spent waiting for the path service, or waiting its turn in a queue
+//! behind walkers that move on (`Mover::waiting`), does not count.
 
 use af_core::prelude::af_geom::wrap_angle;
 use af_core::prelude::*;
@@ -64,10 +65,11 @@ pub(crate) fn track_progress(mut units: Query<ProgressQuery, Without<Dead>>) {
         if mover.repath_cooldown > 0.0 {
             mover.repath_cooldown = (mover.repath_cooldown - SIM_DT).max(0.0);
         }
-        // Not following, or waiting for the path service (a requested
-        // repath, the end of a truncated leg): standing still is not being
-        // stuck. Keep the window fresh so the count starts from here.
-        if path.status != PathStatus::Following || mover.wants_repath {
+        // Not following, waiting for the path service (a requested repath,
+        // the end of a truncated leg) or waiting its turn in a queue (see
+        // `Mover::waiting`): standing still is not being stuck. Keep the
+        // window fresh so the count starts from here.
+        if path.status != PathStatus::Following || mover.wants_repath || mover.waiting {
             mover.restart_window(pos.0, facing.0);
             continue;
         }

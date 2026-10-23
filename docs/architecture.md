@@ -20,9 +20,9 @@ boxes where they do not, effects and markers as boxes.
 | `af_economy` | placement, construction, production queues, research/ages/techs, upgrades, trickle, victory | af_core |
 | `af_fog` | per-team visibility/exploration | af_core |
 | `af_ai` | computer players (only via `PlayerCommand`s) | af_core |
-| `af_input` | camera, picking, selection, control groups, commands, placement modes, hotkeys | af_core |
-| `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over | af_core |
-| `af_render` | the land (height field, water, props, the fog of war, light and camera look); box visuals for entities, weapons, FX, bars, selection, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
+| `af_input` | camera, picking, selection, control groups, commands (each marked where it lands), placement modes, hotkeys, the unit paths toggle | af_core |
+| `af_ui` | skirmish menu, multiplayer screens, HUD, command card, minimap, notices, game over, the unit paths button; a painted skin with card-game press effects | af_core |
+| `af_render` | the land (height field, water, props, the fog of war, light and camera look); box visuals for entities, weapons, FX, bars, selection, ghosts, click markers and placement slams, the selected units' routes; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
 | `af_sim` | the simulation wired together: every sim plugin in one call, the headless runner, skirmish setup, match reports, the `SimSet` profiler, the referee app | af_core and every sim crate |
 | `af_net` | multiplayer client: wire protocol (shared with the server), TCP framing, the lockstep client plugin, the account-service client | af_core, serde, postcard, ureq |
 | `aetherfall` | the game binary: wiring, CLI, screenshot and dev tooling | all |
@@ -62,6 +62,16 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   simulation of the same match agree bit for bit. Square roots, rounding
   and arithmetic are exact everywhere. `af_core::hash::sim_hash` digests a
   match for the lockstep desync check.
+* Patrols: consecutive `Order::Patrol` entries at the front of the queue
+  (shift-clicked patrol points, each queued from the last one's `b`) are
+  one route, `[front.a, front.b, q1.b, ...]`
+  (`af_core::ext::behavior::patrol_points`), walked in order and from the
+  last point back to the first, forever; a single patrol is the a <-> b
+  beat. The leg is af_behavior's `Brain::patrol_leg`, reset with the task
+  when the front order changes; points shift-queued onto a running patrol
+  join the loop, and the unit carries on to the point it was walking to
+  (`Brain::patrol_to`, the leg that still ends there). A patrol never
+  pops, so orders queued after the patrols are never reached.
 * What a unit is busy with: `Activity` (af_core `components.rs`), written
   only by af_behavior at the end of `SimSet::Orders`: `Gather(WorkStyle)`
   (at the node or field), `Build`, `Repair` (at the target), `Heal`,
@@ -115,12 +125,183 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   `cargo test --release -p aetherfall --test invariants -- --include-ignored`
   (`sweep_big_maps`: six to eight players on 512-768 m maps); `AF_SWEEP`
   names matches and their map options (see `sweep_custom`).
+* Chokepoints: `crates/aetherfall/tests/chokepoints.rs` orders crowds
+  through narrow gaps (cliff gaps, slots between houses, crossing head-on,
+  past idle units, behind a ram) the way a player's right-click does, and
+  measures how many get through and how fast, failed orders, units left
+  stuck and the deepest overlap. The fast tests run every scenario and
+  check overlap, determinism and that each crowd gets through as its bar
+  asks (everyone through, no order failed, within a time; the ram, whose
+  path does not fit its slot, and one unit whose formation slot lies on
+  the cliff are the only exceptions), and run them again on twelve
+  jittered layouts (every unit moved up to 0.15 m from its spot), where
+  the units not through and the orders failed, summed per scenario,
+  must stay under a measured ceiling: a change that only suits the
+  default layout fails there. The results are sensitive beyond the
+  layout too: one more entity in the world (a resource is one) renumbers
+  the units and changes them, so the bench passes its layout as a
+  parameter and the fast tests read no environment. The table:
+  `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`
+  (`AF_CHOKE_JITTER=<seed>` runs it on that jittered layout).
 
 ## Client model
 
 `Update`: `ClientSet::Pointer` (UI hit-test) -> `Input` -> `Ui` -> `Render`.
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
-`CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
+`CameraRig`, `DragSelect`, `LocalPlayer`, `ShowPaths` and `RoutesShown`
+(below), and the `Selected` marker; click markers are client entities
+(`ClickPing` with a `ClickMark`).
+
+### UI skin and press feedback
+
+The menu and HUD are Bevy UI nodes dressed in a painted, worn-ornate
+medieval skin (`af_ui::skin`); one look serves every age for now.
+
+* **Textures** (`assets/ui/`, painted at 2x: corners are drawn at half
+  size): `panel_wood.png` (tiled planks behind every panel),
+  `panel_frame.png` / `bar_frame.png` (9-sliced metal frames for boxes and
+  for strips under about 80 px tall), `button_<family>.png` for the ten
+  button families (`ButtonSkin`: command, stance, economy, military,
+  defence, train, research, upgrade, nav, plain), `glow.png` (hover, armed
+  and press light), and the press effects' `burst_ring.png`, `spark.png`
+  and `shine.png`. `UiSkin::load` reads a folder of the asset root, so a
+  per-age skin later is another folder with the same file names.
+* **Applying it:** spawn functions only add markers (`SkinPanel::Panel` /
+  `Bar`, `SkinButton(family)`, `SkinGlow` for the faction cards). The
+  textures load in the plugin's `build` (the first state's `OnEnter`
+  runs before `Startup`); once all are in, `apply_skin` gives each marked
+  node its image and decoration children (a frame under the panel's
+  content, a glow over a button's wood and under its label, the shine of
+  a command card slot), all `Pickable::IGNORE`, and clears the node's flat
+  colours. Until then, or for good when a texture is missing (the headless
+  tests have no PNG loader), the flat `theme` colours stay.
+  `theme::panel_node` and `theme::button` keep the padding a caller asks
+  for (8 px and 10 by 5 px only fill in an unset one), which keeps content
+  off the frames' metal: the game-over and leave panels pad 24 px, the
+  pause banner and the network bar 28 by 10. Every panel and button
+  wears it: the menu's Match and Map panels, its Start (train), Spectate
+  (command) and Multiplayer (research), the multiplayer screens' panels
+  and actions (going ahead: train; Sign up: command; the rest plain) and
+  the network bar. Only the water scale's segments stay flat swatches
+  (`theme::flat_button`), and the multiplayer text fields keep their flat
+  inset look.
+* **Plaques:** the button textures carry the hotkey and count plaques in
+  their top corners. Only the command card's slots (`SkinPlaques`) show
+  them; every other button wears a copy made once the textures load, its
+  top 40 texture rows replaced by its bottom ones mirrored
+  (`skin::without_plaques`), so "Start" or "Resume" has no empty gems.
+* **Command card:** a slot wears its action's family (a build page button
+  and its buildings the page's colours, else the action group's), with
+  its hotkey and queued count centred on the frame's two corner plaques
+  (a count of 10 or more at 11 px, so its two digits stay on the plaque).
+  `refresh_card` writes `SkinLook` (usable / soon / not, armed) every
+  frame; `skin_looks` turns look, hover and press into the button's tint
+  and glow (an armed button pulses gold; the selection's stance, the
+  Paths toggle while on and the chosen faction glow steadily, the
+  faction in its colour). `theme::shade_buttons` and the card's flat
+  colours leave skinned nodes alone.
+* **Presses** (`af_ui::fx`, real time, so they play while paused): the
+  command card records each press, by mouse or hotkey, in `card_input`.
+  Build, train, research and upgrade presses squash the button to 0.9 and
+  spring it back past full size (a damped spring, still by 0.35 s), flash
+  it gold, sweep a shine across it and throw a ring and sparks from its
+  centre (on a root node over the HUD, at most 64 particles alive); other
+  orders get a lighter squash and flash; a refused press shakes and
+  flashes red. A press that turns the card's page (a build page, More,
+  Back) lays the pressed slot out anew, so it plays on the new page
+  instead: its buttons appear squashed and spring out with a faint flash,
+  a column at a time. Plain buttons squash when clicked. Scale and shake are
+  `UiTransform`s, so nothing is laid out again, and nothing runs for a
+  button at rest.
+* **Checking it:** `cargo run -p af_ui --example ui_preview [-- hud ...]
+  --screenshot shot.png`, or the game with `--script` to catch a press
+  part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`; with
+  `--speed 0.5` the shots fall on more frames, as script times are sim
+  seconds). The floating hover tip follows the stand-in mouse of a
+  scripted run (`--hover LABEL --cursor X,Y`).
+
+### Click markers and the placement slam
+
+**Click markers** (`ClickPing` contract). Every order the local player
+gives spawns a client entity (never a unit) carrying a `ClickPing` (point,
+colour, life) and a `ClickMark` (`af_core::ext::input`: the `OrderMark`
+kind, the entity it targets, whether it was shift-queued), both made by
+`ClickMark::ping`. af_input writes them for right-click `Smart` (the kind
+guessed from what is pointed at and what the selection can do, as the sim
+resolves it per unit; cargo carried to an own drop site that takes it
+marks `Gather`; buildings alone mark a rally), targeted commands,
+placements (`Place`: the snapped footprint and facing; a wall line marks
+its last segment) and af_ui for minimap commands. af_render
+(`markers`) dresses each ping with its parts as children, plays it in real
+time (also while paused), follows a targeted entity while the local team
+sees it, keeps at most 16 alive and despawns the ping when its life runs
+out; a ping without a `ClickMark` is drawn as a plain point marker in its
+colour. Its arrows come in along the screen's diagonals, each at the same
+angle to the camera's line of sight (so none is seen tail-on from the
+pitched camera). A marker lies on the drawn world (`Ground::surface`:
+the ground, the water surface, a mountain's rock). Its materials
+(`Shade::Marker`) are unlit, so the fog the land's shaders darken the
+world with never dims them (a click into fog or unexplored black shows
+in full), and sort after everything else blended (only a unit route's
+stroke, a gizmo, shows across one). af_input and af_map also despawn leftover
+pings when a match ends.
+
+**Placement slam.** A foundation of the local player
+(`Added<UnderConstruction>`, seen in an `Update` system, never inside the
+sim tick) gets a placement slam, a top-level `RenderScene` effect.
+
+### Unit routes
+
+* **Toggle:** `ShowPaths { on, held }` (`af_core::ext::input`): af_input
+  initialises it (never reset between matches: a preference), flips `on`
+  with P (with a notice) and sets `held` while Shift is down; af_ui's
+  "Paths" button under Menu flips `on` and shows it (while on, a gold
+  label and the skin's steady gold glow).
+* **Overlay** (`af_render::paths`, `RenderStep::Overlay`): `plan_paths`
+  turns the local player's own selected units' `Orders`, `PathState`,
+  `MoveGoal` and `AttackTarget` into polylines (`plan_route`, pure): the
+  current leg from the unit through `waypoints[next..]` to the live goal
+  (straight while `Pending`, for flyers and for a goal the waypoints are
+  not for yet; stopped with a cross where a partial path ends), then each
+  queued order chained on to its target, coloured by order in its click
+  marker's colour (`LegKind::mark`, `OrderMark::color`: one palette, so
+  a queued order's marker and its leg agree; following a unit is a move,
+  as its click marks it). Entity targets of other teams are placed where
+  the local team believes they are (the rally flags'
+  `believed_rally_point`), a chase after one out of sight is drawn
+  straight to where it was seen (with no cross: whether its path is
+  blocked depends on where it really is), and enemy units' routes are
+  never planned. The
+  pathfinder sees the whole map, so a path's turns trace what it goes
+  round: only the turns the team has in sight (`in_sight`: the stretch to
+  the turn and the cells round it) are drawn, and from the first one it
+  does not, the leg runs straight to its goal (nor is a partial path's
+  end marked there). Point targets are drawn where the orders put them:
+  af_behavior's intake nudges a slot off obstacles with the whole map in
+  view too, so one in the fog can stand up to `SLOT_SEARCH` (6 m) off the
+  click, as the unit's own walk there shows. The chain stops at an order
+  that never ends (a patrol, a hold). A selected unit whose current order
+  is a patrol always shows its loop, the leg it walks lit (read off
+  `MoveGoal.target`, kept while it fights); with the paths shown, the
+  unit's current leg carries that highlight and the loop keeps a plain
+  track there. `draw_paths` draws it with Bevy gizmos (registered only
+  with `GizmoPlugin`, so headless apps plan without drawing): a few
+  pixels wide at any zoom, no entities (nothing is inserted on units),
+  terrain-following points on `Ground::surface`, marching dashes and
+  chevrons on real time (they run while paused), lifted off the ground
+  by a small depth bias (`DEPTH_BIAS`: Bevy scales it with the distance,
+  5 to 43 cm over the zoom range, so units standing on a route still
+  hide it), and a faint always-on-top copy so routes behind buildings
+  still read. Gizmos draw before every blended mesh and write depth (the
+  copy at the near plane), so a route's stroke shows over a click
+  marker it crosses. Only the
+  stretches on screen are cut into pieces (`View`, the camera's view of
+  the ground, a little widened), with at most so many dashes and
+  chevrons to a stretch, so the cost follows what is on screen, not how
+  long the routes are. At most `MAX_ROUTES` (64) units with a route are
+  drawn (an idle or holding unit has none), those nearest the centre of
+  the view; `RoutesShown` (`af_core::ext::render`)
+  tells af_ui, whose Paths button then reads "64 of N routes shown".
 
 ## The land
 

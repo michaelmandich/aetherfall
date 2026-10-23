@@ -4,7 +4,9 @@
 //! * Arrival: point goals when the centre is within `arrive` of the target,
 //!   follow goals when the box gap to the followed entity's box is within
 //!   `arrive`; a unit that touched an arrived groupmate heading to the same
-//!   point also counts as arrived (the group settles into a blob).
+//!   point also counts as arrived (the group settles into a blob), but not
+//!   in a passage on its way to a goal past it (the collision solver tells:
+//!   it would stop in the gap the rest still need).
 //! * After its last waypoint a unit walks straight at the goal (the box
 //!   surface of a followed entity) until it arrives; the end of a partial
 //!   path means the goal cannot be reached (`Failed`), unless the path only

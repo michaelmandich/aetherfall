@@ -1,5 +1,6 @@
 //! Status overlays: health/shield/progress bars, selection outlines and
-//! rally markers.
+//! rally markers (whose fog rules [`crate::paths`] shares for the entities
+//! units have orders on).
 
 use af_core::ext::fog::{SeenBy, team_sees_box};
 use af_core::ext::input::RtsCamera;
@@ -64,11 +65,20 @@ fn spawn_bars(commands: &mut Commands, painter: &mut Painter, parent: Entity, sp
     BarParts { root, rows }
 }
 
-/// The world rotation bars face: af_input's RTS camera (else any 3D
-/// camera), or one derived from the rig when there is none (headless).
-fn camera_rotation(cameras: &Query<(&GlobalTransform, Has<RtsCamera>), With<Camera3d>>, rig: &CameraRig) -> Quat {
+/// The 3D cameras, marking af_input's RTS camera ([`rts_camera`]).
+pub(crate) type Cameras<'w, 's> = Query<'w, 's, (&'static GlobalTransform, Has<RtsCamera>), With<Camera3d>>;
+
+/// Where the view is from: af_input's RTS camera, else any 3D camera;
+/// `None` when there is none (headless).
+pub(crate) fn rts_camera<'a>(cameras: &'a Cameras) -> Option<&'a GlobalTransform> {
     let camera = cameras.iter().find(|(_, rts)| *rts).or_else(|| cameras.iter().next());
-    camera.map_or_else(|| Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch), |(g, _)| g.rotation())
+    camera.map(|(g, _)| g)
+}
+
+/// The world rotation bars face: the camera's ([`rts_camera`]), or one
+/// derived from the rig when there is none (headless).
+fn camera_rotation(cameras: &Cameras, rig: &CameraRig) -> Quat {
+    rts_camera(cameras).map_or_else(|| Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch), |g| g.rotation())
 }
 
 /// Bars for entities that are damaged, selected, hovered or under
@@ -80,7 +90,7 @@ pub(crate) fn update_bars(
     mut painter: Painter,
     cursor: Res<CursorWorld>,
     rig: Res<CameraRig>,
-    camera: Query<(&GlobalTransform, Has<RtsCamera>), With<Camera3d>>,
+    camera: Cameras,
     actors: Query<(Entity, &Health, Option<&Shield>, Option<&BuildingView>, &Footprint, &Transform, Has<Selected>, Option<&BarParts>, Option<&ModelUnit>), With<BoxVisual>>,
     mut parts: PartQuery,
 ) {
@@ -252,7 +262,7 @@ struct RallyMarker {
 /// What the viewing team last knew of an entity rally target it does not
 /// own.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Sighting {
+pub(crate) struct Sighting {
     /// Where the team last saw it.
     pos: Vec2,
     /// It was in sight the last frame it was looked up.
@@ -275,7 +285,7 @@ pub struct RallyPool {
 }
 
 #[allow(clippy::type_complexity)]
-type RallyTargets<'w, 's> =
+pub(crate) type RallyTargets<'w, 's> =
     Query<'w, 's, (&'static Position, Option<&'static Owner>, Option<&'static Footprint>, Option<&'static Facing>, Option<&'static SeenBy>, Has<Unit>)>;
 
 /// Where the viewing `team` (`None`: nothing hidden) believes the entity
@@ -284,7 +294,7 @@ type RallyTargets<'w, 's> =
 /// unit's position while some of its box is in sight, else where it was
 /// last seen (also after it dies out of sight, which the team cannot know);
 /// a building or node's (they never move) once the team has seen it.
-fn believed_rally_point(t: Entity, team: Option<u8>, fog: &FogOfWar, players: &Players, targets: &RallyTargets, sightings: &mut HashMap<Entity, Sighting>) -> Option<Vec2> {
+pub(crate) fn believed_rally_point(t: Entity, team: Option<u8>, fog: &FogOfWar, players: &Players, targets: &RallyTargets, sightings: &mut HashMap<Entity, Sighting>) -> Option<Vec2> {
     let Ok((pos, owner, fp, facing, seen, is_unit)) = targets.get(t) else {
         return match sightings.get(&t) {
             Some(s) if !s.in_sight => Some(s.pos),

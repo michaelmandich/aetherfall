@@ -16,7 +16,8 @@ use bevy::prelude::*;
 
 use crate::format;
 use crate::menu::MenuScreen;
-use crate::theme::{self, button, set_text, text, FONT_BODY, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
+use crate::skin::{ButtonSkin, SkinPanel};
+use crate::theme::{self, button, set_text, skinned_button, text, FONT_BODY, FONT_LARGE, FONT_SMALL, TEXT, TEXT_DIM};
 
 /// A text field of the multiplayer forms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -299,8 +300,10 @@ fn row() -> Node {
     Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: px(8), ..default() }
 }
 
+/// A panel's column: its first and last rows padded clear of the skin
+/// frame's corner plates.
 fn column() -> Node {
-    Node { flex_direction: FlexDirection::Column, row_gap: px(8), width: px(COLUMN_WIDTH), ..default() }
+    Node { flex_direction: FlexDirection::Column, row_gap: px(8), width: px(COLUMN_WIDTH), padding: UiRect::axes(px(12), px(12)), ..default() }
 }
 
 fn label(parent: &mut ChildSpawnerCommands, s: impl Into<String>) {
@@ -330,19 +333,24 @@ fn field(parent: &mut ChildSpawnerCommands, id: FieldId, form: &MpForm) {
         .with_child((text(field_text(form.get(id), id.masked(), focused), FONT_BODY, TEXT), TextLayout::no_wrap(), FieldText(id)));
 }
 
-fn action(parent: &mut ChildSpawnerCommands, s: &str, b: MpButton, color: Color, width: f32) {
-    parent.spawn((button(Node { width: px(width), height: px(34), ..default() }, color), b)).with_child(text(s, FONT_BODY, TEXT));
+fn action(parent: &mut ChildSpawnerCommands, s: &str, b: MpButton, (color, skin): (Color, ButtonSkin), width: f32) {
+    parent.spawn((skinned_button(Node { width: px(width), height: px(34), ..default() }, color, skin), b)).with_child(text(s, FONT_BODY, TEXT));
 }
 
 fn small(parent: &mut ChildSpawnerCommands, s: &str, b: MpButton) {
     parent.spawn((button(Node { height: px(26), padding: UiRect::axes(px(8), px(2)), ..default() }, theme::BUTTON), b)).with_child(text(s, FONT_SMALL, TEXT));
 }
 
-const GREEN: Color = Color::srgb(0.16, 0.36, 0.18);
-const BLUE: Color = Color::srgb(0.17, 0.25, 0.37);
+/// The going-ahead actions (Connect, Create room, Log in, Start): green,
+/// and in the skin a Train button like the menu's Start.
+const GO: (Color, ButtonSkin) = (Color::srgb(0.16, 0.36, 0.18), ButtonSkin::Train);
+/// Sign up, beside Log in: blue, a Command button.
+const ALT: (Color, ButtonSkin) = (Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command);
+/// Every other action (Back, Refresh, Leave, ...).
+const PLAIN: (Color, ButtonSkin) = (theme::BUTTON, ButtonSkin::Plain);
 
 fn spawn_connect(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) {
-    c.spawn((theme::panel_node(column()), theme::panel_colors())).with_children(|p| {
+    c.spawn((theme::panel_node(column()), theme::panel_colors(), SkinPanel::Panel)).with_children(|p| {
         p.spawn(text("Join a server", FONT_LARGE, TEXT));
         p.spawn(row()).with_children(|r| {
             label(r, "Server");
@@ -355,15 +363,15 @@ fn spawn_connect(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpFo
         p.spawn(text("A server is host:port (the port is 7777 unless the host changed it).", FONT_SMALL, TEXT_DIM));
         p.spawn(row()).with_children(|r| {
             let connecting = session.status == NetStatus::Connecting;
-            action(r, if connecting { "Connecting..." } else { "Connect" }, MpButton::Connect, GREEN, 160.0);
-            action(r, "Back", MpButton::Back, theme::BUTTON, 120.0);
+            action(r, if connecting { "Connecting..." } else { "Connect" }, MpButton::Connect, GO, 160.0);
+            action(r, "Back", MpButton::Back, PLAIN, 120.0);
         });
     });
 }
 
 fn spawn_hub(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) {
     c.spawn(Node { flex_wrap: FlexWrap::Wrap, justify_content: JustifyContent::Center, column_gap: px(20), row_gap: px(14), ..default() }).with_children(|body| {
-        body.spawn((theme::panel_node(column()), theme::panel_colors())).with_children(|p| {
+        body.spawn((theme::panel_node(column()), theme::panel_colors(), SkinPanel::Panel)).with_children(|p| {
             p.spawn(text("Casual rooms", FONT_LARGE, TEXT));
             p.spawn(text("Up to six friends, lockstep, no ratings.", FONT_SMALL, TEXT_DIM));
             if session.rooms.is_empty() {
@@ -387,11 +395,11 @@ fn spawn_hub(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) 
                 field(r, FieldId::RoomName, form);
             });
             p.spawn(row()).with_children(|r| {
-                action(r, "Create room", MpButton::CreateRoom, GREEN, 160.0);
-                action(r, "Refresh", MpButton::RefreshRooms, theme::BUTTON, 120.0);
+                action(r, "Create room", MpButton::CreateRoom, GO, 160.0);
+                action(r, "Refresh", MpButton::RefreshRooms, PLAIN, 120.0);
             });
         });
-        body.spawn((theme::panel_node(column()), theme::panel_colors())).with_children(|p| {
+        body.spawn((theme::panel_node(column()), theme::panel_colors(), SkinPanel::Panel)).with_children(|p| {
             p.spawn(text("Ranked", FONT_LARGE, TEXT));
             if !session.ranked_enabled {
                 p.spawn(text("This server has no ranked play.", FONT_BODY, TEXT_DIM));
@@ -412,8 +420,8 @@ fn spawn_hub(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) 
                         if session.auth_busy {
                             r.spawn(text("Signing in...", FONT_BODY, TEXT_DIM));
                         } else {
-                            action(r, "Log in", MpButton::LogIn, GREEN, 140.0);
-                            action(r, "Sign up", MpButton::SignUp, BLUE, 140.0);
+                            action(r, "Log in", MpButton::LogIn, GO, 140.0);
+                            action(r, "Sign up", MpButton::SignUp, ALT, 140.0);
                         }
                     });
                     p.spawn(text("3-16 letters, digits or underscores; a password of 8 or more.", FONT_SMALL, TEXT_DIM));
@@ -435,7 +443,7 @@ fn spawn_hub(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) 
                         });
                     }
                     p.spawn(row()).with_children(|r| {
-                        action(r, "Leaderboard", MpButton::Leaderboard, theme::BUTTON, 160.0);
+                        action(r, "Leaderboard", MpButton::Leaderboard, PLAIN, 160.0);
                     });
                     for (i, row_) in session.leaderboard.iter().enumerate() {
                         p.spawn(row()).with_children(|r| {
@@ -449,8 +457,8 @@ fn spawn_hub(c: &mut ChildSpawnerCommands, session: &NetSession, form: &MpForm) 
         });
     });
     c.spawn(row()).with_children(|r| {
-        action(r, "Disconnect", MpButton::Disconnect, theme::BUTTON, 140.0);
-        action(r, "Back", MpButton::Back, theme::BUTTON, 120.0);
+        action(r, "Disconnect", MpButton::Disconnect, PLAIN, 140.0);
+        action(r, "Back", MpButton::Back, PLAIN, 120.0);
     });
 }
 
@@ -478,7 +486,7 @@ fn faction_name(data: &GameData, faction: &Option<String>) -> String {
 
 fn spawn_lobby(c: &mut ChildSpawnerCommands, data: &GameData, lobby: &LobbyView) {
     let ranked = matches!(lobby.kind, LobbyKind::Ranked(_));
-    c.spawn((theme::panel_node(Node { width: px(760), ..column() }), theme::panel_colors())).with_children(|p| {
+    c.spawn((theme::panel_node(Node { width: px(760), ..column() }), theme::panel_colors(), SkinPanel::Panel)).with_children(|p| {
         p.spawn(text(lobby_title(lobby), FONT_LARGE, TEXT));
         if lobby.playing {
             p.spawn(text("A match is being played in this room; it waits here when it ends.", FONT_SMALL, theme::TEXT_WARN));
@@ -543,11 +551,11 @@ fn spawn_lobby(c: &mut ChildSpawnerCommands, data: &GameData, lobby: &LobbyView)
         }
         p.spawn(row()).with_children(|r| {
             if lobby.host_is_you && !lobby.playing {
-                action(r, "Start", MpButton::Start, GREEN, 160.0);
+                action(r, "Start", MpButton::Start, GO, 160.0);
             } else if !ranked && !lobby.playing {
                 r.spawn(text("The host starts the match.", FONT_BODY, TEXT_DIM));
             }
-            action(r, "Leave", MpButton::LeaveLobby, theme::BUTTON, 120.0);
+            action(r, "Leave", MpButton::LeaveLobby, PLAIN, 120.0);
         });
     });
 }

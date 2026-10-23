@@ -5,7 +5,8 @@
 //! drawn as their ghosts. Redrawn into a dynamic image four times a
 //! second. Left click/drag moves the camera; right click sends the
 //! selection there (or cancels a pending mode); a pending target command
-//! (Move, Attack, Patrol, Rally) completes on the left-clicked point.
+//! (Move, Attack, Patrol, Rally) completes on the left-clicked point. Both
+//! orders leave a click marker at their point in the world.
 //!
 //! The terrain is drawn once per map at twice the shown size and filtered
 //! down. Each texel weighs every terrain cell under it, water, fords and
@@ -14,7 +15,7 @@
 //! ground, and a pass or a ramp gap stays open.
 
 use af_core::ext::fog::{team_sees, FogGhosts, SeenBy};
-use af_core::ext::input::RtsCamera;
+use af_core::ext::input::{ClickMark, OrderMark, RtsCamera};
 use af_core::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -132,7 +133,8 @@ pub(super) fn create(commands: &mut Commands, images: &mut Assets<Image>) -> Han
 }
 
 pub(super) fn spawn(bottom: &mut ChildSpawnerCommands, image: Handle<Image>) {
-    bottom.spawn((theme::panel_node(Node { padding: UiRect::all(px(4)), flex_shrink: 0.0, ..default() }), theme::panel_colors())).with_child((
+    // The panel's usual padding keeps the map off its frame's metal band.
+    bottom.spawn((theme::panel_node(Node { flex_shrink: 0.0, ..default() }), theme::panel_colors(), crate::skin::SkinPanel::Panel)).with_child((
         MinimapView,
         ImageNode::new(image),
         Node { width: px(MINIMAP_PX as f32), height: px(MINIMAP_PX as f32), ..default() },
@@ -173,6 +175,7 @@ fn minimap_input(
     mut rig: ResMut<CameraRig>,
     mut mode: ResMut<InputMode>,
     mut inbox: ResMut<CommandInbox>,
+    mut commands: Commands,
 ) {
     // The game-over screen covers the minimap and also ends a drag in progress.
     let active = view.single().ok().zip(map).filter(|_| !game_over.blocking());
@@ -191,6 +194,7 @@ fn minimap_input(
                 let entities = if t == TargetAction::Rally { sel.buildings.clone() } else { sel.own_units.clone() };
                 if let Some(kind) = command_at(t, p) {
                     inbox.push(PlayerCommand::new(me, entities, kind).queued(shift));
+                    commands.spawn(ClickMark::new(OrderMark::of_target(t), None, shift).ping(p));
                 }
                 if !shift {
                     *mode = InputMode::Normal;
@@ -224,6 +228,8 @@ fn minimap_input(
             let entities: Vec<Entity> = sel.own_units.iter().chain(&sel.buildings).copied().collect();
             if !entities.is_empty() {
                 inbox.push(PlayerCommand::new(me, entities, CommandKind::Smart { point: p, target: None }).queued(shift));
+                let mark = if sel.own_units.is_empty() { OrderMark::Rally } else { OrderMark::Move };
+                commands.spawn(ClickMark::new(mark, None, shift).ping(p));
             }
         }
     }

@@ -1,6 +1,7 @@
 //! The in-match HUD (`GameState::Playing`): top bar, idle workers, notices,
 //! control groups, selection panel, command card with its tooltip, minimap,
-//! drag box, placement hint, and the pause and game-over overlays.
+//! drag box, placement hint, the unit paths toggle, and the pause and
+//! game-over overlays.
 //!
 //! The node tree is spawned once on entering the match and updated in
 //! place; panels hide with `Display::None`/`Visibility::Hidden` instead of
@@ -14,6 +15,7 @@ pub(crate) mod minimap;
 pub(crate) mod netbar;
 pub(crate) mod notices;
 pub(crate) mod overlays;
+pub(crate) mod paths;
 pub(crate) mod selection;
 pub(crate) mod topbar;
 
@@ -25,6 +27,7 @@ use af_core::prelude::*;
 use bevy::prelude::*;
 
 use crate::card::CardSelection;
+use crate::skin::SkinSet;
 
 /// Whose resources, notices and fog the HUD shows: the local player, or
 /// the player a spectator picked.
@@ -71,7 +74,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<HudView>()
         .init_resource::<SpectatorChoice>()
         .init_resource::<SelectionInfo>()
-        .configure_sets(Update, (HudSet::Prepare, HudSet::Panels).chain().in_set(ClientSet::Ui).run_if(in_state(GameState::Playing)))
+        .configure_sets(Update, (HudSet::Prepare, HudSet::Panels).chain().in_set(ClientSet::Ui).before(SkinSet).run_if(in_state(GameState::Playing)))
         .add_systems(OnEnter(GameState::Playing), (reset_hud_state, spawn_hud).chain())
         .add_systems(Update, (update_view, track_selection, hide_hud).in_set(HudSet::Prepare));
     topbar::plugin(app);
@@ -82,6 +85,7 @@ pub(crate) fn plugin(app: &mut App) {
     minimap::plugin(app);
     overlays::plugin(app);
     netbar::plugin(app);
+    paths::plugin(app);
 }
 
 /// Fresh per-match HUD state (the previous match's selection, card page,
@@ -137,6 +141,9 @@ fn spawn_hud(mut commands: Commands, data: Res<Data>, mut images: ResMut<Assets<
                     });
                 card_view::spawn(bottom);
             });
+            // Before the tooltips and the full-screen panels, which stack
+            // over it (later siblings draw on top).
+            paths::spawn(root);
             card_view::spawn_tooltip(root);
             overlays::spawn(root);
         });

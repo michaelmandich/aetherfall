@@ -25,6 +25,12 @@ pub enum Shade {
     Glow,
     /// Flat colour that ignores lighting (energy effects, bars, markers, ghosts).
     Unlit,
+    /// Unlit, and always drawn after everything else blended, the fog
+    /// overlay included, so fog never dims or hides it (click markers:
+    /// feedback for the local player's own clicks, wherever they land).
+    /// Gizmos (the unit routes) draw before any of it and write depth, so
+    /// a route's stroke still shows across one.
+    Marker,
 }
 
 /// What a box looks like: colour, opacity and shading.
@@ -45,6 +51,9 @@ impl Look {
     }
     pub const fn unlit(color: Rgb, alpha: f32) -> Look {
         Look { color, alpha, shade: Shade::Unlit }
+    }
+    pub const fn marker(color: Rgb, alpha: f32) -> Look {
+        Look { color, alpha, shade: Shade::Marker }
     }
 }
 
