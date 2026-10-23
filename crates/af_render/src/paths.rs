@@ -367,11 +367,14 @@ pub fn plan_route(
             Some(e) => locate(e),
             None => Some(Located { pos: goal.target, live: true }),
         };
-        // Waypoints of an older goal (the new one not yet planned) are not this leg's.
-        let fresh = w.path.goal_seq == goal.seq;
-        let mut blocked = fresh && (w.path.partial || w.path.status == PathStatus::Failed);
+        // Waypoints of an older goal (the new one not yet planned) are not
+        // this leg's. Nor is the path drawn to an entity out of sight: it
+        // leads where the entity really is, and so does whether it is
+        // blocked, so a chase into the fog runs straight to where it was seen.
+        let path_drawn = w.path.goal_seq == goal.seq && !w.flying && end.is_some_and(|e| e.live);
+        let mut blocked = path_drawn && (w.path.partial || w.path.status == PathStatus::Failed);
         plan.push(start, w.pos);
-        if fresh && !w.flying && end.is_some_and(|e| e.live) {
+        if path_drawn {
             let next = w.path.next.min(w.path.waypoints.len());
             let mut from = w.pos;
             for p in &w.path.waypoints[next..] {
@@ -1116,6 +1119,25 @@ mod tests {
         // Never seen: nothing past the unit.
         let unknown = plan_of(&w, true, &[]);
         assert_eq!(legs(&unknown), vec![(vec![p(0.0, 0.0), p(30.0, 0.0)], LegKind::AttackMove, false)]);
+        // A path that cannot reach it is blocked where it really is, which
+        // a chase into the fog does not give away: still the straight leg
+        // (or nothing past the unit), never a cross.
+        let mut partial = path.clone();
+        partial.partial = true;
+        let failed = PathState { status: PathStatus::Failed, ..path.clone() };
+        for stuck in [&partial, &failed] {
+            let w = Walker { path: stuck, ..w };
+            let unseen = plan_of(&w, true, &[(foe, Located { pos: p(5.0, 9.0), live: false })]);
+            assert_eq!(legs(&unseen)[0], (vec![p(0.0, 0.0), p(5.0, 9.0)], LegKind::Attack, true));
+            assert!(unseen.legs.iter().all(|l| !l.blocked));
+            assert_eq!(legs(&plan_of(&w, true, &[])), legs(&unknown));
+            assert!(plan_of(&w, true, &[(foe, Located { pos: p(9.0, 5.0), live: true })]).legs[0].blocked, "in sight, it shows");
+        }
+        // A forced attack chased into the fog ends at its target's ring.
+        let attack = orders(&[Order::Attack { target: foe }]);
+        let forced = plan_of(&Walker { orders: &attack, path: &partial, ..w }, true, &[(foe, Located { pos: p(5.0, 9.0), live: false })]);
+        assert_eq!(legs(&forced), vec![(vec![p(0.0, 0.0), p(5.0, 9.0)], LegKind::Attack, true)]);
+        assert!(forced.legs[0].target && !forced.legs[0].blocked);
         // A fresh unit walking to its rally point has a goal but no orders.
         let none = Orders::default();
         let rally = goal(p(3.0, 3.0), 1);
