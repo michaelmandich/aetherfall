@@ -1,0 +1,18 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "mountain_peak",
+    fit: Height,
+    random_yaw: true,
+    size: (13.000, 8.500, 13.000),
+    variants: [
+        (model: "models/static/decor/mountain_peak/a.glb", min: (-0.490, 0.000, -0.489), max: (0.490, 0.630, 0.489), triangles: 8000),
+        (model: "models/static/decor/mountain_peak/b.glb", min: (-0.490, 0.000, -0.490), max: (0.490, 0.630, 0.490), triangles: 7999),
+        (model: "models/static/decor/mountain_peak/c.glb", min: (-0.427, 0.000, -0.491), max: (0.427, 0.766, 0.491), triangles: 8000),
+        (model: "models/static/decor/mountain_peak/d.glb", min: (-0.490, 0.000, -0.462), max: (0.490, 0.731, 0.462), triangles: 8000),
+    ],
+    stump: None,
+    banner: false,
+)

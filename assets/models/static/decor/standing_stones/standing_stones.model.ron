@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "standing_stones",
+    fit: Footprint,
+    random_yaw: true,
+    size: (5.000, 3.200, 3.000),
+    variants: [
+        (model: "models/static/decor/standing_stones/a.glb", min: (-0.458, 0.000, -0.466), max: (0.458, 0.472, 0.466), triangles: 1499),
+        (model: "models/static/decor/standing_stones/b.glb", min: (-0.441, 0.000, -0.489), max: (0.441, 0.575, 0.489), triangles: 1500),
+    ],
+    stump: None,
+    banner: false,
+)

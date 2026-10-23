@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "shipwreck",
+    fit: Footprint,
+    random_yaw: true,
+    size: (12.000, 5.000, 5.000),
+    variants: [
+        (model: "models/static/decor/shipwreck/a.glb", min: (-0.489, 0.000, -0.230), max: (0.489, 0.434, 0.230), triangles: 3000),
+    ],
+    stump: None,
+    banner: false,
+)

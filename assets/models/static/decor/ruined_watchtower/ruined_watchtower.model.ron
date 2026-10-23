@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "ruined_watchtower",
+    fit: Height,
+    random_yaw: true,
+    size: (5.000, 7.500, 5.000),
+    variants: [
+        (model: "models/static/decor/ruined_watchtower/a.glb", min: (-0.373, 0.000, -0.463), max: (0.373, 0.974, 0.463), triangles: 2997),
+    ],
+    stump: None,
+    banner: false,
+)

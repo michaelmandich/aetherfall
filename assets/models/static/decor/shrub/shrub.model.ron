@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "shrub",
+    fit: Footprint,
+    random_yaw: true,
+    size: (1.600, 1.300, 1.600),
+    variants: [
+        (model: "models/static/decor/shrub/a.glb", min: (-0.469, 0.000, -0.477), max: (0.469, 0.579, 0.477), triangles: 1500),
+        (model: "models/static/decor/shrub/b.glb", min: (-0.349, 0.000, -0.479), max: (0.349, 0.925, 0.479), triangles: 1492),
+    ],
+    stump: None,
+    banner: false,
+)

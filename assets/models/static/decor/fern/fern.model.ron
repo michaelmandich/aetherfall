@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "fern",
+    fit: Footprint,
+    random_yaw: true,
+    size: (1.200, 0.800, 1.200),
+    variants: [
+        (model: "models/static/decor/fern/a.glb", min: (-0.471, 0.000, -0.462), max: (0.471, 0.695, 0.462), triangles: 1500),
+        (model: "models/static/decor/fern/b.glb", min: (-0.442, 0.000, -0.424), max: (0.442, 0.471, 0.424), triangles: 1500),
+    ],
+    stump: None,
+    banner: false,
+)

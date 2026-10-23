@@ -9,7 +9,9 @@
     variants: [
         (model: "models/static/nodes/oak/a.glb", min: (-0.670, 0.000, -0.636), max: (0.670, 1.884, 0.636), triangles: 2986),
         (model: "models/static/nodes/oak/b.glb", min: (-0.808, 0.000, -0.815), max: (0.808, 1.892, 0.815), triangles: 2982),
+        (model: "models/static/nodes/oak/d.glb", min: (-0.488, 0.000, -0.303), max: (0.488, 0.975, 0.303), triangles: 3000),
+        (model: "models/static/nodes/oak/e.glb", min: (-0.485, 0.000, -0.326), max: (0.485, 0.828, 0.326), triangles: 3000),
     ],
-    stump: None,
+    stump: Some((model: "models/static/nodes/oak/stump.glb", min: (-0.489, 0.000, -0.491), max: (0.489, 0.485, 0.491), triangles: 300)),
     banner: false,
 )

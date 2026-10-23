@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "fallen_log",
+    fit: Footprint,
+    random_yaw: true,
+    size: (5.000, 0.800, 1.200),
+    variants: [
+        (model: "models/static/decor/fallen_log/a.glb", min: (-0.488, 0.000, -0.226), max: (0.488, 0.307, 0.226), triangles: 1000),
+        (model: "models/static/decor/fallen_log/b.glb", min: (-0.493, 0.000, -0.278), max: (0.493, 0.394, 0.278), triangles: 1000),
+    ],
+    stump: None,
+    banner: false,
+)

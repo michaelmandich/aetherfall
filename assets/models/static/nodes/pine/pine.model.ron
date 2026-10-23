@@ -10,7 +10,8 @@
         (model: "models/static/nodes/pine/a.glb", min: (-0.494, 0.000, -0.531), max: (0.494, 1.873, 0.531), triangles: 2999),
         (model: "models/static/nodes/pine/b.glb", min: (-0.333, 0.000, -0.355), max: (0.333, 1.874, 0.355), triangles: 2999),
         (model: "models/static/nodes/pine/c.glb", min: (-0.468, 0.000, -0.490), max: (0.468, 1.848, 0.490), triangles: 2994),
+        (model: "models/static/nodes/pine/d.glb", min: (-0.488, 0.000, -0.413), max: (0.488, 0.857, 0.413), triangles: 3000),
     ],
-    stump: None,
+    stump: Some((model: "models/static/nodes/pine/stump.glb", min: (-0.440, 0.000, -0.480), max: (0.440, 0.576, 0.480), triangles: 300)),
     banner: false,
 )

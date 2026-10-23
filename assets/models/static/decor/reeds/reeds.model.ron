@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "reeds",
+    fit: Height,
+    random_yaw: true,
+    size: (1.200, 1.500, 1.200),
+    variants: [
+        (model: "models/static/decor/reeds/a.glb", min: (-0.491, 0.000, -0.487), max: (0.491, 0.894, 0.487), triangles: 1499),
+        (model: "models/static/decor/reeds/b.glb", min: (-0.491, 0.000, -0.491), max: (0.491, 0.787, 0.491), triangles: 1500),
+        (model: "models/static/decor/reeds/c.glb", min: (-0.424, 0.000, -0.440), max: (0.424, 0.985, 0.440), triangles: 1500),
+    ],
+    stump: None,
+    banner: false,
+)

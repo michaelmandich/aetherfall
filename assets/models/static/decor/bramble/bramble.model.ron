@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "bramble",
+    fit: Footprint,
+    random_yaw: true,
+    size: (2.200, 1.300, 2.200),
+    variants: [
+        (model: "models/static/decor/bramble/a.glb", min: (-0.468, 0.000, -0.446), max: (0.468, 0.644, 0.446), triangles: 1497),
+        (model: "models/static/decor/bramble/b.glb", min: (-0.473, 0.000, -0.214), max: (0.473, 0.355, 0.214), triangles: 1500),
+        (model: "models/static/decor/bramble/c.glb", min: (-0.469, 0.000, -0.363), max: (0.469, 0.780, 0.363), triangles: 1500),
+    ],
+    stump: None,
+    banner: false,
+)

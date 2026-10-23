@@ -1,0 +1,16 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "star_core",
+    fit: Footprint,
+    random_yaw: true,
+    size: (6.000, 3.500, 6.000),
+    variants: [
+        (model: "models/static/decor/star_core/a.glb", min: (-0.491, 0.000, -0.469), max: (0.491, 0.510, 0.469), triangles: 5000),
+        (model: "models/static/decor/star_core/b.glb", min: (-0.491, 0.000, -0.490), max: (0.491, 0.578, 0.490), triangles: 5000),
+    ],
+    stump: None,
+    banner: false,
+)

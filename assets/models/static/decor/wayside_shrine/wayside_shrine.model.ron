@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "wayside_shrine",
+    fit: Height,
+    random_yaw: true,
+    size: (1.400, 2.400, 1.200),
+    variants: [
+        (model: "models/static/decor/wayside_shrine/a.glb", min: (-0.383, 0.000, -0.368), max: (0.383, 0.977, 0.368), triangles: 1499),
+    ],
+    stump: None,
+    banner: false,
+)

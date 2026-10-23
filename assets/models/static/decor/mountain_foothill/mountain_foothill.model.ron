@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "mountain_foothill",
+    fit: Footprint,
+    random_yaw: true,
+    size: (10.000, 3.000, 8.000),
+    variants: [
+        (model: "models/static/decor/mountain_foothill/a.glb", min: (-0.476, 0.000, -0.490), max: (0.476, 0.422, 0.490), triangles: 4000),
+        (model: "models/static/decor/mountain_foothill/b.glb", min: (-0.490, 0.000, -0.396), max: (0.490, 0.270, 0.396), triangles: 4000),
+        (model: "models/static/decor/mountain_foothill/c.glb", min: (-0.475, 0.000, -0.490), max: (0.475, 0.287, 0.490), triangles: 4000),
+    ],
+    stump: None,
+    banner: false,
+)

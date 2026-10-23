@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "crater_rim",
+    fit: Footprint,
+    random_yaw: true,
+    size: (10.000, 2.500, 4.000),
+    variants: [
+        (model: "models/static/decor/crater_rim/a.glb", min: (-0.490, 0.000, -0.375), max: (0.490, 0.260, 0.375), triangles: 5000),
+        (model: "models/static/decor/crater_rim/b.glb", min: (-0.490, 0.000, -0.408), max: (0.490, 0.243, 0.408), triangles: 4999),
+        (model: "models/static/decor/crater_rim/c.glb", min: (-0.490, 0.000, -0.255), max: (0.490, 0.258, 0.255), triangles: 5000),
+    ],
+    stump: None,
+    banner: false,
+)

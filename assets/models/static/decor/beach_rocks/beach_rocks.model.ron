@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "beach_rocks",
+    fit: Footprint,
+    random_yaw: true,
+    size: (4.000, 0.800, 2.600),
+    variants: [
+        (model: "models/static/decor/beach_rocks/a.glb", min: (-0.473, 0.000, -0.301), max: (0.473, 0.262, 0.301), triangles: 999),
+    ],
+    stump: None,
+    banner: false,
+)

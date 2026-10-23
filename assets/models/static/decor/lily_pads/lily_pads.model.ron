@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "lily_pads",
+    fit: Footprint,
+    random_yaw: true,
+    size: (2.400, 0.150, 2.400),
+    variants: [
+        (model: "models/static/decor/lily_pads/a.glb", min: (-0.447, 0.000, -0.486), max: (0.447, 0.214, 0.486), triangles: 599),
+    ],
+    stump: None,
+    banner: false,
+)

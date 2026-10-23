@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "mossy_boulder",
+    fit: Footprint,
+    random_yaw: true,
+    size: (1.800, 1.200, 1.500),
+    variants: [
+        (model: "models/static/decor/mossy_boulder/a.glb", min: (-0.487, 0.000, -0.490), max: (0.487, 0.552, 0.490), triangles: 1000),
+        (model: "models/static/decor/mossy_boulder/b.glb", min: (-0.300, 0.000, -0.479), max: (0.300, 0.382, 0.479), triangles: 1000),
+        (model: "models/static/decor/mossy_boulder/c.glb", min: (-0.461, 0.000, -0.482), max: (0.461, 0.780, 0.482), triangles: 999),
+    ],
+    stump: None,
+    banner: false,
+)

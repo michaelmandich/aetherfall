@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "river_rocks",
+    fit: Footprint,
+    random_yaw: true,
+    size: (2.000, 0.450, 1.400),
+    variants: [
+        (model: "models/static/decor/river_rocks/a.glb", min: (-0.483, 0.000, -0.371), max: (0.483, 0.228, 0.371), triangles: 800),
+        (model: "models/static/decor/river_rocks/b.glb", min: (-0.440, 0.000, -0.491), max: (0.440, 0.451, 0.491), triangles: 800),
+        (model: "models/static/decor/river_rocks/c.glb", min: (-0.487, 0.000, -0.218), max: (0.487, 0.193, 0.218), triangles: 800),
+    ],
+    stump: None,
+    banner: false,
+)

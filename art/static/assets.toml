@@ -103,3 +103,18 @@ banner = false
 
 [archery_range]
 cut_plate = { a = 0.08 }   # Meshy stood it on a dark dirt pad that read as a slab in game
+
+# --- Tripo Studio scenery (2026-10-22) ---
+
+# Birch and willow have no game data yet (no nodes.ron entry), so the build
+# would size them like rocks; they are trees.
+[birch]
+fit = "Height"
+triangles = 3000
+
+[willow]
+fit = "Height"
+triangles = 3000
+
+[fern]
+triangles = 1500   # fern_b's fronds stall the collapse at ~1350 of the default 1200

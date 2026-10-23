@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "stone_bridge",
+    fit: Footprint,
+    random_yaw: true,
+    size: (12.000, 3.000, 3.400),
+    variants: [
+        (model: "models/static/decor/stone_bridge/a.glb", min: (-0.490, 0.000, -0.292), max: (0.490, 0.361, 0.292), triangles: 2500),
+    ],
+    stump: None,
+    banner: false,
+)

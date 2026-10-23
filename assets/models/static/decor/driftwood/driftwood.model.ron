@@ -1,0 +1,15 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "driftwood",
+    fit: Footprint,
+    random_yaw: true,
+    size: (3.500, 0.500, 1.200),
+    variants: [
+        (model: "models/static/decor/driftwood/a.glb", min: (-0.490, 0.000, -0.200), max: (0.490, 0.293, 0.200), triangles: 800),
+    ],
+    stump: None,
+    banner: false,
+)

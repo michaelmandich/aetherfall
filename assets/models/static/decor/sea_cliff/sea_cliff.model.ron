@@ -1,0 +1,17 @@
+// Written by art/static/build_static.py; do not edit by hand.
+// Paths are relative to the asset folder. min/max: the model's bounds in
+// metres (y up, front +Z) without the team banner; triangles include it.
+(
+    kind: Decor,
+    id: "sea_cliff",
+    fit: Footprint,
+    random_yaw: true,
+    size: (24.000, 7.000, 7.000),
+    variants: [
+        (model: "models/static/decor/sea_cliff/a.glb", min: (-0.490, 0.000, -0.245), max: (0.490, 0.565, 0.245), triangles: 5000),
+        (model: "models/static/decor/sea_cliff/b.glb", min: (-0.447, 0.000, -0.490), max: (0.447, 0.649, 0.490), triangles: 5000),
+        (model: "models/static/decor/sea_cliff/c.glb", min: (-0.491, 0.000, -0.453), max: (0.491, 0.502, 0.453), triangles: 5000),
+    ],
+    stump: None,
+    banner: false,
+)
