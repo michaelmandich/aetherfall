@@ -443,11 +443,18 @@ fn the_paths_button_flips_the_toggle_and_shows_its_state() {
     app.update();
     let shown = button(&mut app, "Paths: on (P)");
     assert_ne!(app.world().get::<Node>(shown).unwrap().display, Display::None);
-    // P (af_input) flips it back; the label follows.
+    // On, the skin lights it as a lasting choice (a steady gold glow).
+    let look = |app: &App| *app.world().get::<SkinLook>(shown).unwrap();
+    assert_eq!(look(&app), SkinLook { usable: Usable::Yes, active: true, accent: Some(crate::theme::HIGHLIGHT) });
+    // P (af_input) flips it back; the label follows, in plain text (not
+    // the dim grey of a disabled control).
     app.world_mut().resource_mut::<ShowPaths>().on = false;
     app.update();
     let t = texts(&mut app);
     assert!(t.contains(&"Paths: off (P)".to_string()), "{t:?}");
+    assert!(!look(&app).active);
+    let colour = app.world().get::<Children>(shown).unwrap().iter().find_map(|c| app.world().get::<TextColor>(c)).unwrap();
+    assert_eq!(colour.0, crate::theme::TEXT);
     // Too many routes to draw (af_render): the button says how many are.
     app.insert_resource(RoutesShown { drawn: 64, wanted: 80 });
     app.update();

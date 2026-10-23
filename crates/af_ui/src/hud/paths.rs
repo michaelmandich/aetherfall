@@ -7,6 +7,7 @@ use af_core::ext::render::RoutesShown;
 use bevy::prelude::*;
 
 use super::{HudSet, HudView};
+use crate::skin::SkinLook;
 use crate::theme::{self, set_color, set_display, set_text, text, Tip, FONT_SMALL};
 
 #[derive(Component)]
@@ -23,9 +24,10 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
     root.spawn((
         theme::button(Node { position_type: PositionType::Absolute, top: px(76), right: px(8), ..default() }, theme::BUTTON),
         PathsButton,
+        SkinLook::default(),
         Tip("Show where the selected units are going and the orders they have queued (P; hold Shift to look). A selected patrol always shows its route. With a big army selected, the routes of the units nearest the centre of the view are drawn.".into()),
     ))
-    .with_child((text(label(false, RoutesShown::default()), FONT_SMALL, theme::TEXT_DIM), PathsLabel));
+    .with_child((text(label(false, RoutesShown::default()), FONT_SMALL, theme::TEXT), theme::text_shadow(), PathsLabel));
 }
 
 /// The button's text for the toggle being on or off, and how many routes
@@ -50,22 +52,24 @@ fn toggle_paths(pressed: Query<&Interaction, (With<PathsButton>, Changed<Interac
 }
 
 /// The label says whether paths are on (and how many routes are drawn
-/// when some are left out); spectators command nothing, so they get no
-/// button.
+/// when some are left out), gold while on, and the skin gives the button a
+/// steady gold glow, a lasting choice like the selection's stance;
+/// spectators command nothing, so they get no button.
 fn show_paths_state(
     view: Res<HudView>,
     paths: Option<Res<ShowPaths>>,
     shown: Option<Res<RoutesShown>>,
-    mut button: Query<&mut Node, With<PathsButton>>,
+    mut button: Query<(&mut Node, &mut SkinLook), With<PathsButton>>,
     mut labels: Query<(&mut Text, &mut TextColor), With<PathsLabel>>,
 ) {
-    for mut node in &mut button {
-        set_display(&mut node, !view.spectating);
-    }
     let on = paths.is_some_and(|p| p.on);
+    for (mut node, mut look) in &mut button {
+        set_display(&mut node, !view.spectating);
+        look.set_if_neq(SkinLook { active: on, accent: Some(theme::HIGHLIGHT), ..default() });
+    }
     let shown = shown.map_or_else(RoutesShown::default, |s| *s);
     for (mut t, mut color) in &mut labels {
         set_text(&mut t, &label(on, shown));
-        set_color(&mut color, if on { theme::HIGHLIGHT } else { theme::TEXT_DIM });
+        set_color(&mut color, if on { theme::HIGHLIGHT } else { theme::TEXT });
     }
 }
