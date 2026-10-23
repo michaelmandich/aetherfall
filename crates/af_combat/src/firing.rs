@@ -43,21 +43,24 @@ pub(crate) struct Scratch {
     chained: Vec<Entity>,
 }
 
-/// Advances every weapon slot: cooldown, windup, and firing.
+/// Advances every weapon slot: cooldown, windup, and firing. Shooters go in
+/// entity index order, not table order (which client inserts on sim entities
+/// change): shots draw on `SimRng`, write their damage and spawn their
+/// projectiles and effects in turn.
 #[allow(clippy::type_complexity)]
 pub(crate) fn cycle_weapons(
     arena: Arena,
     mut out: Effects,
     mut scratch: Local<Scratch>,
+    mut order: Local<Vec<Entity>>,
     mut shooters: Query<
         (Entity, &Owner, &Position, &Facing, &Altitude, &Footprint, &Stats, &mut Weapons, Has<Building>),
         (Without<Dead>, Without<UnderConstruction>),
     >,
 ) {
-    for (entity, owner, pos, facing, alt, fp, stats, mut weapons, on_building) in &mut shooters {
-        if weapons.slots.is_empty() {
-            continue;
-        }
+    af_core::by_entity_index(&mut order, shooters.iter().filter(|(.., weapons, _)| !weapons.slots.is_empty()).map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((entity, owner, pos, facing, alt, fp, stats, mut weapons, on_building)) = shooters.get_mut(e) else { continue };
         let shooter = Shooter {
             entity,
             player: owner.0,

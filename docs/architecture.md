@@ -73,18 +73,36 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   else who asks).
 * Determinism: sim spawns draw entity ids from a reserved range
   (`af_core::sim_ids`), so client-side spawns (visuals, UI) never shift the
-  ids the simulation sees; the same seed replays identically headless or
-  windowed (`crates/aetherfall/tests/determinism.rs`).
-  Client-only components (`Selected`, `BoxVisual`, a model marker) move a
-  unit to another archetype and change the order queries visit units, so
-  no sim system may depend on that order: whatever is first come first
-  served (node room, field slots, the path queue, healers' patients),
-  whatever sums floats (steering's avoidance pushes, damage, what workers
-  take from a node) and whatever breaks ties by insertion (the spatial
-  index) visits entities sorted by `Entity`. `tests/determinism.rs`
-  marks every second unit with an empty component and checks that five
-  minutes of play stay bit-identical; lockstep peers with different
-  selections depend on it.
+  ids the simulation sees. Nor does the order a query visits entities in
+  matter, which is table order and changes whenever the client puts a
+  component on a sim entity (`Selected`, `BoxVisual`, a model marker, the
+  `FxDrawn` of every effect): wherever one entity's turn reaches another's
+  (shared nodes, field slots, stocks and hit points, float sums, `SimRng`
+  draws, spawns, despawns, messages, notices, the path queue, the first come
+  taking a place), the system goes in entity index order
+  (`af_core::by_entity_index`: sorted once a tick into a buffer kept in a
+  `Local`; fresh ids are handed out in spawn order, so this is mostly the
+  order a headless run's tables hold anyway, older first), and every
+  spatial index cell lists its entries by entity index
+  (`SpatialIndex::sort_cells`), so searches and their ties do not depend on
+  table order either. The systems that do: `collect_requests` (path
+  queue), `steer` (avoidance sums), `sync_obstacles` (registry slots),
+  gathering, building and repair, healing, the fight orders' notices,
+  `cycle_weapons`, every projectile system, `animate_fx` (despawns),
+  `advance_queues`, `complete_construction` and `trickle_income`; the
+  collision solver, `aim_weapons`, Cleanup and the AI snapshot already
+  did. New sim code that lets one entity's work reach another's must do the
+  same. So the same seed replays identically headless or windowed, and
+  `--select` changes nothing (`crates/aetherfall/tests/determinism.rs`:
+  `client_markers_on_sim_entities_do_not_change_the_match` tags every sim
+  entity from tick 90 on as a client does, every one with one empty marker
+  and every other one of each kind with another, and checks every unit,
+  building, node and stock bit for bit, entity ids included, after five
+  sim minutes; `--release -- --ignored` adds a four-player match with
+  fighting, twelve minutes). Cost: about 0.02 ms per tick (some 5 %) in
+  the ten-minute six-player match of `tests/profile.rs` on the
+  single-threaded executor; on the default one it is lost in run-to-run
+  noise.
 * Pathing on big maps (`docs/design/maps-and-terrain.md`, section 7): a
   single A* search stops after 24,000 cells, so a river or a range across
   the map is handled a level up. af_geom labels the connected regions of

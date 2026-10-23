@@ -292,25 +292,34 @@ fn apply(nav: &mut NavGrid, o: &Obstacle, add: bool) {
     }
 }
 
-/// Register added/changed obstacles in `Nav` (first system of Pathing).
+/// Register added/changed obstacles in `Nav` (first system of Pathing), in
+/// entity index order, not table order (which client inserts on sim entities
+/// change): registry slots go to obstacles in the order they come, and the
+/// collision push-out visits a cell's boxes in slot order.
 pub(crate) fn sync_obstacles(
     mut nav: ResMut<Nav>,
     mut reg: ResMut<ObstacleRegistry>,
+    mut sorted: Local<Vec<(Entity, Obstacle)>>,
     all: Query<(Entity, &Obstacle)>,
     changed: Query<(Entity, &Obstacle), Changed<Obstacle>>,
 ) {
     reg.fresh.clear();
+    sorted.clear();
     if reg.tag == 0 || nav.sync_tag() != reg.tag {
         reg.reset(&mut nav);
-        for (e, o) in &all {
-            reg.insert(&mut nav, e, o);
+        sorted.extend(all.iter().map(|(e, o)| (e, *o)));
+        sorted.sort_unstable_by_key(|s| s.0.index_u32());
+        for (e, o) in sorted.iter() {
+            reg.insert(&mut nav, *e, o);
         }
         // Everything is new; no path predates this grid.
         reg.fresh.clear();
         return;
     }
-    for (e, o) in &changed {
-        reg.upsert(&mut nav, e, o);
+    sorted.extend(changed.iter().map(|(e, o)| (e, *o)));
+    sorted.sort_unstable_by_key(|s| s.0.index_u32());
+    for (e, o) in sorted.iter() {
+        reg.upsert(&mut nav, *e, o);
     }
 }
 

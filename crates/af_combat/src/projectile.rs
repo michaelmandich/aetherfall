@@ -2,6 +2,10 @@
 //! moved and resolved into damage here (`SimSet::Projectiles`). Each one is
 //! an entity with its `FxBox` (what af_render draws), the shooter's
 //! [`Payload`] and one flight component.
+//!
+//! Each flight system moves its projectiles in entity index order, not table
+//! order (which af_render's components on every `FxBox` change): their
+//! damage, effects and despawns come in turn.
 
 use std::f32::consts::PI;
 
@@ -276,8 +280,15 @@ fn impact_fx(fx: &mut FxSpawner, def: &WeaponDef, at: Vec3, layer: Layer) {
     }
 }
 
-pub(crate) fn fly_bolts(arena: Arena, mut out: Effects, mut bolts: Query<(Entity, &Payload, &mut BoltFlight, &mut FxBox)>) {
-    for (e, p, mut f, mut b) in &mut bolts {
+pub(crate) fn fly_bolts(
+    arena: Arena,
+    mut out: Effects,
+    mut order: Local<Vec<Entity>>,
+    mut bolts: Query<(Entity, &Payload, &mut BoltFlight, &mut FxBox)>,
+) {
+    af_core::by_entity_index(&mut order, bolts.iter().map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((e, p, mut f, mut b)) = bolts.get_mut(e) else { continue };
         let target = arena.body(f.target);
         if let Some(t) = &target {
             f.aim = t.aim_point();
@@ -301,8 +312,15 @@ pub(crate) fn fly_bolts(arena: Arena, mut out: Effects, mut bolts: Query<(Entity
     }
 }
 
-pub(crate) fn fly_homing(arena: Arena, mut out: Effects, mut missiles: Query<(Entity, &Payload, &mut HomingFlight, &mut FxBox)>) {
-    for (e, p, mut f, mut b) in &mut missiles {
+pub(crate) fn fly_homing(
+    arena: Arena,
+    mut out: Effects,
+    mut order: Local<Vec<Entity>>,
+    mut missiles: Query<(Entity, &Payload, &mut HomingFlight, &mut FxBox)>,
+) {
+    af_core::by_entity_index(&mut order, missiles.iter().map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((e, p, mut f, mut b)) = missiles.get_mut(e) else { continue };
         let target = f.target.and_then(|t| arena.body(t));
         match &target {
             Some(t) => {
@@ -351,8 +369,15 @@ pub(crate) fn fly_homing(arena: Arena, mut out: Effects, mut missiles: Query<(En
     }
 }
 
-pub(crate) fn fly_ballistic(arena: Arena, mut out: Effects, mut shells: Query<(Entity, &Payload, &mut BallisticFlight, &mut FxBox)>) {
-    for (e, p, mut f, mut b) in &mut shells {
+pub(crate) fn fly_ballistic(
+    arena: Arena,
+    mut out: Effects,
+    mut order: Local<Vec<Entity>>,
+    mut shells: Query<(Entity, &Payload, &mut BallisticFlight, &mut FxBox)>,
+) {
+    af_core::by_entity_index(&mut order, shells.iter().map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((e, p, mut f, mut b)) = shells.get_mut(e) else { continue };
         f.t += SIM_DT;
         let s = (f.t / f.duration).min(1.0);
         let (pos, dir) = f.at(s);
@@ -371,9 +396,12 @@ pub(crate) fn fly_cannon_shots(
     arena: Arena,
     mut out: Effects,
     mut crossings: Local<Vec<(f32, Body)>>,
+    mut order: Local<Vec<Entity>>,
     mut shots: Query<(Entity, &Payload, &mut CannonFlight, &mut FxBox)>,
 ) {
-    for (e, p, mut f, mut b) in &mut shots {
+    af_core::by_entity_index(&mut order, shots.iter().map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((e, p, mut f, mut b)) = shots.get_mut(e) else { continue };
         let def = arena.data().weapon(p.weapon);
         let step = (f.speed * SIM_DT).min(f.distance - f.travelled).max(0.0);
         let (a, dir) = (f.at, f.dir);
@@ -420,8 +448,15 @@ pub(crate) fn fly_cannon_shots(
     }
 }
 
-pub(crate) fn update_beams(arena: Arena, mut out: Effects, mut beams: Query<(Entity, &Payload, &mut BeamLink, &mut FxBox)>) {
-    for (e, p, mut beam, mut b) in &mut beams {
+pub(crate) fn update_beams(
+    arena: Arena,
+    mut out: Effects,
+    mut order: Local<Vec<Entity>>,
+    mut beams: Query<(Entity, &Payload, &mut BeamLink, &mut FxBox)>,
+) {
+    af_core::by_entity_index(&mut order, beams.iter().map(|(e, ..)| e));
+    for &e in order.iter() {
+        let Ok((e, p, mut beam, mut b)) = beams.get_mut(e) else { continue };
         let Some(source) = arena.body(p.source) else {
             out.fx.commands.entity(e).try_despawn();
             continue;

@@ -62,13 +62,23 @@ pub(crate) struct Works<'w, 's> {
 
 /// Builders walk up to their foundation and add progress together (with
 /// mild diminishing returns); af_economy completes the building. Repairers
-/// mend at their repair rate until full.
-pub(crate) fn run_build_orders(mut builders: Query<Builder, (With<Unit>, Without<Dead>)>, mut works: Works, mut working: Local<Vec<Entity>>) {
+/// mend at their repair rate until full. They go in entity index order, not table
+/// order (which client inserts on sim entities change): repairers of one
+/// building add to its hit points one after another.
+pub(crate) fn run_build_orders(
+    mut builders: Query<Builder, (With<Unit>, Without<Dead>)>,
+    mut works: Works,
+    mut working: Local<Vec<Entity>>,
+    mut order: Local<Vec<Entity>>,
+) {
     working.clear();
-    for mut u in &mut builders {
-        if !u.brain.synced(&u.orders) {
-            continue;
-        }
+    // Only synced brains building or repairing act (no unit changes another's brain).
+    let busy = |u: &BuilderReadOnlyItem| {
+        u.brain.synced(u.orders) && matches!(u.orders.current(), Some(Order::Build { .. } | Order::Repair { .. }))
+    };
+    af_core::by_entity_index(&mut order, builders.iter().filter(busy).map(|u| u.entity));
+    for &e in order.iter() {
+        let Ok(mut u) = builders.get_mut(e) else { continue };
         match u.orders.current().copied() {
             Some(Order::Build { site }) => {
                 if works.build(&mut u, site) {

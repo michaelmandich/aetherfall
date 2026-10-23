@@ -5,8 +5,14 @@
 //!   match (Bevy's ambiguity detection, applied to the whole sim).
 //! * How many sim ticks run per frame does not matter: a windowed game runs
 //!   one or two per frame, the headless harness thirty.
+//! * What the client puts on sim entities does not matter: a marker
+//!   component moves an entity to another archetype, which changes the
+//!   order queries visit entities in, and no sim system depends on that
+//!   order.
 //!
 //! `matches.rs` checks that the same seed replays identically.
+
+use std::collections::HashSet;
 
 use aetherfall::*;
 use af_core::prelude::*;
@@ -38,17 +44,55 @@ fn sim_systems_touching_the_same_data_are_ordered() {
     assert!(report.is_empty(), "{report}");
 }
 
-/// A unit as (type, position x, position z, facing), bit for bit.
-type UnitBits = (u16, u32, u32, u32);
+/// A unit as (entity, type, position x, position z, facing, hp), bit for bit.
+type UnitBits = (u64, u16, u32, u32, u32, u32);
+/// A building as (entity, type, hp, construction progress), bit for bit.
+type BuildingBits = (u64, u16, u32, u32);
 
-/// Every unit's type, position and facing, and every player's resources.
-fn state(app: &mut App) -> (Vec<UnitBits>, Vec<[u32; MAX_RESOURCES]>) {
+/// The match, bit for bit: every unit (entity, type, position, facing, hp),
+/// every building (entity, type, hp, construction progress), every resource
+/// node (entity, what is left) and every player's resources.
+#[derive(Debug, PartialEq)]
+struct MatchState {
+    units: Vec<UnitBits>,
+    buildings: Vec<BuildingBits>,
+    nodes: Vec<(u64, u32)>,
+    resources: Vec<[u32; MAX_RESOURCES]>,
+}
+
+impl MatchState {
+    /// Where `other` differs, briefly (how much of each list agrees).
+    fn differences(&self, other: &MatchState) -> String {
+        fn agree<T: PartialEq>(a: &[T], b: &[T]) -> String {
+            format!("{} of {}/{} agree", a.iter().zip(b).filter(|(x, y)| x == y).count(), a.len(), b.len())
+        }
+        format!(
+            "units: {}; buildings: {}; nodes: {}; resources: {}",
+            agree(&self.units, &other.units),
+            agree(&self.buildings, &other.buildings),
+            agree(&self.nodes, &other.nodes),
+            agree(&self.resources, &other.resources)
+        )
+    }
+}
+
+fn state(app: &mut App) -> MatchState {
     let world = app.world_mut();
-    let mut q = world.query_filtered::<(&Unit, &Position, &Facing), Without<Dead>>();
-    let mut units: Vec<_> = q.iter(world).map(|(u, p, f)| (u.kind.0, p.0.x.to_bits(), p.0.y.to_bits(), f.0.to_bits())).collect();
+    let mut q = world.query_filtered::<(Entity, &Unit, &Position, &Facing, &Health), Without<Dead>>();
+    let unit = |(e, u, p, f, h): (Entity, &Unit, &Position, &Facing, &Health)| {
+        (e.to_bits(), u.kind.0, p.0.x.to_bits(), p.0.y.to_bits(), f.0.to_bits(), h.hp.to_bits())
+    };
+    let mut units: Vec<_> = q.iter(world).map(unit).collect();
     units.sort_unstable();
+    let mut q = world.query_filtered::<(Entity, &Building, &Health, Option<&UnderConstruction>), Without<Dead>>();
+    let mut buildings: Vec<_> =
+        q.iter(world).map(|(e, b, h, c)| (e.to_bits(), b.kind.0, h.hp.to_bits(), c.map_or(1.0, |c| c.progress).to_bits())).collect();
+    buildings.sort_unstable();
+    let mut q = world.query_filtered::<(Entity, &ResourceNode), Without<Dead>>();
+    let mut nodes: Vec<_> = q.iter(world).map(|(e, n)| (e.to_bits(), n.remaining.to_bits())).collect();
+    nodes.sort_unstable();
     let resources = world.resource::<Players>().list.iter().map(|p| p.resources.0.map(f32::to_bits)).collect();
-    (units, resources)
+    MatchState { units, buildings, nodes, resources }
 }
 
 #[test]
@@ -61,7 +105,94 @@ fn ticks_per_frame_do_not_change_the_match() {
         assert_eq!(app.world().resource::<SimClock>().tick, ticks);
         states.push(state(&mut app));
     }
-    assert!(states[0] == states[1], "one tick per frame and thirty diverge");
+    assert!(states[0] == states[1], "one tick per frame and thirty diverge: {}", states[0].differences(&states[1]));
+}
+
+/// Stands in for what a windowed client puts on every sim entity it draws
+/// (a visual's marker), and on some (`Selected`): empty, but it moves the
+/// entity to another archetype.
+#[derive(Component)]
+struct Drawn;
+
+/// Stands in for `Selected`: put on every other entity.
+#[derive(Component)]
+struct Picked;
+
+/// Every sim entity: what a client draws.
+type SimEntity = Or<(With<Unit>, With<Building>, With<ResourceNode>, With<FxBox>)>;
+
+/// What a client does between ticks: tag the sim entities (units,
+/// buildings, nodes, projectiles and effects) it has not seen before, in
+/// entity order: every one with [`Drawn`], every other one of each kind
+/// with [`Picked`] (`picked` says whether the next one of a kind gets it).
+fn tag_like_a_client(world: &mut World, seen: &mut HashSet<Entity>, picked: &mut [bool; 4]) {
+    let kind = |unit: bool, building: bool, node: bool| if unit { 0 } else if building { 1 } else if node { 2 } else { 3 };
+    let mut q = world.query_filtered::<(Entity, Has<Unit>, Has<Building>, Has<ResourceNode>), SimEntity>();
+    let mut fresh: Vec<(Entity, usize)> =
+        q.iter(world).filter(|(e, ..)| !seen.contains(e)).map(|(e, unit, building, node)| (e, kind(unit, building, node))).collect();
+    fresh.sort_unstable();
+    for (e, kind) in fresh {
+        seen.insert(e);
+        let mut entity = world.entity_mut(e);
+        entity.insert(Drawn);
+        if picked[kind] {
+            entity.insert(Picked);
+        }
+        picked[kind] = !picked[kind];
+    }
+}
+
+/// Run the match `new` makes twice for `ticks` ticks, one tick per frame:
+/// untouched, and with sim entities tagged like a client tags them from
+/// tick 90 on, and assert they end exactly alike, entity ids included.
+/// Returns the untouched run.
+fn untouched_and_tagged(new: impl Fn() -> App, ticks: u64) -> App {
+    let mut plain = new();
+    run_headless(&mut plain, ticks, 0, |_| {});
+    let mut tagged = new();
+    let (mut seen, mut picked) = (HashSet::new(), [true; 4]);
+    run_headless(&mut tagged, ticks, 1, |app| {
+        if app.world().resource::<SimClock>().tick >= 90 {
+            tag_like_a_client(app.world_mut(), &mut seen, &mut picked);
+        }
+    });
+    assert_eq!(tagged.world().resource::<SimClock>().tick, ticks);
+    let world = tagged.world_mut();
+    let mut q = world.query_filtered::<(), (With<Unit>, With<Picked>)>();
+    let picked_units = q.iter(world).count();
+    assert!(picked_units > 10, "the client tags units: {picked_units}");
+    let (a, b) = (state(&mut plain), state(&mut tagged));
+    assert!(a == b, "client markers changed the match: {}", a.differences(&b));
+    plain
+}
+
+/// The regression: marking every other unit at tick 90 changed the match
+/// within four minutes (sim systems visited units in table order: workers
+/// sharing a tree took from it in that order, so it held a different
+/// amount; likewise the spatial index's cells, steering's sums, the path
+/// queue, healers, repairers, weapons, projectiles, production and
+/// trickle income). Tagging every sim entity the way a windowed client
+/// does must leave five sim minutes of a match exactly as they were.
+#[test]
+fn client_markers_on_sim_entities_do_not_change_the_match() {
+    let _ = untouched_and_tagged(|| two_player_match(1), 5 * 60 * SIM_HZ as u64);
+}
+
+/// The same for a long four-player match with plenty of fighting (shots,
+/// projectiles, splash, deaths, debris): `cargo test --release -p
+/// aetherfall --test determinism -- --ignored`.
+#[test]
+#[ignore = "long: cargo test --release -p aetherfall --test determinism -- --ignored"]
+fn client_markers_do_not_change_a_long_match_with_fighting() {
+    let four_players = || {
+        let data = af_core::testing::test_data();
+        let factions = ["sylvan", "tide", "steppe", "starborn"].map(String::from).to_vec();
+        let opts = SkirmishOptions { seed: 9, players: 4, factions, human: false, ..Default::default() };
+        headless_app(data.clone(), skirmish_setup(&data, &opts).expect("setup"), 1)
+    };
+    let plain = untouched_and_tagged(four_players, 12 * 60 * SIM_HZ as u64);
+    let kills: u32 = plain.world().resource::<Players>().list.iter().map(|p| p.stats.kills).sum();
+    assert!(kills > 20, "the match saw fighting: {kills} kills");
 }
 
 /// A unit as seen by the digest: type, position, facing and hit points, bit

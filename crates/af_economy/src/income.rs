@@ -5,16 +5,22 @@
 use af_core::prelude::*;
 use bevy::prelude::*;
 
+/// Credit every complete building's trickle, then every player's tech
+/// trickle. Buildings go in entity index order, not table order (which client
+/// inserts on sim entities change): their incomes are added up in turn,
+/// and floats add up to the same bits only in the same order.
 pub(crate) fn trickle_income(
     data: Res<Data>,
     clock: Res<SimClock>,
     mut players: ResMut<Players>,
     mut notices: ResMut<Notices>,
-    sources: Query<(&Owner, &Building, &Trickle, Option<&ClaimsNode>), (Without<UnderConstruction>, Without<Dead>)>,
+    mut order: Local<Vec<Entity>>,
+    sources: Query<(Entity, &Owner, &Building, &Trickle, Option<&ClaimsNode>), (Without<UnderConstruction>, Without<Dead>)>,
     mut nodes: Query<(&mut ResourceNode, &Position), Without<Dead>>,
 ) {
     let data: &GameData = &data;
-    for (owner, building, trickle, claim) in &sources {
+    af_core::by_entity_index(&mut order, sources.iter().map(|(e, ..)| e));
+    for (_, owner, building, trickle, claim) in sources.iter_many(order.iter()) {
         let Some(p) = players.list.get_mut(owner.0.index()) else { continue };
         let mut income = trickle.0.scaled(SIM_DT);
         if let (Some(claim), Some(node_kind)) = (claim, data.building(building.kind).requires_node_id) {

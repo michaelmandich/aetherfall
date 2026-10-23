@@ -42,7 +42,10 @@ pub(crate) struct Patient {
 }
 
 /// One target at a time, lowest hit-point fraction first, and never more
-/// than [`MAX_HEALERS_PER_TARGET`] healers on one patient.
+/// than [`MAX_HEALERS_PER_TARGET`] healers on one patient. Healers go in
+/// entity index order, not table order (which client inserts on sim entities
+/// change): the first come take the room on a patient, and healers of one
+/// patient add to its hit points one after another.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_healers(
     data: Res<Data>,
@@ -54,18 +57,20 @@ pub(crate) fn run_healers(
     mut medics: Query<Medic, (With<Unit>, Without<Dead>)>,
     mut patients: Query<Patient, (With<Unit>, Without<Dead>)>,
     mut load: Local<HashMap<Entity, u8>>,
+    mut order: Local<Vec<Entity>>,
 ) {
     load.clear();
+    order.clear();
     for m in &medics {
         if let Some(t) = m.brain.heal_target {
             *load.entry(t).or_default() += 1;
         }
+        if data.unit(m.unit.kind).healer.is_some() {
+            order.push(m.entity);
+        }
     }
-    // In entity order (see gather.rs): healers share patients first come
-    // first served.
-    let mut order: Vec<Entity> = medics.iter().map(|m| m.entity).collect();
     order.sort_unstable_by_key(|e| e.index_u32());
-    for e in order {
+    for &e in order.iter() {
         let Ok(mut m) = medics.get_mut(e) else { continue };
         let Some(heal) = &data.unit(m.unit.kind).healer else { continue };
         if !m.brain.synced(m.orders) {
