@@ -137,7 +137,8 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   coarse graph and, when the route bends round the terrain, searches it
   leg by leg (64 m of route a leg; the next leg is searched from the end
   of the path while the unit walks its last 24 m, so it never stands
-  waiting); measures progress by the way left (path plus route beyond);
+  waiting; such a path is `partial` and `leg`, so af_render draws no
+  cross at its end); measures progress by the way left (path plus route beyond);
   and serves the players' queues in turn, one request each round.
   af_behavior's automatic choices (drop sites, next nodes, fields,
   formation slots, patients, hostiles to chase) and af_ai's spots,
@@ -295,8 +296,9 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
   turns the local player's own selected units' `Orders`, `PathState`,
   `MoveGoal` and `AttackTarget` into polylines (`plan_route`, pure): the
   current leg from the unit through `waypoints[next..]` to the live goal
-  (straight while `Pending`, for flyers and for a goal the waypoints are
-  not for yet; stopped with a cross where a partial path ends), then each
+  (straight while `Pending`, for flyers, for a goal the waypoints are
+  not for yet and past the end of a far goal's leg, `PathState::leg`;
+  stopped with a cross where a path to a goal out of reach ends), then each
   queued order chained on to its target, coloured by order in its click
   marker's colour (`LegKind::mark`, `OrderMark::color`: one palette, so
   a queued order's marker and its leg agree; following a unit is a move,

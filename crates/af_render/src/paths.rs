@@ -35,8 +35,9 @@
 //!
 //! With [`ShowPaths`] visible (P, or Shift held), each unit's current leg
 //! is drawn from the unit through the waypoints still ahead to its live
-//! goal (straight for flyers and while the path is being found; stopped
-//! with a cross where a partial path ends), solid with chevrons marching
+//! goal (straight for flyers, while the path is being found and past the
+//! end of a far goal's leg; stopped with a cross where a path to a goal
+//! out of reach ends), solid with chevrons marching
 //! toward the goal, and each queued order chains on as a dimmer dashed
 //! leg to its target, coloured by order, up to an order that never ends
 //! (a patrol, a hold). A selected unit whose current order is a patrol
@@ -342,8 +343,8 @@ pub struct Leg {
     pub kind: LegKind,
     /// Being walked now (else queued).
     pub current: bool,
-    /// Ends short of its goal, where no way on was found (a partial path, or
-    /// the path service gave up).
+    /// Ends short of its goal, where no way on was found (a path to a goal
+    /// out of reach, or the path service gave up; never a far goal's leg).
     pub blocked: bool,
     /// Ends at an order's target (marked there).
     pub target: bool,
@@ -459,7 +460,9 @@ pub fn plan_route(
         // leads where the entity really is, and so does whether it is
         // blocked, so a chase into the fog runs straight to where it was seen.
         let path_drawn = w.path.goal_seq == goal.seq && !w.flying && end.is_some_and(|e| e.live);
-        let mut blocked = path_drawn && (w.path.partial || w.path.status == PathStatus::Failed);
+        // A far goal's legs end short of it by design (the next is found as
+        // the unit nears the end): on straight from there, no cross.
+        let mut blocked = path_drawn && ((w.path.partial && !w.path.leg) || w.path.status == PathStatus::Failed);
         plan.push(start, w.pos);
         if path_drawn {
             let next = w.path.next.min(w.path.waypoints.len());
@@ -1163,6 +1166,16 @@ mod tests {
         // The order's own target, then the next order, chain on from there.
         assert_eq!(plan.leg_points(&plan.legs[1]), &[p(8.0, 1.0), p(20.0, 0.0)]);
         assert_eq!(plan.leg_points(&plan.legs[2]), &[p(20.0, 0.0), p(20.0, 5.0)]);
+        // A leg of a far goal's route ends short of it too, by design: on
+        // straight to the goal, which it reaches, with no cross.
+        let leg = PathState { leg: true, ..path.clone() };
+        let plan = plan_of(&Walker { path: &leg, ..w }, true, &[]);
+        assert_eq!(plan.leg_points(&plan.legs[0]), &[p(0.0, 0.0), p(5.0, 0.0), p(8.0, 1.0), p(20.0, 0.0)]);
+        assert!(!plan.legs[0].blocked && plan.legs[0].target);
+        assert_eq!(plan.leg_points(&plan.legs[1]), &[p(20.0, 0.0), p(20.0, 5.0)]);
+        // Unless its path failed.
+        let failed = PathState { status: PathStatus::Failed, ..leg };
+        assert!(plan_of(&Walker { path: &failed, ..w }, true, &[]).legs[0].blocked);
     }
 
     #[test]

@@ -827,6 +827,7 @@ fn apply_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pat
     path.waypoints = result.waypoints;
     path.next = 0;
     path.partial = partial(ask, aim, real, result.complete, end);
+    path.leg = !aim.last;
     path.status = PathStatus::Following;
     mover.truncated = result.truncated || !aim.last;
     mover.on_leg = !aim.last;
@@ -865,6 +866,7 @@ fn extend_path(ask: &Ask, aim: &Aim, real: Vec2, result: af_geom::PathResult, pa
         .sum();
     mover.rebase_progress(added + aim.beyond - mover.beyond);
     path.partial = partial(ask, aim, real, result.complete, end);
+    path.leg = !aim.last;
     mover.truncated = result.truncated || !aim.last;
     mover.on_leg = !aim.last;
     mover.beyond = aim.beyond;
@@ -1401,6 +1403,7 @@ mod tests {
         run_ticks(&mut app, 2);
         let first = app.world().get::<PathState>(e).expect("path").clone();
         assert_eq!(first.status, PathStatus::Following, "a path at once: {first:?}");
+        assert!(first.partial && first.leg, "the first leg ends short of the goal by design: {first:?}");
         let mut waits = 0;
         let mut ticks = 0;
         let mut trail = Vec::new();
@@ -1417,7 +1420,9 @@ mod tests {
         let (cells, coarse) = expanded(&app);
         let walked: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
         println!("ford 300 m off the line, 768 m map: arrived after {ticks} ticks, {walked:.0} m walked, {cells} cell and {coarse} coarse expansions, stood waiting for a leg {waits} times");
-        assert_eq!(status_now, PathStatus::Arrived, "{:?}", app.world().get::<PathState>(e));
+        let last = app.world().get::<PathState>(e).expect("path");
+        assert_eq!(status_now, PathStatus::Arrived, "{last:?}");
+        assert!(!last.partial && !last.leg, "the last leg reaches the goal: {last:?}");
         assert!(trail.iter().any(|q| q.y > 676.0 && q.y < 692.0 && (378.0..390.0).contains(&q.x)), "crossed at the ford");
         assert!(walked < 760.0, "about the way round ({walked:.0} m; 690 m by the ford)");
         assert!(cells < 5_000 && coarse < 5_000, "{cells} cell and {coarse} coarse expansions");
@@ -1440,6 +1445,8 @@ mod tests {
         let end = *trail.last().expect("walked");
         assert_eq!(s, PathStatus::Failed);
         assert!(end.x > 119.0 && end.x < 122.5, "on the near bank: {end}");
+        let path = app.world().get::<PathState>(e).expect("path");
+        assert!(path.partial && !path.leg, "short of a goal out of reach, not a leg: {path:?}");
         assert_eq!(expanded(&app), (0, 0), "no search");
     }
 
@@ -1673,7 +1680,7 @@ mod tests {
         let (pos, goal) = (Vec2::new(10.0, 10.0), Vec2::new(200.0, 10.0));
         let order = MoveGoal::point(goal, 0.5);
         // The last leg ended here: 100 m of route left beyond it.
-        let mut path = PathState { waypoints: vec![pos], next: 1, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let mut path = PathState { waypoints: vec![pos], next: 1, status: PathStatus::Following, goal_seq: 1, partial: true, leg: true, stuck_time: 0.0 };
         let mut mover = Mover { on_leg: true, truncated: true, beyond: 100.0, progress_best: 100.0, wants_repath: true, continuing: true, ..Mover::default() };
         assert_eq!(mover.way_left(pos, &path), 100.0);
         // The next leg ends 20 m down the route (80 m beyond it), but its
@@ -1693,7 +1700,7 @@ mod tests {
         let end = pos + Vec2::new(20.0, 0.0);
         let unit = pos + Vec2::new(5.0, 0.0);
         let mut mover = Mover { on_leg: true, truncated: true, beyond: 80.0, progress_best: 95.0, extend: true, ..Mover::default() };
-        let mut path = PathState { waypoints: vec![end], next: 0, status: PathStatus::Following, goal_seq: 1, partial: true, stuck_time: 0.0 };
+        let mut path = PathState { waypoints: vec![end], next: 0, status: PathStatus::Following, goal_seq: 1, partial: true, leg: true, stuck_time: 0.0 };
         let before = mover.way_left(unit, &path);
         let aim = Aim { goal: end + Vec2::new(20.0, 0.0), extends: true, beyond: 60.0, ..aim };
         let ask = Ask { pos: end, target: aim.goal, ..ask };

@@ -334,7 +334,7 @@ pub enum PathStatus {
 }
 
 /// Path-following state. Written only by af_movement; af_behavior reads
-/// `status` (and may remove `MoveGoal` to stop).
+/// `status` (and may remove `MoveGoal` to stop), af_render draws it.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct PathState {
     pub waypoints: Vec<Vec2>,
@@ -342,8 +342,14 @@ pub struct PathState {
     pub status: PathStatus,
     /// `MoveGoal::seq` this path was computed for.
     pub goal_seq: u32,
-    /// The path ends short of the goal (goal unreachable).
+    /// The path ends short of the goal: the goal is out of reach, or the
+    /// path is a [`leg`](Self::leg) with more to come.
     pub partial: bool,
+    /// The path is one leg of a far goal's route (af_movement plans a long
+    /// way leg by leg): it ends short of the goal by design, the next leg
+    /// is searched as the unit nears its end, and a `partial` leg does not
+    /// say the goal is out of reach.
+    pub leg: bool,
     pub stuck_time: f32,
 }
 
