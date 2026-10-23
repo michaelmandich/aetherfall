@@ -41,9 +41,12 @@ SS = 4
 FONT_PATH = ("C:/Users/meman/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/"
              "bevy_text-0.19.1/src/FiraMono-subset.ttf")
 TEXT_SRGB = (0.93, 0.92, 0.88)       # theme::TEXT (labels)
-TEXT_DIM_SRGB = (0.62, 0.62, 0.60)   # theme::TEXT_DIM (hotkeys are drawn in it today)
-HIGHLIGHT_SRGB = (1.0, 0.84, 0.35)   # theme::HIGHLIGHT (queued count)
+PLAQUE_TEXT_SRGB = (0.95, 0.88, 0.70)  # card_view::PLAQUE_TEXT (hotkeys and queued counts)
 GLOW_GOLD = (1.0, 0.80, 0.35)        # tint of glow.png for hover / armed
+DISABLED_GREY = 0.42                 # skin::DISABLED: the tint of a button that cannot be used
+HOVER_GLOW = 0.35                    # skin::HOVER_GLOW
+ARMED_GLOW = 0.85                    # skin::ARMED_GLOW.1: the top of an armed button's pulse
+COUNT_SMALL = 11                     # card_view::COUNT_SMALL: a queued count of 10 or more
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 LIGHT = np.array([-0.48, -0.60, 0.64])
@@ -79,9 +82,8 @@ WELL_YMAX = 0.05   # luminance ceiling inside a well (soft clip): white text >= 
 LIM_MEAN, LIM_P95 = 0.16, 0.30
 LIM_WOOD_MEAN, LIM_WOOD_P95 = 0.10, 0.18
 LIM_GLYPH_LABEL = 4.0   # p10 contrast of the ring around a card label, in every state
-LIM_HK_TEXT = 4.5       # ... around a 14 px hotkey in TEXT, every state
-LIM_HK_DIM = 3.0        # ... around a 14 px hotkey in TEXT_DIM, normal state
-LIM_COUNT = 4.5         # ... around a 14 px one-digit count in HIGHLIGHT, every state
+LIM_HK = 4.5            # ... around a 14 px hotkey in PLAQUE_TEXT, every state
+LIM_COUNT = 4.5         # ... around a count in PLAQUE_TEXT (one digit at 14 px, two at 11 px), every state
 CARD_HOTKEYS = 'QWERTASDFGZXCVB'
 QA_LABELS = ['Barracks', 'Economy', 'Aggressive', 'Blacksmith', 'Train Archer', 'Research Iron Casting',
              'Research Heavy Plough', 'Upgrade Stone Wall', 'Fortified Watch Tower', 'Train Crossbowman',
@@ -1519,14 +1521,14 @@ def fit_label(text, max_w=76, max_lines=3):
 
 def draw_slot(can, tex, skin, x, y, label, hotkey=None, count=None, state=None, w=84, h=62):
     """One command-card button as the engine draws it (label in the padded box 3..81 x 13..60)."""
-    grey = float(s2l(np.array(0.45)))
+    grey = float(s2l(np.array(DISABLED_GREY)))
     gold = tuple(s2l(np.array(GLOW_GOLD)))
     tint = (grey, grey, grey, 1.0) if state == 'disabled' else (1.0, 1.0, 1.0, 1.0)
     draw_node(can, tex['button_' + skin], x, y, w, h, BTN_MODE, tint)
     if state == 'hover':
-        draw_node(can, tex['glow'], x, y, w, h, BTN_MODE, gold + (0.35,))
+        draw_node(can, tex['glow'], x, y, w, h, BTN_MODE, gold + (HOVER_GLOW,))
     if state == 'armed':
-        draw_node(can, tex['glow'], x, y, w, h, BTN_MODE, gold + (0.80,))
+        draw_node(can, tex['glow'], x, y, w, h, BTN_MODE, gold + (ARMED_GLOW,))
     la = 0.5 if state == 'disabled' else 1.0
     if label:
         size, lines = fit_label(label)
@@ -1535,10 +1537,16 @@ def draw_slot(can, tex, skin, x, y, label, hotkey=None, count=None, state=None, 
         for k, ln in enumerate(lines):
             draw_text(can, ln, x + 42, y_top + k * size, size, anchor='mm', alpha=la)
     if hotkey:
-        draw_text(can, hotkey, x + TEXT_POS[0][0], y + TEXT_POS[0][1], 14, anchor='mm', alpha=la)
+        draw_text(can, hotkey, x + TEXT_POS[0][0], y + TEXT_POS[0][1], 14, anchor='mm', alpha=la,
+                  color=PLAQUE_TEXT_SRGB)
     if count:
-        draw_text(can, count, x + TEXT_POS[1][0], y + TEXT_POS[1][1], 14, anchor='mm', alpha=la,
-                  color=HIGHLIGHT_SRGB)
+        draw_text(can, count, x + TEXT_POS[1][0], y + TEXT_POS[1][1], count_size(count), anchor='mm', alpha=la,
+                  color=PLAQUE_TEXT_SRGB)
+
+
+def count_size(count):
+    """The size the engine draws a queued count at: two digits smaller, so they fit the plaque."""
+    return COUNT_SMALL if len(count) >= 2 else 14
 
 
 def ground_bg(h, w, seed=9):
@@ -1722,10 +1730,10 @@ def render_sheet(pdir, tex):
             draw_text(can, lab, x + w / 2, yy + h / 2, 12 if w < 60 else 14, anchor='mm')
             x += w + 10
         draw_text(can, s, x + 4, yy + 20, 12, anchor='lm')
-    # QA 4: disabled (x0.45), hover (glow 0.35) and armed (glow 0.8) at 1x
+    # QA 4: disabled, hover and armed at 1x
     yb4 = yb3 + 165
-    draw_text(can, 'QA: disabled x0.45 (top row) / hover glow 0.35 and armed 0.8 (bottom row), 1x', pad, yb4, 12,
-              anchor='la')
+    draw_text(can, 'QA: disabled x%.2f (top row) / hover glow %.2f and armed %.2f (bottom row), 1x'
+              % (DISABLED_GREY, HOVER_GLOW, ARMED_GLOW), pad, yb4, 12, anchor='la')
     for i, s in enumerate(SKIN_ORDER):
         bx = pad + i * 90
         draw_slot(can, tex, s, bx, yb4 + 18, s.capitalize(), 'QWERTASDFG'[i], None, 'disabled')
@@ -1733,15 +1741,16 @@ def render_sheet(pdir, tex):
         bx = pad + i * 90
         draw_slot(can, tex, s, bx, yb4 + 86, s.capitalize(), 'QWERTASDFG'[i], None,
                   'hover' if i % 2 == 0 else 'armed')
-    # QA 5: how the 14 px hotkey (TEXT) and count (HIGHLIGHT) really sit on the plaques: the top
+    # QA 5: how the 14 px hotkey and the counts (PLAQUE_TEXT) really sit on the plaques: the top
     # 22 px of a slot at 3x, nearest neighbour, normal and armed
     yb5 = yb4 + 170
     draw_text(can, 'QA: plaque fit at 3x (nearest): 14 px hotkey and count centred as the engine draws them, '
-                   'top 22 px of each 84x62 slot; normal / armed (glow 0.8) below it', pad, yb5, 12, anchor='la')
+                   'top 22 px of each 84x62 slot ("3", or "12" at %d px on every other skin); normal / armed '
+                   '(glow %.2f) below it' % (COUNT_SMALL, ARMED_GLOW), pad, yb5, 12, anchor='la')
     for i, s in enumerate(SKIN_ORDER):
         for j, st in enumerate((None, 'armed')):
             slot = np.zeros((62, 84, 3), F32)
-            draw_slot(slot, tex, s, 0, 0, None, CARD_HOTKEYS[i], '3', st)
+            draw_slot(slot, tex, s, 0, 0, None, CARD_HOTKEYS[i], '12' if i % 2 else '3', st)
             big = np.repeat(np.repeat(slot[:22], 3, 0), 3, 1)
             x = pad + (i % 5) * 270
             y = yb5 + 18 + (i // 5) * 150 + j * 70
@@ -1833,48 +1842,49 @@ def readability(pdir, tex):
     states = {}
     for s in SKIN_ORDER:
         b = half_gpu(tex['button_' + s])[..., :3]
-        states[s] = [b] + [b * (1 - g1[..., 3:4] * k) + gold * g1[..., 3:4] * k for k in (0.35, 0.80)]
+        states[s] = [b] + [b * (1 - g1[..., 3:4] * k) + gold * g1[..., 3:4] * k for k in (HOVER_GLOW, ARMED_GLOW)]
     hk = {(c, md): ring_of(glyph_mask(c, TEXT_POS[0][0], TEXT_POS[0][1], 14, md))
           for c in CARD_HOTKEYS for md in ('box', 'ink')}
-    cn = {n: ring_of(glyph_mask(n, TEXT_POS[1][0], TEXT_POS[1][1], 14)) for n in ('3', '8', '12')}
+    cn = {n: ring_of(glyph_mask(n, TEXT_POS[1][0], TEXT_POS[1][1], count_size(n))) for n in ('3', '8', '12', '88')}
     lb = {t: ring_of(label_mask(t)) for t in QA_LABELS}
 
     def worst(bg, rings, color):
         return min((ring_p10(bg, r, color), k) for k, r in rings.items())
     L.append('== 2. text on an 84x62 slot at 1x (2x2 average): p10 of (Lt+.05)/(Lbg+.05) over the 1..2 px '
-             'ring around the glyphs, states normal / hover (glow x gold 0.35) / armed (0.8) ==')
-    L.append('hotkey: 14 px centred at (%.0f, %.2f), worst of the 15 card hotkeys %s, in TEXT and in TEXT_DIM '
-             '(the engine\'s colour today); "box" centres the line box (Bevy), "ink" the ink box (stricter for '
-             'Q)' % (TEXT_POS[0] + (CARD_HOTKEYS,)))
-    L.append('count: 14 px at (%.0f, %.2f) in HIGHLIGHT, worst of "3" / "8"; "12" for information (16.8 px '
-             'wide, it runs onto the side band whatever the art does)' % TEXT_POS[1])
+             'ring around the glyphs, states normal / hover (glow x gold %.2f) / armed (%.2f) =='
+             % (HOVER_GLOW, ARMED_GLOW))
+    L.append('hotkey: 14 px centred at (%.0f, %.2f), worst of the 15 card hotkeys %s, in PLAQUE_TEXT (the '
+             'engine\'s colour); "box" centres the line box (Bevy), "ink" the ink box (stricter for Q)'
+             % (TEXT_POS[0] + (CARD_HOTKEYS,)))
+    L.append('count: centred at (%.0f, %.2f) in PLAQUE_TEXT, worst of "3" / "8" at 14 px and "12" / "88" at %d px '
+             '(10 or more)' % (TEXT_POS[1] + (COUNT_SMALL,)))
+    L.append('hotkeys and counts are measured without the engine\'s 1 px text shadow, which only darkens the '
+             'ring: the figures are a lower bound')
     L.append('label: worst of %d card labels, 1-3 lines, 14 down to 11 px, up to 76 px wide (%s)'
              % (len(QA_LABELS), ', '.join(QA_LABELS)))
-    L.append('limits: hotkey TEXT (box) >= %.1f in every state, TEXT_DIM (box) >= %.1f normal, count >= %.1f in '
-             'every state, label >= %.1f in every state' % (LIM_HK_TEXT, LIM_HK_DIM, LIM_COUNT, LIM_GLYPH_LABEL))
-    L.append('skin      | hotkey TEXT box n/h/a | TEXT ink | DIM box | DIM ink | count n/h/a     | "12"  | '
+    L.append('limits: hotkey (box) >= %.1f in every state, count >= %.1f in every state, label >= %.1f in every '
+             'state' % (LIM_HK, LIM_COUNT, LIM_GLYPH_LABEL))
+    L.append('skin      | hotkey box n/h/a      | ink      | count 1 digit n/h/a | count 2 digits n/h/a | '
              'label n/h/a')
     rows = []
     for s in SKIN_ORDER:
         b, hv, ar = states[s]
         box = {k: r for k, r in hk.items() if k[1] == 'box'}
         ink = {k: r for k, r in hk.items() if k[1] == 'ink'}
-        ht = [worst(bg, box, TEXT_SRGB) for bg in (b, hv, ar)]
-        hti = worst(b, ink, TEXT_SRGB)
-        hd = worst(b, box, TEXT_DIM_SRGB)
-        hdi = worst(b, ink, TEXT_DIM_SRGB)
-        c3 = [min(ring_p10(bg, cn[n], HIGHLIGHT_SRGB) for n in ('3', '8')) for bg in (b, hv, ar)]
-        c12 = ring_p10(b, cn['12'], HIGHLIGHT_SRGB)
+        ht = [worst(bg, box, PLAQUE_TEXT_SRGB) for bg in (b, hv, ar)]
+        hti = worst(b, ink, PLAQUE_TEXT_SRGB)
+        c1 = [min(ring_p10(bg, cn[n], PLAQUE_TEXT_SRGB) for n in ('3', '8')) for bg in (b, hv, ar)]
+        c2 = [min(ring_p10(bg, cn[n], PLAQUE_TEXT_SRGB) for n in ('12', '88')) for bg in (b, hv, ar)]
         lab = [worst(bg, lb, TEXT_SRGB) for bg in (b, hv, ar)]
-        ok = (min(x[0] for x in ht) >= LIM_HK_TEXT and hd[0] >= LIM_HK_DIM and min(c3) >= LIM_COUNT
+        ok = (min(x[0] for x in ht) >= LIM_HK and min(c1 + c2) >= LIM_COUNT
               and min(x[0] for x in lab) >= LIM_GLYPH_LABEL)
-        rows.append([x[0] for x in ht] + [hti[0], hd[0], hdi[0]] + c3 + [c12] + [x[0] for x in lab])
-        L.append('%-9s | %5.2f %5.2f %5.2f %s | %5.2f %s  | %5.2f %s | %5.2f %s | %5.2f %5.2f %5.2f | %5.2f | '
+        rows.append([x[0] for x in ht] + [hti[0]] + c1 + c2 + [x[0] for x in lab])
+        L.append('%-9s | %5.2f %5.2f %5.2f %s | %5.2f %s  | %5.2f %5.2f %5.2f   | %5.2f %5.2f %5.2f    | '
                  '%5.2f %5.2f %5.2f  %s' % (s, ht[0][0], ht[1][0], ht[2][0], min(ht)[1][0], hti[0], hti[1][0],
-                                             hd[0], hd[1][0], hdi[0], hdi[1][0], c3[0], c3[1], c3[2], c12,
+                                             c1[0], c1[1], c1[2], c2[0], c2[1], c2[2],
                                              lab[0][0], lab[1][0], lab[2][0], chk(ok, 'glyph ' + s)))
     mn = np.min(np.array(rows), axis=0)
-    L.append('MIN       | %5.2f %5.2f %5.2f   | %5.2f    | %5.2f   | %5.2f   | %5.2f %5.2f %5.2f | %5.2f | '
+    L.append('MIN       | %5.2f %5.2f %5.2f   | %5.2f    | %5.2f %5.2f %5.2f   | %5.2f %5.2f %5.2f    | '
              '%5.2f %5.2f %5.2f' % tuple(mn))
     L.append('worst label per state: ' + '; '.join(
         '%s %s' % (st, min((worst(states[s][i], lb, TEXT_SRGB), s) for s in SKIN_ORDER)[0][1])

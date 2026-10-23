@@ -43,7 +43,7 @@ its corners allow.
 | `panel_frame.png` | 160x160 | sliced, border `BorderRect::all(40.0)`, sides `Tile { stretch_value: 0.5 }`, centre `Stretch` | Riveted iron frame over a panel's wood: 12 px band, an iron rivet centred on each 80 px side segment, a 17 px brass corner plate and a riveted brass diamond on each band beside it (after ref3). Everything, its shadow on the wood included, stays within 18 px (9 logical) of the outer edge, so it never meets the command card's slots (9 px padding), whichever of the two is drawn first. The centre is transparent. |
 | `bar_frame.png` | 160x48 | sliced, border `BorderRect::axes(40.0, 20.0)`, sides `Tile { stretch_value: 0.5 }`, centre `Stretch` | The same frame for thin strips (top bar, control groups, one-line tooltips): a brass rivet per 80 px band segment, brass end straps with a small riveted diamond. Its 8 px left / right segments are one row repeated. |
 | `button_<skin>.png` x10 | 168x124 | sliced, border `BorderRect::all(32.0)`, sides and centre `Stretch` | A whole button: metal frame, corner ornaments, two plaques in dark wells, stained wood. Fully opaque. An 84x62 command-card slot draws it at exactly 0.5; other buttons (24x22 to 240x44) stretch it. |
-| `glow.png` | 168x124 | sliced like the buttons, drawn over a button at the same size | White, alpha only: a bright line on the dark seam between band and wood with a short tail into the wood (about 0.2 at 1.5 logical px, 0 by 4), a bloom over the band and a bright rim on the frame's outer edge. 0 at the texture border, in the stretched centre and over both plaque wells (so hover and armed never touch the hotkey and count). Tinted gold at runtime: hover at alpha 0.35, the armed button pulsing up to about 0.8, the press flash. |
+| `glow.png` | 168x124 | sliced like the buttons, drawn over a button at the same size | White, alpha only: a bright line on the dark seam between band and wood with a short tail into the wood (about 0.2 at 1.5 logical px, 0 by 4), a bloom over the band and a bright rim on the frame's outer edge. 0 at the texture border, in the stretched centre and over both plaque wells (so hover and armed never touch the hotkey and count). Tinted gold at runtime: hover at alpha 0.35, the armed button pulsing between 0.45 and 0.85, a lasting choice (the selection's stance, the Paths toggle) steady at 0.75, the press flash. |
 | `burst_ring.png` | 256x256 | `NodeImageMode::Stretch` | White soft ring expanded from a pressed button. |
 | `spark.png` | 32x32 | `NodeImageMode::Stretch` | White four-point sparkle flying out of a pressed button. |
 | `shine.png` | 64x128 | `NodeImageMode::Stretch` | Soft diagonal white streak swept across a pressed button. |
@@ -72,23 +72,25 @@ let button = NodeImageMode::Sliced(TextureSlicer {
 let wood = NodeImageMode::Tiled { tile_x: true, tile_y: true, stretch_value: 0.5 };
 ```
 
-A disabled button is the same texture multiplied by grey 0.45; there are no
+A button that cannot be used is the same texture multiplied by grey 0.42
+(0.48 hovered); one that can be soon (missing resources or population room)
+by a warm (0.54, 0.46, 0.40) instead (0.60, 0.52, 0.46 hovered). There are no
 disabled variants.
 
 ### Button skins
 
 | skin | used for | frame metal | wood | plaque bezel / well corner | bottom corner piece |
 |---|---|---|---|---|---|
-| `command` | Move, Stop, Hold, Patrol, Attack, Gather, Repair, Rally | blued steel | deep blue | round | riveted L-bracket with a domed rivet |
+| `command` | Move, Stop, Hold, Patrol, Attack, Gather, Repair, Rally; the menu's Spectate, and Back to menu and Leave to menu on the game-over and leave panels | blued steel | deep blue | round | riveted L-bracket with a domed rivet |
 | `stance` | Aggressive / Defensive / Stand ground / Passive | violet gunmetal | even slate violet-grey | octagonal | square cap with a four-faced forged stud |
 | `economy` | the Economy build page and its buildings | dark olive brass, green patina | golden oak (honey), deep stain | round | riveted quarter-round brass fan |
 | `military` | the Military build page and its buildings | blackened iron, rust-red wear | crimson | octagonal | forged corner spike, studded straps |
 | `defence` | the Defence build page, walls and towers | bright silver-steel | pale ash, cool grey-blue, deep stain | hexagonal (a bolt head) | big hex bolt on a square plate, small bolts on the straps |
-| `train` | train a unit | dark, red bronze | green | round | bronze leaf pointing out of the corner, leaves along the bands |
+| `train` | train a unit, the selection panel's queue, the menu's Start | dark, red bronze | green | round | bronze leaf pointing out of the corner, leaves along the bands |
 | `research` | research a tech | pale yellow gold, engraved scroll along the bands | purple | round | six-lobed rosette and gold scroll curls |
 | `upgrade` | upgrade a building, age up | rich red gold | red amber | round | fleur with an amber cabochon, scroll curls |
 | `nav` | More, Back | plain warm grey iron | dark, cold walnut | octagonal | riveted plate and straps |
-| `plain` | every other button (menu, top bar, overlays, Cancel) | dull brown bronze with bright worn edges | medium brown | round | round bronze boss and small round plates |
+| `plain` | every other button (the menu's settings, top bar, Menu, Paths, Keep watching, Resume) | dull brown bronze with bright worn edges | medium brown | round | round bronze boss and small round plates |
 
 The top corners carry the plaques; their outer strips (above and beside the
 wells) carry a small family ornament: straps and rivets, a stud, a spike, a
@@ -102,7 +104,10 @@ blued against white). The ornaments are the family metal lifted (`orn` in
 * Every skin, `plain` included, has two plaques: the **hotkey** plaque
   centred at (20, 19.5) texture px and the **queued-count** plaque at
   (148, 19.5). The engine centres the 14 px hotkey / count text on them, at
-  **(10, 9.75) and (74, 9.75) logical px** of an 84x62 slot.
+  **(10, 9.75) and (74, 9.75) logical px** of an 84x62 slot, in
+  `PLAQUE_TEXT` (0.95, 0.88, 0.70) with `theme::text_shadow()`; a count of
+  10 or more is drawn at 11 px, as two 14 px digits (16.8 px) are wider
+  than the plaque.
 * A plaque is a dark glass gem in a blackened, ink-outlined bezel, at most
   12 px from its centre (20 + 12 = 32), so not one texel falls in the
   stretched sides of the 32 px slicer border. The bezel shape is the
@@ -145,15 +150,18 @@ blued against white). The ornaments are the family metal lifted (`orn` in
 * `panel_wood.png`: mean <= 0.10, p95 <= 0.18.
 * Text contrast at 1x on an 84x62 slot, 10th percentile of the contrast
   against the 1-2 px ring around the glyphs, in the normal, hover (glow
-  0.35) and armed (glow 0.8) states:
-  * hotkey, 14 px, worst of the card's 15 letters: >= 4.5 in `TEXT` in every
-    state, >= 3.0 in `TEXT_DIM` (the engine's colour today). It is measured
-    with the line box centred, as Bevy centres a text node, and reported
-    with the ink box centred too (stricter for Q, whose tail lifts it);
-  * count, 14 px, `HIGHLIGHT`, "3" / "8": >= 4.5 in every state ("12" is
-    reported, see the engine notes);
-  * labels, worst of 11 card labels (one to three lines, 14 down to 11 px,
-    up to 76 px wide): >= 4.0 in every state.
+  0.35) and armed (glow 0.85, the top of its pulse) states. Hotkeys and
+  counts are measured in the engine's `PLAQUE_TEXT` but without its 1 px
+  text shadow, which only darkens the ring, so the figures are a lower
+  bound:
+  * hotkey, 14 px, worst of the card's 15 letters: >= 4.5 in every state.
+    It is measured with the line box centred, as Bevy centres a text node,
+    and reported with the ink box centred too (stricter for Q, whose tail
+    lifts it);
+  * count, "3" / "8" at 14 px and "12" / "88" at 11 px: >= 4.5 in every
+    state;
+  * labels (`TEXT`), worst of 11 card labels (one to three lines, 14 down
+    to 11 px, up to 76 px wide): >= 4.0 in every state.
 * Buttons have no texel below alpha 255; `glow.png` and the effect sprites
   are 0 at their texture border, and the glow is 0 over the plaque wells;
   frame centres are 0; `panel_frame` reaches at most 18 px from its edge.
@@ -173,8 +181,8 @@ interior plank grooves, frame side segments end to end, bar side rows).
   panels: panel_wood 2x2 at 1x (seam check), a panel frame and a top bar over
   wood at 1x, all skins as 84x62 slots, a 900 px frame (side tiling),
   stretched and tiny buttons (24x22 to 240x44), every skin disabled, hovered
-  and armed, and the plaque fit at 3x (the 14 px hotkey and count as the
-  engine centres them, normal and armed).
+  and armed, and the plaque fit at 3x (the hotkey and a one- or two-digit
+  count as the engine centres them, normal and armed).
 * `preview_hud.png`: a 1280x720 mock of the HUD composited with Bevy's
   9-slice math: top bar, minimap, selection panel, and the 454x212 command
   card (5x3 slots of 84x62, 4 px gaps, 9 px padding, as `card_view.rs`).
@@ -185,14 +193,6 @@ interior plank grooves, frame side segments end to end, bar side rows).
 
 What the art cannot do on its own, for whoever wires the textures in:
 
-* Centre the hotkey and count text nodes at (10, 9.75) and (74, 9.75) of the
-  slot (`card_view.rs` places them at left 4 / right 4, top 0 today).
-  `TEXT_DIM` hotkeys now read at 3.0:1 or better on every skin, but `TEXT`
-  (6.8:1 or better), ideally with `theme::text_shadow()`, is the better
-  choice.
-* A two-digit count ("12", 16.8 px at 14 px) is wider than the plaque and
-  runs onto the side band whatever the art does: draw counts of 10 or more at
-  11 px, or show "9+".
 * Three 14 px label lines fill the slot's padded box, so the third line's
   descenders touch the bottom band. Prefer 12 px when a label needs three
   lines, or a line height of 0.95.

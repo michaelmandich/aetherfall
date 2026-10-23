@@ -48,7 +48,10 @@ const FRAME_Z: i32 = -2;
 /// The family a button belongs to: each has its own metal and wood.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ButtonSkin {
-    /// Move, Stop, Hold, Patrol, Attack, Gather, Repair, Rally: steel and blue.
+    /// Move, Stop, Hold, Patrol, Attack, Gather, Repair, Rally: steel and
+    /// blue. Also the way out of a match or into watching one: the menu's
+    /// Spectate, and Back to menu and Leave to menu on the game-over and
+    /// leave panels.
     Command,
     /// The four stances: blackened iron and slate.
     Stance,
@@ -58,7 +61,8 @@ pub enum ButtonSkin {
     Military,
     /// The Defence build page, walls and towers: silver-steel and pale ash.
     Defence,
-    /// Training units: bronze and green.
+    /// Training units, and the selection panel's queue: bronze and green.
+    /// Also the menu's Start.
     Train,
     /// Researching techs: gold filigree and purple.
     Research,
@@ -66,7 +70,8 @@ pub enum ButtonSkin {
     Upgrade,
     /// More and Back: plain iron and walnut.
     Nav,
-    /// Every other button (menus, top bar, overlays): bronze and brown.
+    /// Every other button (the menu's settings, the top bar, Menu and
+    /// Paths, Keep watching, Resume): bronze and brown.
     Plain,
 }
 
