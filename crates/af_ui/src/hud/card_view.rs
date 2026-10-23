@@ -42,8 +42,12 @@ const LABEL_LINES: usize = 3;
 /// px from the slot's top-left corner: the art's 2x positions halved).
 const HOTKEY_PLAQUE: Vec2 = Vec2::new(10.0, 9.75);
 const COUNT_PLAQUE: Vec2 = Vec2::new(74.0, 9.75);
-/// Height of a line of `FONT_SMALL` text (Bevy's default line height).
-const SMALL_LINE: f32 = FONT_SMALL * 1.2;
+/// Bevy's default line height, as a multiple of the font size.
+const LINE_HEIGHT: f32 = 1.2;
+/// Size of a queued count of 10 or more: two digits at `FONT_SMALL` are
+/// wider than the plaque and run onto the frame's band; at this size they
+/// fit its well.
+const COUNT_SMALL: f32 = 11.0;
 /// Hotkeys and counts in the plaques: light and warm in the dark wells.
 const PLAQUE_TEXT: Color = Color::srgb(0.95, 0.88, 0.7);
 
@@ -116,11 +120,17 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Update, (rebuild_card, card_input, refresh_card, play_card_presses, update_tooltip).chain().in_set(HudSet::Panels));
 }
 
-/// A text box `chars` characters wide of `FONT_SMALL`, centred on a
+/// A text box `chars` characters wide of `size` px text, centred on a
 /// plaque (positions are in the slot's padding box, inside its 1 px border).
-fn on_plaque(plaque: Vec2, chars: usize) -> Node {
-    let width = chars as f32 * FONT_SMALL * GLYPH_ADVANCE;
-    Node { position_type: PositionType::Absolute, left: px(plaque.x - 1.0 - width / 2.0), top: px(plaque.y - 1.0 - SMALL_LINE / 2.0), ..default() }
+fn on_plaque(plaque: Vec2, chars: usize, size: f32) -> Node {
+    let width = chars as f32 * size * GLYPH_ADVANCE;
+    let line = size * LINE_HEIGHT;
+    Node { position_type: PositionType::Absolute, left: px(plaque.x - 1.0 - width / 2.0), top: px(plaque.y - 1.0 - line / 2.0), ..default() }
+}
+
+/// The size a queued count is drawn at, so it stays on its plaque.
+fn count_size(n: u32) -> f32 {
+    if n >= 10 { COUNT_SMALL } else { FONT_SMALL }
 }
 
 pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
@@ -161,8 +171,8 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                     (SkinButton(ButtonSkin::Plain), SkinPlaques, SkinLook::default(), PressFx::card_slot()),
                 ))
                 .with_children(|b| {
-                    b.spawn((text(*hotkey, FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(HOTKEY_PLAQUE, 1)));
-                    b.spawn((text("", FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(COUNT_PLAQUE, 1), SlotCount(i)));
+                    b.spawn((text(*hotkey, FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(HOTKEY_PLAQUE, 1, FONT_SMALL)));
+                    b.spawn((text("", FONT_SMALL, PLAQUE_TEXT), theme::text_shadow(), on_plaque(COUNT_PLAQUE, 1, FONT_SMALL), SlotCount(i)));
                     b.spawn((
                         text("", FONT_SMALL, TEXT),
                         // Crisp on the lighter woods (golden oak, pale ash).
@@ -436,7 +446,7 @@ fn refresh_card(
     stances: Query<&Stance>,
     mut slots: Query<(&CardSlot, &Interaction, &mut BackgroundColor, &mut BorderColor, &mut SkinButton, &mut SkinLook, Has<Skinned>)>,
     mut labels: Query<(&SlotLabel, &mut TextColor), Without<SlotCount>>,
-    mut counts: Query<(&SlotCount, &mut Text, &mut Node), Without<SlotLabel>>,
+    mut counts: Query<(&SlotCount, &mut Text, &mut TextFont, &mut Node), Without<SlotLabel>>,
 ) {
     let Some(player) = local_state(&local, players.as_deref()) else { return };
     let mut stance = sel.own_units.first().and_then(|e| stances.get(*e).ok()).copied();
@@ -486,14 +496,19 @@ fn refresh_card(
         };
         set_color(&mut color, c);
     }
-    for (count, mut t, mut node) in &mut counts {
+    for (count, mut t, mut font, mut node) in &mut counts {
         let n = looks[count.0].count;
         let s = if n > 0 { n.to_string() } else { String::new() };
         set_text(&mut t, &s);
-        // Centred on its plaque however many digits it has.
-        let left = on_plaque(COUNT_PLAQUE, s.len().max(1)).left;
-        if node.left != left {
-            node.left = left;
+        // Centred on its plaque however many digits it has, two or more
+        // drawn smaller so they stay on it.
+        let size = count_size(n);
+        if font.font_size != FontSize::Px(size) {
+            font.font_size = FontSize::Px(size);
+        }
+        let at = on_plaque(COUNT_PLAQUE, s.len().max(1), size);
+        if (node.left, node.top) != (at.left, at.top) {
+            (node.left, node.top) = (at.left, at.top);
         }
     }
 }

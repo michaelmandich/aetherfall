@@ -244,6 +244,38 @@ fn single_selection_shows_queue_and_cancels() {
     assert_eq!((&cmds[0].kind, &cmds[0].entities), (&CommandKind::CancelQueue { index: 2 }, &vec![tc]));
 }
 
+/// A count of ten or more queued (summed over the selected buildings) is
+/// drawn smaller, so its two digits stay on the plaque instead of running
+/// onto the frame, and stays centred on it.
+#[test]
+fn a_two_digit_count_shrinks_onto_its_plaque() {
+    let mut app = hud_app();
+    let data = test_data();
+    let peasant = data.unit_id("peasant").unwrap();
+    let item = QueueItem { kind: QueueKind::Unit(peasant), paid: ResAmounts::ZERO, time: 10.0 };
+    let halls: Vec<Entity> = [30.0, 50.0].map(|x| spawn_building_at(&mut app, 0, "town_center", Vec2::new(x, 40.0))).into();
+    for (hall, n) in halls.iter().zip([5, 4]) {
+        app.world_mut().get_mut::<ProductionQueue>(*hall).unwrap().items.extend(std::iter::repeat_n(item, n));
+    }
+    select(&mut app, &halls);
+    run_ticks(&mut app, 2);
+    let train = app.world().resource::<CardState>().slots.iter().position(|a| *a == Some(CardAction::Train(peasant))).unwrap();
+    let count = |app: &mut App| {
+        let world = app.world_mut();
+        world.query::<(&SlotCount, &Text, &TextFont, &Node)>().iter(world).find(|(c, ..)| c.0 == train).map(|(_, t, f, n)| (t.0.clone(), f.font_size, n.left, n.top)).unwrap()
+    };
+    let (text, size, left, top) = count(&mut app);
+    assert_eq!((text.as_str(), size), ("9", FontSize::Px(crate::theme::FONT_SMALL)));
+    // Its line box is centred on the plaque (74, 9.75), inside the 1 px border.
+    let box_of = |size: f32, chars: f32| (Val::Px(74.0 - 1.0 - chars * size * crate::theme::GLYPH_ADVANCE / 2.0), Val::Px(9.75 - 1.0 - size * 1.2 / 2.0));
+    assert_eq!((left, top), box_of(crate::theme::FONT_SMALL, 1.0));
+    app.world_mut().get_mut::<ProductionQueue>(halls[1]).unwrap().items.push_back(item);
+    app.update();
+    let (text, size, left, top) = count(&mut app);
+    assert_eq!((text.as_str(), size), ("10", FontSize::Px(11.0)));
+    assert_eq!((left, top), box_of(11.0, 2.0));
+}
+
 /// A town centre of player 0 queueing a peasant (half done), a spearman
 /// and a scout rider, selected and drawn.
 fn town_center_with_queue(app: &mut App) -> Entity {

@@ -133,12 +133,14 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   (`skin::without_plaques`), so "Start" or "Resume" has no empty gems.
 * **Command card:** a slot wears its action's family (a build page button
   and its buildings the page's colours, else the action group's), with
-  its hotkey and queued count on the frame's two corner plaques.
+  its hotkey and queued count centred on the frame's two corner plaques
+  (a count of 10 or more at 11 px, so its two digits stay on the plaque).
   `refresh_card` writes `SkinLook` (usable / soon / not, armed) every
   frame; `skin_looks` turns look, hover and press into the button's tint
-  and glow (an armed button pulses gold; the selection's stance glows
-  steadily, the chosen faction in its colour). `theme::shade_buttons` and the card's flat colours leave
-  skinned nodes alone.
+  and glow (an armed button pulses gold; the selection's stance, the
+  Paths toggle while on and the chosen faction glow steadily, the
+  faction in its colour). `theme::shade_buttons` and the card's flat
+  colours leave skinned nodes alone.
 * **Presses** (`af_ui::fx`, real time, so they play while paused): the
   command card records each press, by mouse or hotkey, in `card_input`.
   Build, train, research and upgrade presses squash the button to 0.9 and
