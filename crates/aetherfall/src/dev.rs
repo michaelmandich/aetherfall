@@ -5,11 +5,13 @@
 //! press of a UI button, a stand-in mouse, a staged battle, an AI-played
 //! local slot, a pause, frame-time statistics, boxes instead of models, an
 //! extra folder of visual registry files, uncapped frames, a hidden HUD,
-//! and a [`script`] of keys, clicks and presses).
+//! a [`script`] of keys, clicks and presses, and an online test client
+//! that [`join`]s a server's room).
 //! Each piece is registered only when its flag is given, so a normal run
 //! adds nothing. Binary-only: the library (`aetherfall::*`) knows nothing
 //! of it.
 
+mod join;
 mod script;
 
 use std::path::{Path, PathBuf};
@@ -76,6 +78,7 @@ pub struct DevArgs {
     visuals: Option<PathBuf>,
     no_vsync: bool,
     no_hud: bool,
+    join: Option<String>,
 }
 
 impl DevArgs {
@@ -112,6 +115,7 @@ impl DevArgs {
             "--no-vsync" => self.no_vsync = true,
             "--no-hud" => self.no_hud = true,
             "--script" => self.script = Some(value()?),
+            "--join" => self.join = Some(value()?),
             _ => return Ok(false),
         }
         Ok(true)
@@ -138,12 +142,19 @@ impl DevArgs {
             || self.no_vsync
             || self.no_hud
             || self.script.is_some()
+            || self.join.is_some()
     }
 
     /// Whether the run takes screenshots or plays a script (and should
-    /// start a match at once).
+    /// start a match at once, unless it [`joins`](Self::joins) one).
     pub fn takes_shots(&self) -> bool {
         self.screenshot.is_some() || self.shots.is_some() || self.script.is_some()
+    }
+
+    /// Whether the run joins an online match (`--join`) instead of
+    /// starting one of its own.
+    pub fn joins(&self) -> bool {
+        self.join.is_some()
     }
 
     /// Check the flags against the content and the match, and adjust the
@@ -174,6 +185,10 @@ impl DevArgs {
         let place = self.place.as_deref().map(|id| lookup(id, data.building_id(id), "building", data.buildings.iter().map(|b| &b.id))).transpose()?;
         if place.is_some() && setup.local_player.is_none() {
             return Err("--place needs a local player (drop --spectate)".into());
+        }
+        let join = self.join.as_deref().map(join::JoinPlan::parse).transpose()?;
+        if join.is_some() && (self.autoplay || self.battle.is_some()) {
+            return Err("--join plays the server's match (drop --autoplay and --battle-demo)".into());
         }
         let battle = self.battle.as_deref().map(|s| BattlePlan::parse(data, s)).transpose()?;
         if battle.is_some() {
@@ -217,6 +232,7 @@ impl DevArgs {
             no_vsync: self.no_vsync,
             no_hud: self.no_hud,
             script: script.map(script::Script::new),
+            join,
         })
     }
 
@@ -272,6 +288,7 @@ pub struct DevPlan {
     /// Hide the HUD (screenshots of the world alone).
     no_hud: bool,
     script: Option<script::Script>,
+    join: Option<join::JoinPlan>,
 }
 
 impl DevPlan {
@@ -289,6 +306,9 @@ impl DevPlan {
 
 /// Register the systems the plan needs (and nothing else).
 pub fn install(app: &mut App, plan: DevPlan) {
+    if let Some(join) = plan.join {
+        join::install(app, join);
+    }
     if let Some(script) = plan.script {
         app.insert_resource(script)
             .add_systems(PreUpdate, script::script_input.after(bevy::input::InputSystems).before(place_virtual_cursor))

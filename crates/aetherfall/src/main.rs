@@ -105,6 +105,10 @@
 //!                             shot <path>        a screenshot (exits after the last)
 //!                           e.g. --script "1 select workers; 1.5 key Z; 2 key W;
 //!                                2.5 move 700,500; 2.6 click; 3 shot house.png"
+//!   --join SERVER[,NAME]    an online test client: connect to SERVER, join the
+//!                           first room waiting for players and ready up (the
+//!                           host starts); --script and --shots then act on
+//!                           that match, timed by its sim clock
 
 mod dev;
 
@@ -210,8 +214,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         }
         a.opts.human = false;
     }
-    // A screenshot run starts the match at once unless it is of the menu.
-    if a.dev.takes_shots() && !a.dev.menu {
+    // A screenshot run starts the match at once unless it is of the menu
+    // or of an online match it joins.
+    if a.dev.takes_shots() && !a.dev.menu && !a.dev.joins() {
         a.quick = true;
     }
     Ok(a)
