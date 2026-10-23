@@ -303,7 +303,7 @@ fn click_markers_dive_onto_points_and_expire() {
     let spot = Vec2::new(5.0, 5.0);
     let ping = app.world_mut().spawn(ClickMark::new(OrderMark::Move, None, false).ping(spot)).id();
     run_ticks(app, 1);
-    assert_eq!(marker_parts(app, ping).len(), 4 + 2, "four arrows, the ring and the flash");
+    assert_eq!(marker_parts(app, ping).len(), 4 + 4 + 2, "four arrows, their shadows, the ring and the flash");
     let at = marker_at(app, ping);
     assert_eq!(at.xz(), spot);
     let highest = |app: &App| marker_parts(app, ping).iter().map(|e| app.world().get::<Transform>(*e).unwrap().translation.y).fold(f32::MIN, f32::max);
@@ -322,7 +322,7 @@ fn click_markers_dive_onto_points_and_expire() {
     let house = test_data().building_id("house").unwrap();
     let placed = app.world_mut().spawn(ClickMark::new(OrderMark::Place { kind: house, facing: 0.0 }, None, false).ping(Vec2::new(40.0, 40.0))).id();
     run_ticks(app, 1);
-    assert_eq!(marker_parts(app, queued).len(), 4 + 3);
+    assert_eq!(marker_parts(app, queued).len(), 4 + 4 + 3);
     assert_eq!(marker_parts(app, placed).len(), 4, "the footprint's frame");
 
     // A burst of clicks keeps only the newest markers.
@@ -345,8 +345,8 @@ fn click_markers_hug_and_follow_their_target() {
     let tree_at = app.world().get::<Position>(w.tree).unwrap().0;
     let gather = app.world_mut().spawn(ClickMark::new(OrderMark::Gather, Some(w.tree), false).ping(tree_at + Vec2::splat(0.2))).id();
     run_ticks(app, 1);
-    assert_eq!(marker_parts(app, ping).len(), 4 + 1, "arrows and the hugging ring");
-    assert_eq!(marker_parts(app, gather).len(), 4 + 4, "arrows and the frame");
+    assert_eq!(marker_parts(app, ping).len(), 4 + 4 + 1, "arrows, their shadows and the hugging ring");
+    assert_eq!(marker_parts(app, gather).len(), 4 + 4 + 4, "arrows, their shadows and the frame");
     assert_eq!(marker_at(app, gather).xz(), tree_at, "centred on the tree, not the click");
     place(app, w.enemy_unit, Vec2::new(53.0, 50.0), 0.0);
     assert_eq!(marker_at(app, ping).xz(), Vec2::new(53.0, 50.0), "follows the unit");

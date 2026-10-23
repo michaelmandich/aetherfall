@@ -963,13 +963,12 @@ mod tests {
         for t in [0.1, tl.land * 0.5, tl.land * 0.99] {
             let pose = marker_pose(&spec, t);
             let (arrows, shadows) = (pose.arrows.unwrap(), pose.shadows.unwrap());
-            for i in 0..4 {
-                let (a, s) = (arrows.transforms[i], shadows.transforms[i]);
+            for ((a, s), dir) in arrows.transforms.iter().zip(shadows.transforms).zip(dirs) {
                 assert_eq!(s.translation.xz(), a.translation.xz(), "straight under its arrow");
                 assert_eq!(s.translation.y, SHADOW_Y);
                 // Flat, pointing in at the spot along the arrow's way in.
                 let along = s.rotation * Vec3::Z;
-                assert!(along.y.abs() < 1e-4 && along.dot(inward(dirs[i])) > 0.999, "{along}");
+                assert!(along.y.abs() < 1e-4 && along.dot(inward(dir)) > 0.999, "{along}");
                 assert!(s.scale.z <= a.scale.z + 1e-6, "never longer than the arrow");
             }
         }
