@@ -24,8 +24,11 @@
 //! overlapping past the game's rule, that every scenario's crowd gets
 //! through on the default layout as its bar asks ([`BARS`]: everyone
 //! through, no order failed, in good time, but for two units that
-//! cannot), and that two runs agree bit for bit. The report is a
-//! measurement, so it is `#[ignore]`d:
+//! cannot), that over twelve jittered layouts the crowds lose no more
+//! units and orders than [`JITTER_BARS`] allow (about 10 s wall, a
+//! thread a layout), and that two runs agree bit for bit. They never
+//! read the environment. The report is a measurement, so it is
+//! `#[ignore]`d:
 //!
 //! ```text
 //! cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture
@@ -40,9 +43,11 @@
 //! `AF_CHOKE_UNITS=<name>|all` also lists every second each unit within
 //! two metres of the gap: where it stands and faces, its velocity, path
 //! status, next waypoint and stuck time, and its order.
-//! `AF_CHOKE_JITTER=<seed>` moves every unit up to [`JITTER`] from its spot,
-//! the same way for the same seed: a variant of each scenario, to tell a
-//! change that helps from one that happens to suit the exact layout.
+//! `AF_CHOKE_JITTER=<seed>` runs the report on a jittered layout: every
+//! unit moved up to [`JITTER`] from its spot, the same way for the same
+//! seed. A variant of each scenario, to tell a change that helps from one
+//! that happens to suit the exact layout; the gate runs seeds
+//! [`JITTER_SEEDS`] (a sweep over seeds 1 to 40 is a shell loop).
 
 use std::f32::consts::FRAC_PI_2;
 use std::fmt::Write as _;
@@ -153,18 +158,23 @@ fn spawn_building_at(app: &mut App, player: PlayerId, kind: BuildingTypeId, pos:
     with_commands(app, |c, data, players| spawn_building(c, data, players.get(player), kind, pos, 0.0, true))
 }
 
-fn spawn(app: &mut App, player: PlayerId, id: &str, pos: Vec2, facing: f32) -> Entity {
-    let pos = pos + jitter(pos);
+/// Spawn a unit at `pos`, moved by the layout's `jitter` seed (none on the
+/// default layout).
+fn spawn(app: &mut App, jitter: Option<u32>, player: PlayerId, id: &str, pos: Vec2, facing: f32) -> Entity {
+    let pos = pos + jittered(jitter, pos);
     with_commands(app, |c, data, players| {
         let kind = data.unit_id(id).unwrap_or_else(|| panic!("unit {id}"));
         spawn_unit(c, data, players.get(player), kind, pos, facing)
     })
 }
 
-/// How far `AF_CHOKE_JITTER` moves a unit spawned at `pos`: up to
-/// [`JITTER`] each way, a hash of the seed and the spot (zero without it).
-fn jitter(pos: Vec2) -> Vec2 {
-    let Some(seed) = std::env::var("AF_CHOKE_JITTER").ok().and_then(|v| v.parse::<u32>().ok()) else { return Vec2::ZERO };
+/// How far the jitter `seed` moves a unit spawned at `pos`: up to
+/// [`JITTER`] each way, a hash of the seed and the spot (zero without one).
+/// Passed down rather than kept in the world: a resource is an entity,
+/// and one more entity renumbers the units, which alone changes how a
+/// crowd files through.
+fn jittered(seed: Option<u32>, pos: Vec2) -> Vec2 {
+    let Some(seed) = seed else { return Vec2::ZERO };
     let hash = |salt: u32| {
         let mut x = seed.wrapping_mul(0x9E37_79B1) ^ pos.x.to_bits().wrapping_mul(0x85EB_CA6B) ^ pos.y.to_bits().wrapping_mul(0xC2B2_AE35) ^ salt;
         x ^= x >> 15;
@@ -215,21 +225,21 @@ impl Block<'_> {
 /// then the second...), so their units' ages interleave as they do in a
 /// match where both sides trained over time: of two units meeting head-on
 /// the younger gives way, and age then favours neither block.
-fn spawn_blocks(app: &mut App, blocks: &[Block]) -> Vec<Vec<Entity>> {
+fn spawn_blocks(app: &mut App, jitter: Option<u32>, blocks: &[Block]) -> Vec<Vec<Entity>> {
     let mut out: Vec<Vec<Entity>> = blocks.iter().map(|b| Vec::with_capacity(b.n)).collect();
     for i in 0..blocks.iter().map(|b| b.n).max().unwrap_or(0) {
         for (b, units) in blocks.iter().zip(&mut out) {
             if i < b.n {
                 let (kind, at, facing) = b.spot(i);
-                units.push(spawn(app, b.player, kind, at, facing));
+                units.push(spawn(app, jitter, b.player, kind, at, facing));
             }
         }
     }
     out
 }
 
-fn block(app: &mut App, b: Block) -> Vec<Entity> {
-    spawn_blocks(app, &[b]).remove(0)
+fn block(app: &mut App, jitter: Option<u32>, b: Block) -> Vec<Entity> {
+    spawn_blocks(app, jitter, &[b]).remove(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -283,10 +293,10 @@ fn order(player: PlayerId, units: &[Entity], kind: CommandKind) -> PlayerCommand
 
 /// 40 workers and infantry through a gap one cell wide in a cliff band six
 /// metres thick, to a point 15 m past it.
-fn one_way_cliff_gap_1() -> Setup {
+fn one_way_cliff_gap_1(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 46, y0: 48, cells: 1 });
-    let units = block(&mut app, Block { player: p[0], kinds: &[WORKER, SPEAR, WORKER, HEAVY], n: 40, cols: 8, front: 34.0, centre_y: gap.centre, east: true });
+    let units = block(&mut app, jitter, Block { player: p[0], kinds: &[WORKER, SPEAR, WORKER, HEAVY], n: 40, cols: 8, front: 34.0, centre_y: gap.centre, east: true });
     let orders = vec![order(p[0], &units, CommandKind::Move(Vec2::new(gap.exit + 15.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle: Vec::new(), secs: 60 }
 }
@@ -296,10 +306,10 @@ fn one_way_cliff_gap_1() -> Setup {
 /// knight, too narrow for two infantry abreast, and placed as a player
 /// places houses, off the nav grid (its one open cell column runs 0.1 m
 /// off its middle). A slot two infantry wide (1.4 m and more) flows.
-fn one_way_building_gap() -> Setup {
+fn one_way_building_gap(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Houses { centre: 48.4, width: 1.2, deep: 1 });
-    let units = block(&mut app, Block { player: p[0], kinds: &[SPEAR, HEAVY, SPEAR, RIDER], n: 40, cols: 8, front: 35.0, centre_y: gap.centre, east: true });
+    let units = block(&mut app, jitter, Block { player: p[0], kinds: &[SPEAR, HEAVY, SPEAR, RIDER], n: 40, cols: 8, front: 35.0, centre_y: gap.centre, east: true });
     let orders = vec![order(p[0], &units, CommandKind::Move(Vec2::new(gap.exit + 15.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle: Vec::new(), secs: 60 }
 }
@@ -307,14 +317,14 @@ fn one_way_building_gap() -> Setup {
 /// 20 against 20 of two hostile players (both set Passive, so it measures
 /// movement, not a fight) crossing each other through a channel two cells
 /// wide and ten long.
-fn head_on_gap_2_enemies() -> Setup {
+fn head_on_gap_2_enemies(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0, 1]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 50, y0: 48, cells: 2 });
     let blocks = [
         Block { player: p[0], kinds: &[SPEAR, WORKER], n: 20, cols: 5, front: 34.0, centre_y: gap.centre, east: true },
         Block { player: p[1], kinds: &[SPEAR, WORKER], n: 20, cols: 5, front: 56.0, centre_y: gap.centre, east: false },
     ];
-    let [east, west]: [Vec<Entity>; 2] = spawn_blocks(&mut app, &blocks).try_into().expect("two blocks");
+    let [east, west]: [Vec<Entity>; 2] = spawn_blocks(&mut app, jitter, &blocks).try_into().expect("two blocks");
     let orders = vec![
         order(p[0], &east, CommandKind::SetStance(Stance::Passive)),
         order(p[1], &west, CommandKind::SetStance(Stance::Passive)),
@@ -325,14 +335,14 @@ fn head_on_gap_2_enemies() -> Setup {
 }
 
 /// 12 against 12 of one player crossing each other through a gap one cell wide.
-fn head_on_gap_1_allies() -> Setup {
+fn head_on_gap_1_allies(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 46, y0: 48, cells: 1 });
     let blocks = [
         Block { player: p[0], kinds: &[SPEAR, WORKER], n: 12, cols: 4, front: 34.0, centre_y: gap.centre, east: true },
         Block { player: p[0], kinds: &[WORKER, SPEAR], n: 12, cols: 4, front: 52.0, centre_y: gap.centre, east: false },
     ];
-    let [east, west]: [Vec<Entity>; 2] = spawn_blocks(&mut app, &blocks).try_into().expect("two blocks");
+    let [east, west]: [Vec<Entity>; 2] = spawn_blocks(&mut app, jitter, &blocks).try_into().expect("two blocks");
     let orders = vec![
         order(p[0], &east, CommandKind::Move(Vec2::new(gap.exit + 15.0, gap.centre))),
         order(p[0], &west, CommandKind::Move(Vec2::new(gap.entry - 15.0, gap.centre))),
@@ -344,14 +354,14 @@ fn head_on_gap_1_allies() -> Setup {
 /// their line centred 20 m to the side of a gap two cells wide,
 /// attack-moving to a point past it: the crowd comes along the cliff face
 /// and packs into the mouth from one side.
-fn wide_funnel() -> Setup {
+fn wide_funnel(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 46, y0: 48, cells: 2 });
     let mut units = Vec::new();
     for i in 0..60 {
         let (rank, col) = ((i / 20) as f32, (i % 20) as f32);
         let kind = [SPEAR, HEAVY, RIDER, WORKER, SPEAR][i % 5];
-        units.push(spawn(&mut app, p[0], kind, Vec2::new(34.0 - rank * 2.5, gap.centre + 20.0 + (col - 9.5) * 2.0), FRAC_PI_2));
+        units.push(spawn(&mut app, jitter, p[0], kind, Vec2::new(34.0 - rank * 2.5, gap.centre + 20.0 + (col - 9.5) * 2.0), FRAC_PI_2));
     }
     let orders = vec![order(p[0], &units, CommandKind::AttackMove(Vec2::new(gap.exit + 15.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle: Vec::new(), secs: 60 }
@@ -360,23 +370,23 @@ fn wide_funnel() -> Setup {
 /// Eight idle knights left standing two abreast in a corridor two cells
 /// wide and eight long (four inside, four in and beyond its exit), and 30
 /// workers and infantry of the same player ordered through it.
-fn idle_plug() -> Setup {
+fn idle_plug(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 48, y0: 48, cells: 2 });
     let (lo, hi) = (gap.centre - 0.5, gap.centre + 0.5);
     let parked = [(42.0, lo), (42.0, hi), (45.0, lo), (45.0, hi), (48.6, lo), (48.6, hi), (51.0, gap.centre - 1.0), (51.0, gap.centre + 1.0)];
-    let idle: Vec<Entity> = parked.iter().map(|&(x, y)| spawn(&mut app, p[0], RIDER, Vec2::new(x, y), FRAC_PI_2)).collect();
-    let units = block(&mut app, Block { player: p[0], kinds: &[WORKER, SPEAR], n: 30, cols: 6, front: 34.0, centre_y: gap.centre, east: true });
+    let idle: Vec<Entity> = parked.iter().map(|&(x, y)| spawn(&mut app, jitter, p[0], RIDER, Vec2::new(x, y), FRAC_PI_2)).collect();
+    let units = block(&mut app, jitter, Block { player: p[0], kinds: &[WORKER, SPEAR], n: 30, cols: 6, front: 34.0, centre_y: gap.centre, east: true });
     let orders = vec![order(p[0], &units, CommandKind::Move(Vec2::new(gap.exit + 15.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle, secs: 60 }
 }
 
 /// 40 units ordered to a point 2 m past the exit of a gap two cells wide:
 /// the formation's slots lie on the cliff about the exit and in the gap.
-fn goal_just_past_exit() -> Setup {
+fn goal_just_past_exit(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Cliff { x0: 40, x1: 46, y0: 48, cells: 2 });
-    let units = block(&mut app, Block { player: p[0], kinds: &[WORKER, SPEAR, WORKER, HEAVY], n: 40, cols: 8, front: 34.0, centre_y: gap.centre, east: true });
+    let units = block(&mut app, jitter, Block { player: p[0], kinds: &[WORKER, SPEAR, WORKER, HEAVY], n: 40, cols: 8, front: 34.0, centre_y: gap.centre, east: true });
     let orders = vec![order(p[0], &units, CommandKind::Move(Vec2::new(gap.exit + 2.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle: Vec::new(), secs: 60 }
 }
@@ -384,18 +394,18 @@ fn goal_just_past_exit() -> Setup {
 /// A battering ram (1.8 m wide) at the head of 20 workers and infantry and
 /// six knights, attack-moving together through a 2.5 m slot between two
 /// houses (which the ram's path clearance does not fit through).
-fn mixed_sizes() -> Setup {
+fn mixed_sizes(jitter: Option<u32>) -> Setup {
     let (mut app, p) = world(&[0]);
     let gap = build_wall(&mut app, p[0], Wall::Houses { centre: 49.0, width: 2.5, deep: 1 });
-    let mut units = vec![spawn(&mut app, p[0], RAM, Vec2::new(35.0, gap.centre), FRAC_PI_2)];
-    units.extend(block(&mut app, Block { player: p[0], kinds: &[WORKER, SPEAR], n: 20, cols: 5, front: 32.0, centre_y: gap.centre, east: true }));
-    units.extend(block(&mut app, Block { player: p[0], kinds: &[RIDER], n: 6, cols: 3, front: 25.5, centre_y: gap.centre, east: true }));
+    let mut units = vec![spawn(&mut app, jitter, p[0], RAM, Vec2::new(35.0, gap.centre), FRAC_PI_2)];
+    units.extend(block(&mut app, jitter, Block { player: p[0], kinds: &[WORKER, SPEAR], n: 20, cols: 5, front: 32.0, centre_y: gap.centre, east: true }));
+    units.extend(block(&mut app, jitter, Block { player: p[0], kinds: &[RIDER], n: 6, cols: 3, front: 25.5, centre_y: gap.centre, east: true }));
     let orders = vec![order(p[0], &units, CommandKind::AttackMove(Vec2::new(gap.exit + 15.0, gap.centre)))];
     Setup { app, gap, orders, groups: vec![Group::east(units, &gap)], idle: Vec::new(), secs: 60 }
 }
 
-/// A scenario's name and how to set it up.
-type Scenario = (&'static str, fn() -> Setup);
+/// A scenario's name and how to set it up on a layout.
+type Scenario = (&'static str, fn(Option<u32>) -> Setup);
 
 /// Every scenario, by name.
 const SCENARIOS: [Scenario; 8] = [
@@ -409,7 +419,7 @@ const SCENARIOS: [Scenario; 8] = [
     ("mixed_sizes", mixed_sizes),
 ];
 
-fn scenario(name: &str) -> fn() -> Setup {
+fn scenario(name: &str) -> fn(Option<u32>) -> Setup {
     SCENARIOS.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no scenario {name}")).1
 }
 
@@ -512,9 +522,9 @@ fn listed(var: &str, name: &str) -> bool {
 }
 
 /// Run a scenario for `secs` simulated seconds after the order (its own
-/// length when `None`) and measure it.
-fn run(name: &'static str, secs: Option<u32>) -> Outcome {
-    let Setup { mut app, gap, orders, groups, idle, secs: own } = scenario(name)();
+/// length when `None`) on the layout `jitter` gives, and measure it.
+fn run(name: &'static str, secs: Option<u32>, jitter: Option<u32>) -> Outcome {
+    let Setup { mut app, gap, orders, groups, idle, secs: own } = scenario(name)(jitter);
     let secs = secs.unwrap_or(own);
     let trace = listed("AF_CHOKE_TRACE", name);
     // Everyone stands for a moment first (movement state attached, the
@@ -780,17 +790,19 @@ fn gap_map(app: &App, tracks: &[Track], groups: &[Group], idle: &[Entity], gap: 
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Every scenario (or those `AF_CHOKE` lists), as a markdown table.
+/// Every scenario (or those `AF_CHOKE` lists), as a markdown table, on
+/// the layout `AF_CHOKE_JITTER` asks for (the default one without it).
 #[test]
 #[ignore = "measurement: cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture"]
 fn chokepoint_report() {
     let only = std::env::var("AF_CHOKE").ok();
+    let jitter = std::env::var("AF_CHOKE_JITTER").ok().and_then(|v| v.parse::<u32>().ok());
     let outcomes: Vec<Outcome> = SCENARIOS
         .iter()
         .filter(|(name, _)| only.as_deref().is_none_or(|_| listed("AF_CHOKE", name)))
         .map(|(name, _)| {
             let started = std::time::Instant::now();
-            let o = run(name, None);
+            let o = run(name, None, jitter);
             eprintln!("{name}: {:.1} s wall", started.elapsed().as_secs_f32());
             o
         })
@@ -805,7 +817,7 @@ fn chokepoint_report() {
 #[test]
 fn chokepoint_crowds_never_overlap() {
     for (name, _) in SCENARIOS {
-        let o = run(name, None);
+        let o = run(name, None, None);
         assert!(o.max_overlap <= MAX_OVERLAP, "{name}: units overlapped by {:.3} m at t={:.1}s\n{}", o.max_overlap, o.max_overlap_at, table(std::slice::from_ref(&o)));
     }
 }
@@ -851,7 +863,7 @@ fn chokepoint_crowds_get_through() {
     let mut outcomes = Vec::new();
     for (name, _) in SCENARIOS {
         let bar = BARS.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("no bar for {name}"));
-        let o = run(name, None);
+        let o = run(name, None, None);
         let within = o.times.get(bar.through.saturating_sub(1)).copied();
         if o.through < bar.through || o.failed > bar.failed || o.short > bar.short || within.is_none_or(|t| t > bar.secs) {
             missed.push(format!(
@@ -873,12 +885,79 @@ fn chokepoint_crowds_get_through() {
     assert!(missed.is_empty(), "{}\n\n{}", missed.join("\n"), table(&outcomes));
 }
 
+/// The jittered layouts [`chokepoint_crowds_get_through_other_layouts`]
+/// runs: the first twelve seeds as they come, not picked for passing
+/// (seed 7 is the head-on channel's worst).
+const JITTER_SEEDS: std::ops::RangeInclusive<u32> = 1..=12;
+
+/// What a scenario may come to summed over the [`JITTER_SEEDS`] layouts:
+/// at most `missing` units not through and `failed` orders failed.
+struct JitterBar {
+    name: &'static str,
+    missing: usize,
+    failed: usize,
+}
+
+/// Every scenario's ceilings over the jittered layouts: about a quarter
+/// over what the bench measures, and one more where it measures none,
+/// but for the one-cell cliff gap, which loses no unit and no order on
+/// any of 40 layouts. What they allow today: the ram's order failing on
+/// every layout, a unit or two of the crowd ordered just past the exit
+/// stopping at the mouth on some, and the hostile crowds crossing in the
+/// channel jamming on a few (seed 7 loses 14 orders), as a give-way pair
+/// can end up both giving way. A change that suits the default layout
+/// but loses more elsewhere fails here, though the default bars pass.
+const JITTER_BARS: [JitterBar; 8] = [
+    JitterBar { name: "one_way_cliff_gap_1", missing: 0, failed: 0 },
+    JitterBar { name: "one_way_building_gap", missing: 1, failed: 1 },
+    JitterBar { name: "head_on_gap_2_enemies", missing: 17, failed: 20 },
+    JitterBar { name: "head_on_gap_1_allies", missing: 2, failed: 2 },
+    JitterBar { name: "wide_funnel", missing: 1, failed: 1 },
+    JitterBar { name: "idle_plug", missing: 1, failed: 2 },
+    JitterBar { name: "goal_just_past_exit", missing: 17, failed: 1 },
+    JitterBar { name: "mixed_sizes", missing: 17, failed: 20 },
+];
+
+/// Moved a little from their spots ([`JITTER`] at most), the crowds still
+/// get through about as well as the bench measures ([`JITTER_BARS`]), and
+/// no tick ends with units overlapping: a gate on fixes that only suit
+/// the default layout. Each seed runs on its own thread.
+#[test]
+fn chokepoint_crowds_get_through_other_layouts() {
+    let runs: Vec<(u32, Vec<Outcome>)> = std::thread::scope(|threads| {
+        let seeds: Vec<_> = JITTER_SEEDS.map(|seed| threads.spawn(move || (seed, SCENARIOS.iter().map(|(name, _)| run(name, None, Some(seed))).collect::<Vec<_>>()))).collect();
+        seeds.into_iter().map(|t| t.join().expect("a jittered run")).collect()
+    });
+    let mut missed = Vec::new();
+    for bar in &JITTER_BARS {
+        let (mut missing, mut failed) = (0, 0);
+        for (seed, outcomes) in &runs {
+            let o = outcomes.iter().find(|o| o.name == bar.name).unwrap_or_else(|| panic!("no scenario {}", bar.name));
+            missing += o.total - o.through;
+            failed += o.failed;
+            if o.max_overlap > MAX_OVERLAP {
+                missed.push(format!("{} (seed {seed}): units overlapped by {:.3} m at t={:.1}s", bar.name, o.max_overlap, o.max_overlap_at));
+            }
+        }
+        if missing > bar.missing || failed > bar.failed {
+            missed.push(format!("{}: {missing} not through (bar {}), {failed} failed (bar {}) over seeds {JITTER_SEEDS:?}", bar.name, bar.missing, bar.failed));
+        }
+    }
+    let tables = || runs.iter().map(|(seed, outcomes)| format!("seed {seed}:
+{}", table(outcomes))).collect::<Vec<_>>().join("
+");
+    assert!(missed.is_empty(), "{}
+
+{}", missed.join("
+"), tables());
+}
+
 /// The same scenario run twice ends with every unit in the same place,
 /// facing the same way, bit for bit.
 #[test]
 fn chokepoint_runs_are_deterministic() {
     for name in ["one_way_cliff_gap_1", "head_on_gap_1_allies"] {
-        let (a, b) = (run(name, Some(30)), run(name, Some(30)));
+        let (a, b) = (run(name, Some(30), None), run(name, Some(30), None));
         assert!(a.end == b.end, "{name}: two runs diverged");
     }
 }

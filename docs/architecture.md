@@ -88,10 +88,16 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   check overlap, determinism and that each crowd gets through as its bar
   asks (everyone through, no order failed, within a time; the ram, whose
   path does not fit its slot, and one unit whose formation slot lies on
-  the cliff are the only exceptions); the table:
+  the cliff are the only exceptions), and run them again on twelve
+  jittered layouts (every unit moved up to 0.15 m from its spot), where
+  the units not through and the orders failed, summed per scenario,
+  must stay under a measured ceiling: a change that only suits the
+  default layout fails there. The results are sensitive beyond the
+  layout too: one more entity in the world (a resource is one) renumbers
+  the units and changes them, so the bench passes its layout as a
+  parameter and the fast tests read no environment. The table:
   `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`
-  (`AF_CHOKE_JITTER=<seed>` moves every unit a little from its spot: a
-  variant, to tell a change that helps from one that suits the layout).
+  (`AF_CHOKE_JITTER=<seed>` runs it on that jittered layout).
 
 ## Client model
 
