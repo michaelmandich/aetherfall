@@ -323,7 +323,8 @@ impl LiveMatch {
         }
         let entries = self.client_hashes.remove(&tick).unwrap_or_default();
         self.client_hashes.retain(|t, _| *t + 100 > tick);
-        // The majority (the lowest hash on a tie) is taken as right.
+        // The majority is taken as right. Without one (two players apart,
+        // or a tie) nobody can say who is, so every player is named.
         let mut counts: Vec<(u64, usize)> = Vec::new();
         for (_, h) in &entries {
             match counts.iter_mut().find(|(x, _)| x == h) {
@@ -332,8 +333,11 @@ impl LiveMatch {
             }
         }
         counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let Some((majority, _)) = counts.first() else { return HashVerdict::Fine };
-        let mut odd: Vec<u8> = entries.iter().filter(|(_, h)| h != majority).map(|(s, _)| *s).collect();
+        let majority = match counts.as_slice() {
+            [] => return HashVerdict::Fine,
+            [(h, n), rest @ ..] => rest.first().is_none_or(|(_, m)| m < n).then_some(*h),
+        };
+        let mut odd: Vec<u8> = entries.iter().filter(|(_, h)| Some(*h) != majority).map(|(s, _)| *s).collect();
         for p in &mut self.participants {
             if odd.contains(&p.slot) {
                 if p.desynced {
@@ -399,6 +403,17 @@ mod tests {
         assert_eq!(m.report_hash(0, 30, 1), HashVerdict::Fine);
         assert_eq!(m.report_hash(1, 30, 1), HashVerdict::Fine);
         assert!(m.client_hashes.is_empty());
+        // Two players apart: nobody can say who is right, so both are named.
+        let mut m = casual();
+        m.participants[2].left = true;
+        assert_eq!(m.report_hash(0, 10, 1), HashVerdict::Fine);
+        assert_eq!(m.report_hash(1, 10, 2), HashVerdict::Desync(vec![0, 1]));
+        // Three apart three ways: all three.
+        let mut m = casual();
+        for s in 0..2 {
+            assert_eq!(m.report_hash(s, 10, s as u64), HashVerdict::Fine);
+        }
+        assert_eq!(m.report_hash(2, 10, 2), HashVerdict::Desync(vec![0, 1, 2]));
     }
 
     #[test]

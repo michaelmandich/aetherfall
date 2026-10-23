@@ -224,7 +224,11 @@ struct Lockstep {
     outcome_sent: bool,
     last_frame: Option<Instant>,
     stall_since: Option<Instant>,
+    /// The server named this player among those whose game parted.
     desynced: bool,
+    /// This player's name in the match (`None` when spectating): the
+    /// server's desync reports name the players whose game parted.
+    name: Option<String>,
     /// The server declared the match over.
     ended: bool,
 }
@@ -240,8 +244,16 @@ impl Lockstep {
             last_frame: None,
             stall_since: None,
             desynced: false,
+            name: start.your_slot.and_then(|s| start.players.get(s as usize)).map(|p| p.name.clone()),
             ended: false,
         }
+    }
+
+    /// Does a desync report naming `players` (none: everyone) say this
+    /// game no longer matches? Another player's parting leaves ours with
+    /// the rest.
+    fn parted(&self, players: &[String]) -> bool {
+        players.is_empty() || self.name.as_ref().is_some_and(|n| players.contains(n))
     }
 }
 
@@ -548,10 +560,12 @@ fn poll_link(
                     }
                 }
                 ServerMsg::Desync { tick, players } => {
-                    if let Some(l) = lockstep.as_deref_mut() {
+                    if let Some(l) = lockstep.as_deref_mut()
+                        && l.parted(&players)
+                    {
                         l.desynced = true;
+                        session.lockstep.desynced = true;
                     }
-                    session.lockstep.desynced = true;
                     let who = if players.is_empty() { "this game".to_string() } else { players.join(", ") };
                     let against = if lockstep.as_deref().is_some_and(|l| l.ranked) { "the server" } else { "the other players" };
                     notices.push(None, NoticeKind::Alert, format!("Desync at tick {tick}: {who} no longer match {against}"), None, clock.as_deref().map_or(0.0, |c| c.elapsed));
@@ -709,5 +723,32 @@ fn leave_match(
     if link.is_up() {
         link.send(ClientMsg::ListRooms);
         link.send(ClientMsg::RefreshRanked);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_named_players_game_has_parted() {
+        let player = |name: &str| MatchPlayer { name: name.into(), faction: "ironhold".into(), team: 0, ai: false };
+        let start = |slot| MatchStart {
+            match_id: 1,
+            seed: 2,
+            players: vec![player("Ann"), player("Bob"), player("Cy")],
+            your_slot: slot,
+            fog: true,
+            rule: VictoryRule::default(),
+            ranked: false,
+            resume_token: 0,
+        };
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let bob = Lockstep::new(&start(Some(1)));
+        assert!(bob.parted(&names(&["Bob"])) && bob.parted(&names(&["Ann", "Bob"])));
+        assert!(!bob.parted(&names(&["Cy"])), "Cy's game parted, not Bob's");
+        assert!(bob.parted(&[]), "nobody named: everyone's");
+        let spectator = Lockstep::new(&start(None));
+        assert!(!spectator.parted(&names(&["Ann"])));
     }
 }

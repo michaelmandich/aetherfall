@@ -36,8 +36,11 @@ what the server arranges:
    speed are off while online.
 4. Every ten ticks each client sends `af_core::hash::sim_hash` of its
    world. In casual rooms the server compares the players with each
-   other and tells everyone who disagrees; in ranked play it compares
-   each player with its own referee simulation.
+   other and tells everyone who parted from the majority (every player
+   when there is none, as with two players apart); in ranked play it
+   compares each player with its own referee simulation. Only a named
+   player's net bar says its game no longer matches; the others get the
+   notice.
 5. A dropped connection is retried for two minutes; on reconnection the
    client asks for the turns it missed (`Resume`) and carries on.
 
