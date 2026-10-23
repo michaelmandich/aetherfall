@@ -837,7 +837,11 @@ struct Bar {
 /// Every scenario's bar: everyone through and no order failed, but for one
 /// unit of the crowd ordered just past the exit, whose formation slot lies
 /// on the cliff beside it (it stops at the mouth), and the ram, whose path
-/// clearance does not fit its slot (its order fails where it stands). The
+/// clearance does not fit its slot. The path service sends the ram to the
+/// point it can reach nearest its goal, the slot's mouth, where its order
+/// fails and it stands in the way: the last two of the crowd squeeze past
+/// it, so mixed_sizes takes 16.6 s where it took about 12 s while the ram
+/// failed where it stood (before the region-aware path service). The
 /// times leave about a third over what the bench measures. Before the
 /// collision solver let crowds file through (slipping round corners of the
 /// terrain, waiting their turn in a queue, a file going on giving way to
@@ -852,7 +856,7 @@ const BARS: [Bar; 8] = [
     Bar { name: "wide_funnel", through: 60, failed: 0, short: 0, secs: 45.0 },
     Bar { name: "idle_plug", through: 30, failed: 0, short: 0, secs: 16.0 },
     Bar { name: "goal_just_past_exit", through: 39, failed: 0, short: 1, secs: 20.0 },
-    Bar { name: "mixed_sizes", through: 26, failed: 1, short: 0, secs: 16.0 },
+    Bar { name: "mixed_sizes", through: 26, failed: 1, short: 0, secs: 22.0 },
 ];
 
 /// Every scenario's crowd gets through as its bar ([`BARS`]) asks: the
