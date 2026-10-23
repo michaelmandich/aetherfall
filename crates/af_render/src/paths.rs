@@ -53,7 +53,9 @@ use af_core::ext::behavior::patrol_points;
 use af_core::ext::input::{OrderMark, RtsCamera, ShowPaths};
 use af_core::ext::render::{MAX_TERRAIN_HEIGHT, RoutesShown};
 use af_core::prelude::*;
+use bevy::camera::Hdr;
 use bevy::camera::visibility::RenderLayers;
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::ecs::system::SystemParam;
 use bevy::gizmos::AppGizmoBuilder;
 use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoConfigStore, GizmoLineConfig, GizmoLineJoint};
@@ -166,6 +168,12 @@ pub const XRAY_LAYER: usize = 1;
 /// cleared, so the x-ray strokes' near-plane depth never reaches the main
 /// view, where it would hide the lit strokes it doubles.
 ///
+/// It is HDR when the RTS camera is (its bloom makes it so), so the two
+/// share Bevy's main texture and the strokes are drawn into the finished
+/// frame: an LDR camera would get a texture of its own, never cleared, in
+/// which each frame's strokes pile up on the last ones'. It does no
+/// tonemapping of its own, which would tonemap the whole frame twice.
+///
 /// A camera costs every frame, asleep or not drawing anything (its own
 /// pass over every mesh, the sun's shadow cascades included, and its
 /// render passes: about a millisecond in a big match), so it sleeps
@@ -187,20 +195,27 @@ pub fn register_gizmos(app: &mut App) {
     app.insert_gizmo_config(PathGizmos, GizmoConfig { line, depth_bias: DEPTH_BIAS, ..default() }).insert_gizmo_config(PathXrayGizmos, xray);
 }
 
+/// What [`attach_xray_camera`] copies from the RTS camera.
+type RtsView<'a> = (Entity, &'a Projection, Option<&'a Msaa>, Has<Hdr>);
+
 /// Give each new RTS camera its [`XrayCamera`], asleep (despawned with it).
-pub(crate) fn attach_xray_camera(mut commands: Commands, cameras: Query<(Entity, &Projection, Option<&Msaa>), Added<RtsCamera>>) {
-    for (rts, projection, msaa) in &cameras {
-        commands.spawn((
+pub(crate) fn attach_xray_camera(mut commands: Commands, cameras: Query<RtsView, Added<RtsCamera>>) {
+    for (rts, projection, msaa, hdr) in &cameras {
+        let mut xray = commands.spawn((
             Name::new("Route x-ray camera"),
             XrayCamera,
             Camera3d::default(),
             Camera { order: XRAY_ASLEEP, is_active: false, clear_color: ClearColorConfig::None, ..default() },
             projection.clone(),
             msaa.copied().unwrap_or_default(),
+            Tonemapping::None,
             RenderLayers::layer(XRAY_LAYER),
             Transform::IDENTITY,
             ChildOf(rts),
         ));
+        if hdr {
+            xray.insert(Hdr);
+        }
     }
 }
 
@@ -1339,7 +1354,8 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<PathOverlay>();
         let projection = Projection::from(PerspectiveProjection { fov: 0.7, near: 0.5, far: 2000.0, ..default() });
-        let rts = world.spawn((RtsCamera, Camera3d::default(), projection, Msaa::Sample4)).id();
+        // HDR, as its bloom makes the game's RTS camera.
+        let rts = world.spawn((RtsCamera, Camera3d::default(), projection, Msaa::Sample4, Hdr)).id();
         let mut attach = Schedule::default();
         attach.add_systems(attach_xray_camera);
         attach.run(&mut world);
@@ -1350,6 +1366,8 @@ mod tests {
         let (camera, parent, layers, projection, msaa, at) = found[0].clone();
         assert_eq!((parent, layers, msaa, at), (rts, RenderLayers::layer(XRAY_LAYER), Msaa::Sample4, Transform::IDENTITY));
         assert!(matches!(projection, Projection::Perspective(p) if (p.fov, p.near) == (0.7, 0.5)), "the RTS camera's projection");
+        assert!(world.get::<Hdr>(camera).is_some(), "HDR as the RTS camera is, so the two share Bevy's main texture");
+        assert_eq!(world.get::<Tonemapping>(camera), Some(&Tonemapping::None), "the frame is tonemapped once");
         let state = |world: &World| world.get::<Camera>(camera).map(|c| (c.is_active, c.order)).unwrap();
         // Asleep before the RTS camera, so the UI is the RTS camera's.
         assert_eq!(state(&world), (false, XRAY_ASLEEP));
@@ -1363,6 +1381,11 @@ mod tests {
         world.resource_mut::<PathOverlay>().plan.clear();
         world.run_system_once(wake_xray_camera).unwrap();
         assert_eq!(state(&world), (false, XRAY_ASLEEP));
+        // An LDR RTS camera gets an LDR x-ray camera.
+        let ldr = world.spawn((RtsCamera, Camera3d::default())).id();
+        attach.run(&mut world);
+        let mut xray = world.query_filtered::<(&ChildOf, Has<Hdr>), With<XrayCamera>>();
+        assert!(xray.iter(&world).any(|(parent, hdr)| parent.parent() == ldr && !hdr));
     }
 
     #[test]
