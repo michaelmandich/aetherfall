@@ -18,7 +18,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub use ids::*;
-pub use load::find_data_dir;
+pub use load::{content_hash, find_data_dir};
 pub use schema::*;
 
 /// All content errors found while loading/validating, one line each.

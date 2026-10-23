@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 description = "Aetherfall shared ECS contract: components, resources, messages, system sets, spawn helpers, rules, spatial index."
 
+[features]
+# Items only a windowed client uses (the fog texture handle): Bevy's image
+# assets. af_render turns it on; the server leaves it off.
+client = ["bevy/bevy_asset", "bevy/bevy_image"]
+
 [dependencies]
 bevy = { workspace = true }
 af_data = { workspace = true }
 af_geom = { workspace = true }
+# The network session types in `ext/net.rs` travel over the wire.
+serde = { workspace = true }

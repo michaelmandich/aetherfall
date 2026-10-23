@@ -30,6 +30,16 @@ pub fn map_metres_used(metres: f32) -> f32 {
     if metres > 0.0 { metres.round().clamp(MAP_METRES_RANGE.0, MAP_METRES_RANGE.1) } else { 0.0 }
 }
 
+/// Which screen the menu shows: the skirmish setup, or the multiplayer
+/// screens (`crate::multiplayer`). Entering the menu while connected to a
+/// server goes straight back to the multiplayer screen.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuScreen {
+    #[default]
+    Skirmish,
+    Multiplayer,
+}
+
 /// How the menu assigns teams.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TeamMode {
@@ -148,6 +158,7 @@ impl MenuSettings {
             reveal_map: spectate,
             start_age: self.start_age,
             start_resources_mult: self.res_mult,
+            ..Default::default()
         }
     }
 
@@ -202,6 +213,8 @@ enum MenuButton {
     Site(bool),
     Start,
     Spectate,
+    /// The multiplayer screens.
+    Multiplayer,
 }
 
 /// Faction card (highlighted when chosen).
@@ -237,8 +250,34 @@ enum MenuLabel {
 struct MenuRoot;
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::Menu), (init_settings, spawn_menu).chain())
-        .add_systems(Update, (scroll_menu, menu_buttons, refresh_menu).chain().in_set(ClientSet::Ui).run_if(in_state(GameState::Menu)));
+    app.init_resource::<MenuScreen>()
+        .add_systems(OnEnter(GameState::Menu), (init_settings, pick_screen, spawn_menu).chain())
+        .add_systems(
+            Update,
+            (
+                (scroll_menu, menu_buttons, refresh_menu).chain().run_if(resource_equals(MenuScreen::Skirmish)),
+                show_screen,
+            )
+                .chain()
+                .in_set(ClientSet::Ui)
+                .run_if(in_state(GameState::Menu)),
+        );
+}
+
+/// Back from a networked match (or still connected): the multiplayer
+/// screen, where the room or the result is.
+fn pick_screen(session: Option<Res<af_core::ext::net::NetSession>>, mut screen: ResMut<MenuScreen>) {
+    let online = session.is_some_and(|s| s.status == af_core::ext::net::NetStatus::Online);
+    if online {
+        *screen = MenuScreen::Multiplayer;
+    }
+}
+
+/// Only the chosen screen's root is laid out.
+fn show_screen(screen: Res<MenuScreen>, mut roots: Query<(&mut Node, Has<MenuRoot>), Or<(With<MenuRoot>, With<crate::multiplayer::MultiplayerRoot>)>>) {
+    for (mut node, skirmish) in &mut roots {
+        theme::set_display(&mut node, skirmish == (*screen == MenuScreen::Skirmish));
+    }
 }
 
 /// Logical pixels one wheel notch scrolls the menu.
@@ -330,6 +369,8 @@ fn spawn_menu(mut commands: Commands, data: Res<Data>) {
                         right.spawn((button(Node { height: px(48), ..default() }, Color::srgb(0.16, 0.36, 0.18)), MenuButton::Start)).with_child(text("Start", FONT_LARGE, TEXT));
                         right.spawn((button(Node { height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37)), MenuButton::Spectate))
                             .with_child(text("Spectate AI match", FONT_LARGE, TEXT));
+                        right.spawn((button(Node { height: px(44), ..default() }, Color::srgb(0.3, 0.2, 0.38)), MenuButton::Multiplayer))
+                            .with_child(text("Multiplayer", FONT_LARGE, TEXT));
                         right.spawn(text(MENU_KEYS, FONT_SMALL, TEXT_DIM));
                     });
                 });
@@ -532,13 +573,13 @@ fn spawn_faction_card(parent: &mut ChildSpawnerCommands, f: &FactionDef, id: Fac
 }
 
 /// The shortcut lines under the Start buttons (see [`key_actions`]).
-const MENU_KEYS: &str = "Keys: Left/Right faction, +/- opponents, T teams, F fog,\nM map size, W water, R rivers, C meteor site (Shift: back),\nEnter start, S spectate";
+const MENU_KEYS: &str = "Keys: Left/Right faction, +/- opponents, T teams, F fog,\nM map size, W water, R rivers, C meteor site (Shift: back),\nEnter start, S spectate, O multiplayer";
 
 /// The menu's keyboard shortcuts, as the buttons they stand for: Left /
 /// Right pick the faction, + / - change the number of opponents, T and F
 /// toggle teams and fog, M, W, R and C step the map size, water, rivers
-/// and meteor site forward (back with Shift held), Enter starts and S
-/// spectates.
+/// and meteor site forward (back with Shift held), Enter starts, S
+/// spectates and O opens the multiplayer screens.
 fn key_actions(keys: &ButtonInput<KeyCode>, settings: &MenuSettings, factions: usize) -> Vec<MenuButton> {
     let mut out = Vec::new();
     let n = factions.max(1);
@@ -558,6 +599,7 @@ fn key_actions(keys: &ButtonInput<KeyCode>, settings: &MenuSettings, factions: u
             KeyCode::KeyC => MenuButton::Site(forward),
             KeyCode::Enter | KeyCode::NumpadEnter => MenuButton::Start,
             KeyCode::KeyS => MenuButton::Spectate,
+            KeyCode::KeyO => MenuButton::Multiplayer,
             _ => continue,
         });
     }
@@ -573,6 +615,7 @@ fn menu_buttons(
     mut settings: ResMut<MenuSettings>,
     mut next: ResMut<NextState<GameState>>,
     mut time: ResMut<Time<Virtual>>,
+    mut screen: ResMut<MenuScreen>,
 ) {
     let factions = data.factions.len();
     let mut actions: Vec<MenuButton> = buttons.iter().filter(|(i, _)| **i == Interaction::Pressed).map(|(_, a)| *a).collect();
@@ -618,6 +661,7 @@ fn menu_buttons(
                 time.unpause();
                 next.set(GameState::Playing);
             }
+            MenuButton::Multiplayer => *screen = MenuScreen::Multiplayer,
         }
     }
 }
@@ -875,6 +919,7 @@ mod tests {
             app.insert_resource(Data(test_data()));
             let map = MapOptions { size: MapSize::Small, water: WaterLevel::Dry, rivers: RiverCount::Two, site: SiteChoice::Kind(SiteKind::Scar) };
             app.insert_resource(MenuSettings { seed: 5, map, ..default() });
+            app.init_resource::<MenuScreen>();
             let mut keys = ButtonInput::<KeyCode>::default();
             keys.press(key);
             app.insert_resource(keys);

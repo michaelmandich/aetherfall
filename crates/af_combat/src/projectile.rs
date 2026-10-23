@@ -169,7 +169,7 @@ pub(crate) fn launch_bolt(out: &mut Effects, p: Payload, look: &ProjectileLook, 
     let side = Vec3::new(-to.z, 0.0, to.x).normalize_or(Vec3::X);
     // Leaves the muzzle at the spread angle: d(drawn offset)/d(distance) is
     // |swerve| / dist at the start of the bow.
-    let swerve = side * dist * (out.fx.rand(-0.5, 0.5) * spread_deg.to_radians()).tan();
+    let swerve = side * dist * af_geom::dmath::tan(out.fx.rand(-0.5, 0.5) * spread_deg.to_radians());
     let life = BOLT_MAX_LIFE.max(2.0 * dist / speed.max(0.1));
     let flight = BoltFlight { target: target.entity, aim, at: from, speed, swerve, start_dist: dist, life };
     out.fx.projectile(fx_box(from, to + swerve, look_size(look), look.color, look.glow), (p, flight));
@@ -228,7 +228,7 @@ pub(crate) fn launch_cannon(out: &mut Effects, p: Payload, look: &ProjectileLook
     let start = ground(from);
     let to = target.pos - start;
     let off = out.rng.range(-0.5, 0.5) * spread_deg.to_radians();
-    let dir = Vec2::from_angle(off).rotate(to.normalize_or(af_geom::forward(0.0)));
+    let dir = af_geom::dmath::from_angle(off).rotate(to.normalize_or(af_geom::forward(0.0)));
     let distance = to.length().max(0.01);
     let y_to = target.aim_point().y;
     let flight = CannonFlight {

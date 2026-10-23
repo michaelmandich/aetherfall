@@ -6,3 +6,5 @@ description = "Aetherfall 2D geometry on the ground plane: oriented boxes, SAT, 
 
 [dependencies]
 bevy_math = { workspace = true }
+# Trigonometry with the same bits on every platform (lockstep multiplayer).
+libm = { workspace = true }

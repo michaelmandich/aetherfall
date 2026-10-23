@@ -1,0 +1,49 @@
+# systemd unit for the Aetherfall multiplayer server on a Raspberry Pi.
+#
+#   sudo cp deploy/aetherfall-server.service /etc/systemd/system/
+#   sudo mkdir -p /etc/aetherfall && sudo cp deploy/server.env.example /etc/aetherfall/server.env
+#   sudo chmod 600 /etc/aetherfall/server.env     # it holds the service-role key
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aetherfall-server
+#   journalctl -u aetherfall-server -f
+#
+# Expects the binary at /opt/aetherfall/af_server and the content at
+# /opt/aetherfall/assets/data (see docs/multiplayer.md).
+
+[Unit]
+Description=Aetherfall multiplayer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aetherfall
+Group=aetherfall
+# Optional ("-"): without it the server hosts casual rooms on 0.0.0.0:7777.
+EnvironmentFile=-/etc/aetherfall/server.env
+WorkingDirectory=/opt/aetherfall
+ExecStart=/opt/aetherfall/af_server --data /opt/aetherfall/assets/data
+Restart=on-failure
+RestartSec=3
+
+# The server needs nothing but its folder and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+# A runaway match can never take the Pi down with it.
+MemoryMax=2G
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[package]
+name = "af_server"
+version.workspace = true
+edition.workspace = true
+description = "Aetherfall multiplayer server: casual rooms relayed in lockstep, ranked 1v1 / 1v1v1 / 2v2 matches simulated and refereed on the server, accounts and ratings on Supabase. Runs headless on a Raspberry Pi."
+default-run = "af_server"
+
+[dependencies]
+bevy = { workspace = true }
+af_core = { workspace = true }
+af_sim = { workspace = true }
+af_net = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }

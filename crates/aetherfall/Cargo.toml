@@ -6,7 +6,7 @@ description = "Aetherfall: a box-graphics RTS. The game binary: app wiring, CLI,
 default-run = "aetherfall"
 
 [dependencies]
-bevy = { workspace = true }
+bevy = { workspace = true, features = ["default"] }
 af_core = { workspace = true }
 af_map = { workspace = true }
 af_movement = { workspace = true }
@@ -18,3 +18,5 @@ af_ai = { workspace = true }
 af_input = { workspace = true }
 af_ui = { workspace = true }
 af_render = { workspace = true }
+af_sim = { workspace = true }
+af_net = { workspace = true }

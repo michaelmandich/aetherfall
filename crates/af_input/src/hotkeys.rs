@@ -267,8 +267,21 @@ pub(crate) fn delete_selected(keys: Res<ButtonInput<KeyCode>>, own: OwnSelection
 }
 
 /// Pause/F3 toggles the simulation clock; +/- (numpad or main row) steps
-/// the game speed between 0.5x and 8x.
-pub(crate) fn game_speed(keys: Res<ButtonInput<KeyCode>>, local: Res<LocalPlayer>, mut time: ResMut<Time<Virtual>>, mut issuer: Issuer) {
+/// the game speed between 0.5x and 8x. In a networked match the server
+/// runs the clock: nothing here applies.
+pub(crate) fn game_speed(
+    keys: Res<ButtonInput<KeyCode>>,
+    local: Res<LocalPlayer>,
+    multiplayer: Option<Res<af_core::ext::net::Multiplayer>>,
+    mut time: ResMut<Time<Virtual>>,
+    mut issuer: Issuer,
+) {
+    if multiplayer.is_some() {
+        if keys.any_just_pressed([KeyCode::Pause, KeyCode::F3, KeyCode::NumpadAdd, KeyCode::Equal, KeyCode::NumpadSubtract, KeyCode::Minus]) {
+            issuer.notice(local.0, NoticeKind::Info, "The server runs the clock of an online match");
+        }
+        return;
+    }
     if keys.any_just_pressed([KeyCode::Pause, KeyCode::F3]) {
         if time.is_paused() {
             time.unpause();

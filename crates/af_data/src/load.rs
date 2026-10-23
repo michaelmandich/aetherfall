@@ -38,6 +38,31 @@ pub fn find_data_dir() -> Option<PathBuf> {
     None
 }
 
+/// A digest of every `.ron` file under `dir` (their paths relative to it
+/// and their text, line endings normalised), so two installs can tell
+/// whether they run the same content before they try to play a lockstep
+/// match. FNV-1a 64 over the sorted files.
+pub fn content_hash(dir: &Path) -> std::io::Result<u64> {
+    let mut files = Vec::new();
+    collect_ron_files(dir, &mut files)?;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for path in files {
+        let rel = path.strip_prefix(dir).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+        feed(rel.as_bytes());
+        feed(&[0]);
+        let text = std::fs::read_to_string(&path)?.replace("\r\n", "\n");
+        feed(text.as_bytes());
+        feed(&[0]);
+    }
+    Ok(h)
+}
+
 fn ron_options() -> ron::Options {
     ron::Options::default().with_default_extension(Extensions::IMPLICIT_SOME)
 }

@@ -10,19 +10,19 @@ use bevy_math::{Vec2, Vec3};
 /// Unit forward vector for a yaw.
 #[inline]
 pub fn forward(yaw: f32) -> Vec2 {
-    Vec2::new(yaw.sin(), yaw.cos())
+    Vec2::new(crate::dmath::sin(yaw), crate::dmath::cos(yaw))
 }
 
 /// Unit right vector for a yaw.
 #[inline]
 pub fn right(yaw: f32) -> Vec2 {
-    Vec2::new(yaw.cos(), -yaw.sin())
+    Vec2::new(crate::dmath::cos(yaw), -crate::dmath::sin(yaw))
 }
 
 /// Yaw that faces along `dir` (any length > 0).
 #[inline]
 pub fn yaw_of(dir: Vec2) -> f32 {
-    dir.x.atan2(dir.y)
+    crate::dmath::atan2(dir.x, dir.y)
 }
 
 /// Wrap an angle to (-PI, PI].

@@ -245,6 +245,30 @@ pub struct PlayerSetup {
     pub color: Option<[f32; 3]>,
 }
 
+/// When a player (or a team) is out of the match. See af_economy's victory check.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum VictoryRule {
+    /// A player is out with no living unit and no complete building that
+    /// matters (walls, gates, plain fields and foundations do not count).
+    #[default]
+    LastStanding,
+    /// A team is out once none of its players owns a complete main hall
+    /// (a `TownCenter`-tagged building): the ranked 2v2 rule. Players of a
+    /// team that still holds a hall stay in, hall or not.
+    TownHalls,
+}
+
+impl VictoryRule {
+    pub const ALL: [VictoryRule; 2] = [VictoryRule::LastStanding, VictoryRule::TownHalls];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            VictoryRule::LastStanding => "Last standing",
+            VictoryRule::TownHalls => "Town halls",
+        }
+    }
+}
+
 /// How to build a match. Inserted before entering `GameState::Playing`
 /// (by the menu, CLI or a test); af_map reads it OnEnter(Playing).
 #[derive(Resource, Clone, Debug)]
@@ -262,6 +286,8 @@ pub struct MatchSetup {
     pub start_age: u8,
     /// Multiplies starting resources (debug / quick tests).
     pub start_resources_mult: f32,
+    /// When players and teams are out.
+    pub rule: VictoryRule,
 }
 
 impl Default for MatchSetup {
@@ -275,6 +301,7 @@ impl Default for MatchSetup {
             reveal_map: false,
             start_age: 1,
             start_resources_mult: 1.0,
+            rule: VictoryRule::LastStanding,
         }
     }
 }

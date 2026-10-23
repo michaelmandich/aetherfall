@@ -144,7 +144,7 @@ pub fn wall_segments(data: &GameData, kind: BuildingTypeId, from: Vec2, to: Vec2
     }
     let dir = d / len;
     // yaw whose `right` axis is `dir`: right = (cos a, -sin a).
-    let yaw = (-dir.y).atan2(dir.x);
+    let yaw = af_geom::dmath::atan2(-dir.y, dir.x);
     let n = ((len / seg).round().max(1.0) as usize).min(MAX_WALL_SEGMENTS);
     (0..n).map(|i| (from + dir * (seg * (i as f32 + 0.5)), yaw)).collect()
 }

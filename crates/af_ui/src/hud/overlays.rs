@@ -74,6 +74,14 @@ struct PauseBanner;
 #[derive(Component)]
 pub(crate) struct GameOverScreen;
 
+/// Rating changes (and forfeits) of a networked match, under the subtitle.
+#[derive(Component)]
+struct RankedResultText;
+
+/// The leave panel's warning that leaving a ranked match counts as a loss.
+#[derive(Component)]
+struct LeaveWarning;
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum GameOverText {
     Title,
@@ -118,7 +126,7 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<GameOverState>()
         .add_systems(
             Update,
-            (update_drag_box, update_hover_tip, update_placement_hint, update_pause_banner, (show_game_over, game_menu, show_panels).chain()).in_set(HudSet::Panels),
+            (update_drag_box, update_hover_tip, update_placement_hint, update_pause_banner, update_net_lines, (show_game_over, game_menu, show_panels).chain()).in_set(HudSet::Panels),
         );
 }
 
@@ -194,6 +202,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
             .with_children(|panel| {
                 panel.spawn((text("", 48.0, theme::HIGHLIGHT), GameOverText::Title));
                 panel.spawn((text("", FONT_LARGE, TEXT), GameOverText::Subtitle));
+                panel.spawn((text("", FONT_BODY, theme::HIGHLIGHT), RankedResultText, Node { display: Display::None, ..default() }));
                 panel.spawn((
                     StatsTable,
                     Node {
@@ -248,6 +257,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
             .with_children(|panel| {
                 panel.spawn(text("Leave the match?", 32.0, theme::HIGHLIGHT));
                 panel.spawn(text("The match goes on without you.", FONT_BODY, TEXT_DIM));
+                panel.spawn((text("Online: you resign, and in ranked play that counts as a loss.", FONT_BODY, theme::TEXT_WARN), LeaveWarning, Node { display: Display::None, ..default() }));
                 panel.spawn(Node { column_gap: px(16), margin: UiRect::top(px(8)), ..default() }).with_children(|r| {
                     r.spawn((theme::button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37)), LeaveButton::Leave))
                         .with_child(text("Leave to menu", FONT_LARGE, TEXT));
@@ -410,6 +420,40 @@ fn update_placement_hint(
                 theme::set_color(&mut c, *color);
             }
         }
+    }
+}
+
+/// "Ann 1600 -> 1616, Bob 1600 -> 1584" and who forfeited, or the note
+/// of a void match.
+pub fn ranked_result_line(result: &af_core::ext::net::MatchResultView) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !result.changes.is_empty() {
+        parts.push(result.changes.iter().map(|c| format!("{} {} -> {}", c.username, c.before, c.after)).collect::<Vec<_>>().join(", "));
+    }
+    if !result.forfeited.is_empty() {
+        parts.push(format!("Forfeited: {}", result.forfeited.join(", ")));
+    }
+    if !result.note.is_empty() {
+        parts.push(result.note.clone());
+    }
+    parts.join("  |  ")
+}
+
+/// The networked match's result on the game-over screen, and the leave
+/// panel's warning while one is running.
+fn update_net_lines(
+    session: Option<Res<af_core::ext::net::NetSession>>,
+    multiplayer: Option<Res<af_core::ext::net::Multiplayer>>,
+    mut result: Query<(&mut Node, &mut Text), With<RankedResultText>>,
+    mut warning: Query<&mut Node, (With<LeaveWarning>, Without<RankedResultText>)>,
+) {
+    let line = session.as_deref().and_then(|s| s.result.as_ref()).map(ranked_result_line).filter(|l| !l.is_empty());
+    for (mut node, mut t) in &mut result {
+        set_display(&mut node, line.is_some());
+        set_text(&mut t, line.as_deref().unwrap_or(""));
+    }
+    for mut node in &mut warning {
+        set_display(&mut node, multiplayer.is_some());
     }
 }
 

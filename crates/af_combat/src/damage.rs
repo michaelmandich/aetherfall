@@ -66,7 +66,13 @@ pub(crate) fn apply_damage(
 ) {
     let now = clock.elapsed;
     log.expire(now);
-    for msg in incoming.read() {
+    // Messages arrive in the order their writers visited shooters and
+    // projectiles (table order, which client-only components change); hit
+    // points subtract in a fixed order instead, so lockstep peers agree on
+    // every last bit, and on who struck last.
+    let mut messages: Vec<DamageMsg> = incoming.read().copied().collect();
+    messages.sort_by_key(|m| (m.target, m.source.map(Entity::to_bits), m.amount.to_bits(), m.dtype));
+    for msg in &messages {
         if msg.amount <= 0.0 {
             continue;
         }

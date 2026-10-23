@@ -5,7 +5,8 @@
 //!
 //! * `ClientSet::Pointer`: [`pointer`] sets `CursorWorld::over_ui` from the
 //!   picking hover map, so af_input ignores world clicks on the HUD.
-//! * `GameState::Menu`: [`menu`], the skirmish setup screen and its camera.
+//! * `GameState::Menu`: [`menu`], the skirmish setup screen and its camera,
+//!   and [`multiplayer`], the server, room and ranked screens.
 //! * `GameState::Playing`, `ClientSet::Ui`: the HUD — top bar, idle
 //!   workers, notices, selection panel, command card + tooltip, minimap,
 //!   drag box, pause and game-over overlays.
@@ -21,6 +22,7 @@ pub mod card;
 pub mod format;
 mod hud;
 pub mod menu;
+pub mod multiplayer;
 mod pointer;
 pub mod theme;
 pub mod tooltip;
@@ -38,6 +40,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, (pointer::update_over_ui.in_set(ClientSet::Pointer), theme::shade_buttons.in_set(ClientSet::Ui)));
         menu::plugin(app);
+        multiplayer::plugin(app);
         hud::plugin(app);
     }
 }

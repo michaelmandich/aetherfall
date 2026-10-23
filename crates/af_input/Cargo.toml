@@ -5,5 +5,5 @@ edition.workspace = true
 description = "Aetherfall player input: RTS camera, picking, selection, control groups, commands, placement modes, hotkeys."
 
 [dependencies]
-bevy = { workspace = true }
+bevy = { workspace = true, features = ["default"] }
 af_core = { workspace = true }

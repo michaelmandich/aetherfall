@@ -43,7 +43,7 @@ impl SimRng {
     pub fn in_disc(&mut self, radius: f32) -> Vec2 {
         let a = self.range(0.0, std::f32::consts::TAU);
         let r = radius * self.f32().sqrt();
-        Vec2::new(a.cos(), a.sin()) * r
+        af_geom::dmath::from_angle(a) * r
     }
     /// Independent child generator (e.g. one per map feature).
     pub fn fork(&mut self) -> SimRng {

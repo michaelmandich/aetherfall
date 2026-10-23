@@ -16,6 +16,7 @@
 //! * [`rng`] — deterministic RNG.
 //! * [`sim_ids`] — entity ids for sim spawns that client spawns cannot shift
 //!   (sim code orders and staggers by `Entity`).
+//! * [`hash`] — a digest of the match state, for lockstep desync checks.
 //!
 //! Apps should call `app.set_error_handler(bevy::ecs::error::warn)` before
 //! adding plugins, and sim code should prefer `try_insert`/`try_despawn` on
@@ -24,6 +25,7 @@
 pub mod commands;
 pub mod components;
 pub mod ext;
+pub mod hash;
 pub mod messages;
 pub mod placement;
 pub mod resources;
@@ -206,7 +208,12 @@ fn rebuild_spatial(
         index.reset(map.size);
     }
     index.clear();
-    for (e, u, o, p, f, fp, alt, st, mob) in &units {
+    // In entity (spawn) order, not table order (which client-only
+    // components on a unit change): `SpatialIndex::nearest` breaks ties by
+    // insertion order.
+    let mut unit_rows: Vec<_> = units.iter().collect();
+    unit_rows.sort_unstable_by_key(|row| row.0.index_u32());
+    for (e, u, o, p, f, fp, alt, st, mob) in unit_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
@@ -225,7 +232,9 @@ fn rebuild_spatial(
             blocking: false,
         });
     }
-    for (e, b, o, p, f, fp, st, building) in &buildings {
+    let mut building_rows: Vec<_> = buildings.iter().collect();
+    building_rows.sort_unstable_by_key(|row| row.0.index_u32());
+    for (e, b, o, p, f, fp, st, building) in building_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
@@ -244,7 +253,9 @@ fn rebuild_spatial(
             blocking: true,
         });
     }
-    for (e, n, p, f, fp, blocking) in &nodes {
+    let mut node_rows: Vec<_> = nodes.iter().collect();
+    node_rows.sort_unstable_by_key(|row| row.0.index_u32());
+    for (e, n, p, f, fp, blocking) in node_rows {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,

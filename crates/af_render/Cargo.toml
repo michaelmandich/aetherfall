@@ -5,8 +5,8 @@ edition.workspace = true
 description = "Aetherfall renderer: boxes for terrain, units, buildings, nodes, weapons, projectiles/FX, health bars, selection, fog, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes that have one."
 
 [dependencies]
-bevy = { workspace = true }
-af_core = { workspace = true }
+bevy = { workspace = true, features = ["default"] }
+af_core = { workspace = true, features = ["client"] }
 # The visual registry (assets/visuals/*.ron) and the model manifests it names.
 serde = { workspace = true }
 ron = { workspace = true }

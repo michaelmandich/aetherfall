@@ -23,11 +23,16 @@ boxes where they do not, effects and markers as boxes.
 | `af_input` | camera, picking, selection, control groups, commands, placement modes, hotkeys | af_core |
 | `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over | af_core |
 | `af_render` | the land (height field, water, props, the fog of war, light and camera look); box visuals for entities, weapons, FX, bars, selection, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
-| `aetherfall` | the binary: wiring, CLI, headless harness, screenshot mode | all |
+| `af_sim` | the simulation wired together: every sim plugin in one call, the headless runner, skirmish setup, match reports, the `SimSet` profiler, the referee app | af_core and every sim crate |
+| `af_net` | multiplayer client: wire protocol (shared with the server), TCP framing, the lockstep client plugin, the account-service client | af_core, serde, postcard, ureq |
+| `aetherfall` | the game binary: wiring, CLI, screenshot and dev tooling | all |
+| `af_server` | the multiplayer server binary: casual rooms relayed in lockstep, ranked matches refereed with `af_sim`, Elo, Supabase accounts (`docs/multiplayer.md`) | af_sim, af_net |
 
 Crates never depend on each other sideways; they communicate only through
 `af_core` types. A crate that must share something new adds it to its own
 file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
+The multiplayer UI is an example: af_ui reads `af_core::ext::net::NetSession`
+and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
 
 ## Simulation model
 
@@ -40,12 +45,23 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   buildings and blocking nodes are static `Obstacle`s rasterised into the
   nav grid; units push out of each other and of obstacles with SAT.
 * Players act only through `PlayerCommand` pushed into `CommandInbox`; they
-  execute next tick from `TickCommands` (lockstep-friendly).
+  execute next tick from `TickCommands`. Online, the server's turns are what
+  reaches the inbox (`af_net::client`), and the local player's commands
+  leave it for the server instead; see `docs/multiplayer.md`.
+* `MatchSetup::rule` picks the victory rule: `LastStanding` (a player is out
+  with nothing left) or `TownHalls` (a team is out with no main hall left;
+  ranked 2v2).
 * Content is data: `Data(Arc<GameData>)`. Effective numbers come from
   `af_core::stats` (techs) and permissions from `af_core::rules`, shared by
   economy, UI and AI.
 * Deterministic RNG: `SimRng`. Deaths: insert `Dead` + write `EntityDied`;
   af_core despawns in `Cleanup`.
+* Deterministic math: sim code never calls `f32::sin`, `cos`, `tan`,
+  `atan2`, `powf` or `Vec2::from_angle` (the platform's libm differs in the
+  last bit); it uses `af_geom::dmath`, so a Windows, Mac and Raspberry Pi
+  simulation of the same match agree bit for bit. Square roots, rounding
+  and arithmetic are exact everywhere. `af_core::hash::sim_hash` digests a
+  match for the lockstep desync check.
 * What a unit is busy with: `Activity` (af_core `components.rs`), written
   only by af_behavior at the end of `SimSet::Orders`: `Gather(WorkStyle)`
   (at the node or field), `Build`, `Repair` (at the target), `Heal`,
@@ -59,14 +75,16 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
   (`af_core::sim_ids`), so client-side spawns (visuals, UI) never shift the
   ids the simulation sees; the same seed replays identically headless or
   windowed (`crates/aetherfall/tests/determinism.rs`).
-  Known gap (found 2026-10-19): some sim system depends on the order in
-  which it visits units, and adding a client-only component to a unit
-  (`Selected`, `BoxVisual`, a model marker) moves it to another archetype
-  and changes that order. In a headless test, marking every other unit
-  with an empty component at tick 90 changes the match within four
-  minutes; marking nodes or buildings does not. So a windowed match can
-  drift from its headless replay (and `--select` changes a match). The
-  determinism tests do not cover it yet.
+  Client-only components (`Selected`, `BoxVisual`, a model marker) move a
+  unit to another archetype and change the order queries visit units, so
+  no sim system may depend on that order: whatever is first come first
+  served (node room, field slots, the path queue, healers' patients),
+  whatever sums floats (steering's avoidance pushes, damage, what workers
+  take from a node) and whatever breaks ties by insertion (the spatial
+  index) visits entities sorted by `Entity`. `tests/determinism.rs`
+  marks every second unit with an empty component and checks that five
+  minutes of play stay bit-identical; lockstep peers with different
+  selections depend on it.
 * Pathing on big maps (`docs/design/maps-and-terrain.md`, section 7): a
   single A* search stops after 24,000 cells, so a river or a range across
   the map is handled a level up. af_geom labels the connected regions of

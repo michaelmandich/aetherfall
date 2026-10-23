@@ -86,6 +86,8 @@ pub(crate) struct Intake<'w, 's> {
     commands: Commands<'w, 's>,
     actors: Query<'w, 's, Actor, (With<Unit>, Without<Dead>)>,
     pointees: Query<'w, 's, Pointee, Without<Dead>>,
+    /// Everything a player owns, for `Resign`.
+    owned: Query<'w, 's, (Entity, &'static Owner), (Or<(With<Unit>, With<Building>)>, Without<Dead>)>,
 }
 
 /// Applies the behaviour commands of this tick, in issue order.
@@ -140,6 +142,7 @@ impl Intake<'_, '_> {
                 }
             }
             CommandKind::Delete => self.delete(cmd, doomed),
+            CommandKind::Resign => self.resign(cmd.player, doomed),
             CommandKind::PlaceBuilding { .. }
             | CommandKind::PlaceWall { .. }
             | CommandKind::Train { .. }
@@ -456,6 +459,19 @@ impl Intake<'_, '_> {
             self.commands.entity(e).try_insert(Dead);
             self.died.write(EntityDied { entity: e, owner: Some(cmd.player), kind, pos: t.pos.0, killer: None });
         }
+    }
+}
+
+impl Intake<'_, '_> {
+    /// `Resign`: the player's every unit and building dies, in entity order.
+    fn resign(&mut self, player: PlayerId, doomed: &mut Vec<Entity>) {
+        let mut own: Vec<Entity> = self.owned.iter().filter(|(_, o)| o.0 == player).map(|(e, _)| e).collect();
+        own.sort_unstable();
+        let all = PlayerCommand::new(player, own, CommandKind::Delete);
+        self.delete(&all, doomed);
+        let name = self.players.try_get(player).map(|p| p.name.clone()).unwrap_or_default();
+        let time = self.clock.elapsed;
+        self.notices.push(None, NoticeKind::Alert, format!("{name} has resigned"), None, time);
     }
 }
 
