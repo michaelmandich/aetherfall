@@ -179,7 +179,7 @@ pub(super) fn spawn(bottom: &mut ChildSpawnerCommands) {
                         ))
                         .with_child((text("", FONT_SMALL, TEXT), TextLayout::no_wrap(), GroupLabel(i)));
                     }
-                    grid.spawn((text("", FONT_SMALL, TEXT_DIM), GroupOverflow));
+                    grid.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), GroupOverflow));
                 });
         });
 }

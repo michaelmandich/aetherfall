@@ -27,8 +27,17 @@ pub const PANEL_BG: Color = Color::srgba(0.05, 0.06, 0.08, 0.97);
 pub const PANEL_BORDER: Color = Color::srgba(0.58, 0.49, 0.32, 0.9);
 /// Normal text.
 pub const TEXT: Color = Color::srgb(0.93, 0.92, 0.88);
-/// Secondary text (labels, hotkeys, disabled buttons).
-pub const TEXT_DIM: Color = Color::srgb(0.62, 0.62, 0.6);
+/// Secondary text (labels, hotkeys, disabled buttons): dimmer than
+/// [`TEXT`], yet over [`MIN_CONTRAST`] on the skin's planks (5.3:1 on
+/// their median, 4.6:1 where they are lighter than nine tenths of them).
+pub const TEXT_DIM: Color = Color::srgb(0.75, 0.75, 0.72);
+/// The skin's wooden planks (`panel_wood.png`): their median colour,
+/// measured on screen. Text on a panel is held to [`MIN_CONTRAST`]
+/// against it, which the flat dark [`PANEL_BG`] only betters.
+pub const PLANK: Color = Color::srgb_u8(91, 61, 39);
+/// Least contrast (WCAG ratio) of panel text against the [`PLANK`]s, the
+/// usual floor for text of this size.
+pub const MIN_CONTRAST: f32 = 4.5;
 /// Errors, alerts, unaffordable costs, a full population.
 pub const TEXT_BAD: Color = Color::srgb(1.0, 0.4, 0.34);
 /// Warnings and unit status.
@@ -58,10 +67,21 @@ pub fn rgb(c: [f32; 3]) -> Color {
     Color::srgb(c[0], c[1], c[2])
 }
 
-/// A player's colour lifted for text on a dark panel (dark faction
-/// colours such as cobalt blue are hard to read as is).
+/// WCAG contrast ratio of two colours (1 to 21).
+pub fn contrast(a: Color, b: Color) -> f32 {
+    let l = |c: Color| LinearRgba::from(c).luminance() + 0.05;
+    let (a, b) = (l(a), l(b));
+    a.max(b) / a.min(b)
+}
+
+/// A player's colour lifted for text on a panel: mixed toward white, at
+/// least by a third (dark faction colours such as cobalt blue are hard to
+/// read as they are) and further until it reaches [`MIN_CONTRAST`] on the
+/// planks, so it keeps as much of its colour as it can. Draw it with a
+/// [`text_shadow`].
 pub fn player_text(c: [f32; 3]) -> Color {
-    rgb(c).mix(&Color::WHITE, 0.35)
+    let base = rgb(c);
+    (14..=40).map(|i| base.mix(&Color::WHITE, i as f32 / 40.0)).find(|t| contrast(*t, PLANK) >= MIN_CONTRAST).unwrap_or(Color::WHITE)
 }
 
 /// A text node.
@@ -69,7 +89,8 @@ pub fn text(s: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, T
     (Text::new(s), TextFont::from_font_size(size), TextColor(color))
 }
 
-/// A tight dark drop shadow for text drawn over coloured fills (bars).
+/// A tight dark drop shadow for text drawn over coloured fills (bars) and
+/// for coloured or secondary text on the skin's planks.
 pub fn text_shadow() -> TextShadow {
     TextShadow { offset: Vec2::splat(1.0), color: Color::srgba(0.0, 0.0, 0.0, 0.9) }
 }
@@ -266,6 +287,26 @@ pub fn set_display(node: &mut Mut<Node>, visible: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_text_reads_on_the_planks_and_on_the_flat_panels() {
+        for (name, c) in [("TEXT", TEXT), ("TEXT_DIM", TEXT_DIM)] {
+            assert!(contrast(c, PLANK) >= MIN_CONTRAST, "{name} on the planks: {}", contrast(c, PLANK));
+            assert!(contrast(c, PANEL_BG) >= MIN_CONTRAST, "{name} on the flat panel");
+        }
+        assert!(contrast(TEXT, PLANK) > contrast(TEXT_DIM, PLANK) * 1.3, "secondary text stays dimmer");
+        // Every faction's colour, and the darkest, lightest and most
+        // saturated colours a player may be given.
+        let data = af_core::testing::test_data();
+        let extremes = [[0.0, 0.0, 0.0], [0.12, 0.12, 0.12], [0.0, 0.0, 1.0], [0.45, 0.0, 0.0], [0.1, 0.3, 0.1], [1.0, 1.0, 1.0], [1.0, 0.9, 0.2]];
+        for c in data.factions.iter().map(|f| f.color).chain(extremes) {
+            let t = player_text(c);
+            assert!(contrast(t, PLANK) >= MIN_CONTRAST && contrast(t, PANEL_BG) >= MIN_CONTRAST, "{c:?} as {t:?}");
+        }
+        // Lifted no further than it takes: a deep blue stays blue.
+        let blue = player_text([0.1, 0.2, 0.8]).to_srgba();
+        assert!(blue.blue > blue.red + 0.15, "{blue:?}");
+    }
 
     #[test]
     fn helpers_keep_the_padding_asked_for() {

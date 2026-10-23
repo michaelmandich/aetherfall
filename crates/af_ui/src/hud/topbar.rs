@@ -106,17 +106,17 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands, data: &GameData) {
                     BorderColor::all(Color::BLACK),
                 ));
                 // The name, so nobody has to learn the colours first.
-                c.spawn((text(def.name.clone(), FONT_SMALL, TEXT_DIM), ChipName));
+                c.spawn((text(def.name.clone(), FONT_SMALL, TEXT_DIM), theme::text_shadow(), ChipName));
                 c.spawn((text("0", FONT_BODY, TEXT), TopLabel::Resource(r), Node { min_width: px(36), ..default() }));
             });
         }
         bar.spawn((chip(), Tip("Population: used / capacity. Build houses for more.".into()))).with_children(|c| {
-            c.spawn((text("Pop", FONT_SMALL, TEXT_DIM), ChipName));
+            c.spawn((text("Pop", FONT_SMALL, TEXT_DIM), theme::text_shadow(), ChipName));
             c.spawn((text("0/0", FONT_BODY, TEXT), TopLabel::Pop));
         });
         bar.spawn(Node { flex_grow: 1.0, ..default() });
         bar.spawn((Node { column_gap: px(6), align_items: AlignItems::Center, display: Display::None, ..default() }, Switcher)).with_children(|s| {
-            s.spawn(text("Viewing (Tab)", FONT_SMALL, TEXT_DIM));
+            s.spawn((text("Viewing (Tab)", FONT_SMALL, TEXT_DIM), theme::text_shadow()));
             s.spawn((theme::button(Node { padding: UiRect::axes(px(8), px(1)), ..default() }, theme::BUTTON), SwitchStep(-1)))
                 .with_child(text("<", FONT_BODY, TEXT));
             // One line of fixed width, so a long name never wraps the bar

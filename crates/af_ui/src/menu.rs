@@ -250,11 +250,11 @@ fn spawn_settings(panel: &mut ChildSpawnerCommands) {
         small_button(r, "-", MenuButton::FewerOpponents);
         r.spawn((text("1", FONT_BODY, TEXT), MenuLabel::OpponentCount));
         small_button(r, "+", MenuButton::MoreOpponents);
-        r.spawn((text("", FONT_SMALL, TEXT_DIM), MenuLabel::YourTeam));
+        r.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), MenuLabel::YourTeam));
     });
     for i in 0..MAX_OPPONENTS {
         panel.spawn((row(), OpponentRow(i))).with_children(|r| {
-            r.spawn((text(format!("  Opponent {}", i + 1), FONT_SMALL, TEXT_DIM), Node { width: px(110), ..default() }));
+            r.spawn((text(format!("  Opponent {}", i + 1), FONT_SMALL, TEXT_DIM), theme::text_shadow(), Node { width: px(110), ..default() }));
             small_button(r, "<", MenuButton::OpponentPrev(i));
             r.spawn((
                 text("Random", FONT_SMALL, TEXT),
@@ -263,7 +263,7 @@ fn spawn_settings(panel: &mut ChildSpawnerCommands) {
                 Node { width: px(OPPONENT_NAME_WIDTH), overflow: Overflow::clip(), ..default() },
             ));
             small_button(r, ">", MenuButton::OpponentNext(i));
-            r.spawn((text("", FONT_SMALL, TEXT_DIM), TextLayout::no_wrap(), Node { flex_shrink: 0.0, ..default() }, MenuLabel::OpponentTeam(i)));
+            r.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), TextLayout::no_wrap(), Node { flex_shrink: 0.0, ..default() }, MenuLabel::OpponentTeam(i)));
         });
     }
     panel.spawn(row()).with_children(|r| {

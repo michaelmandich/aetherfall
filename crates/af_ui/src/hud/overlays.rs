@@ -251,7 +251,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands) {
             ))
             .with_children(|panel| {
                 panel.spawn(text("Leave the match?", 32.0, theme::HIGHLIGHT));
-                panel.spawn(text("The match goes on without you.", FONT_BODY, TEXT_DIM));
+                panel.spawn((text("The match goes on without you.", FONT_BODY, TEXT_DIM), theme::text_shadow()));
                 panel.spawn(Node { column_gap: px(16), margin: UiRect::top(px(8)), ..default() }).with_children(|r| {
                     r.spawn((theme::skinned_button(Node { width: px(200), height: px(44), ..default() }, Color::srgb(0.17, 0.25, 0.37), ButtonSkin::Command), LeaveButton::Leave))
                         .with_child(text("Leave to menu", FONT_LARGE, TEXT));
