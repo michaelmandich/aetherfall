@@ -220,14 +220,14 @@ pub(super) fn spawn_tooltip(root: &mut ChildSpawnerCommands) {
                             CostChipSwatch(i),
                             Pickable::IGNORE,
                         ));
-                        chip.spawn((text("", FONT_SMALL, TEXT), CostChipText(i), Pickable::IGNORE));
+                        chip.spawn((text("", FONT_SMALL, TEXT), theme::text_shadow(), CostChipText(i), Pickable::IGNORE));
                     });
             }
             row.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), TooltipText::Time, Pickable::IGNORE));
         });
         tip.spawn((text("", FONT_SMALL, TEXT), TooltipText::Body, Pickable::IGNORE));
         tip.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), TooltipText::Shift, Pickable::IGNORE));
-        tip.spawn((text("", FONT_SMALL, theme::TEXT_BAD), TooltipText::Reason, Pickable::IGNORE));
+        tip.spawn((text("", FONT_SMALL, theme::TEXT_BAD), theme::text_shadow(), TooltipText::Reason, Pickable::IGNORE));
     });
 }
 

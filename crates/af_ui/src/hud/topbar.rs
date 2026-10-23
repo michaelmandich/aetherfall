@@ -112,7 +112,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands, data: &GameData) {
         }
         bar.spawn((chip(), Tip("Population: used / capacity. Build houses for more.".into()))).with_children(|c| {
             c.spawn((text("Pop", FONT_SMALL, TEXT_DIM), theme::text_shadow(), ChipName));
-            c.spawn((text("0/0", FONT_BODY, TEXT), TopLabel::Pop));
+            c.spawn((text("0/0", FONT_BODY, TEXT), theme::text_shadow(), TopLabel::Pop));
         });
         bar.spawn(Node { flex_grow: 1.0, ..default() });
         bar.spawn((Node { column_gap: px(6), align_items: AlignItems::Center, display: Display::None, ..default() }, Switcher)).with_children(|s| {
@@ -134,7 +134,7 @@ pub(super) fn spawn(root: &mut ChildSpawnerCommands, data: &GameData) {
         });
         bar.spawn((text("", FONT_BODY, theme::HIGHLIGHT), TopLabel::Age));
         bar.spawn((text("00:00", FONT_BODY, TEXT), TopLabel::Clock));
-        bar.spawn((text("x1", FONT_BODY, TEXT), TopLabel::Speed, Node { min_width: px(64), ..default() }));
+        bar.spawn((text("x1", FONT_BODY, TEXT), theme::text_shadow(), TopLabel::Speed, Node { min_width: px(64), ..default() }));
     });
     root.spawn((
         theme::button(Node { position_type: PositionType::Absolute, top: px(42), left: px(8), ..default() }, theme::BUTTON),
