@@ -1196,15 +1196,19 @@ fn a_page_turn_plays_on_the_page_it_opens() {
     let economy = slot_of(&app, CardAction::BuildPage(BuildCategory::Economy));
     press_slot(&mut app, economy);
     // The pressed slot is laid out again: the new page's buttons spring in
-    // instead, and the slots it leaves empty never move.
+    // instead (all of them squashed on the first frame, none at full size
+    // first), and the slots it leaves empty never move.
     let mut least = [1.0f32; crate::card::SLOTS];
     let mut moved_hidden = Vec::new();
-    for _ in 0..16 {
+    for frame in 0..16 {
         app.update();
         let shown = app.world().resource::<CardState>().slots;
         for (slot, action) in shown.iter().enumerate() {
             let e = card_slot(&mut app, slot);
             let scale = scale_of(&app, e);
+            if frame == 0 && action.is_some() {
+                assert!(scale < 0.95, "slot {slot} ({action:?}) appears squashed: {scale}");
+            }
             least[slot] = least[slot].min(scale);
             if action.is_none() && app.world().get::<UiTransform>(e) != Some(&UiTransform::IDENTITY) {
                 moved_hidden.push(slot);
