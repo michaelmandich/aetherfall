@@ -13,7 +13,12 @@ rust-version = "1.95"
 # libraries on a Raspberry Pi. The client crates (af_input, af_ui,
 # af_render, aetherfall) turn Bevy's default features back on.
 bevy = { version = "0.19", default-features = false, features = ["std", "multi_threaded", "async_executor", "bevy_state", "bevy_log", "bevy_color"] }
-bevy_math = "0.19"
+# `libm`: `bevy::math::ops` and glam's own trigonometry go through the
+# `libm` crate, not the platform's math library (MSVC's, Apple's, glibc),
+# so a match generated and played on a Windows PC, a Mac and a Pi agrees
+# bit for bit (map generation uses `ops`). Cargo unifies the feature for
+# every crate that uses Bevy.
+bevy_math = { version = "0.19", features = ["libm"] }
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
 # Multiplayer: compact wire encoding, HTTPS for the account service.

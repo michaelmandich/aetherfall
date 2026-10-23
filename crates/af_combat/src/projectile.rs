@@ -193,7 +193,9 @@ pub(crate) fn launch_homing(
 ) {
     let aim = target.aim_point();
     let yaw_off = out.rng.range(-0.5, 0.5) * spread_deg.to_radians();
-    let dir = (Quat::from_rotation_y(yaw_off) * (aim - from).normalize_or(Vec3::Z)).rotate_towards(Vec3::Y, LAUNCH_PITCH);
+    // Scalar rotations (`dmath`), not glam's quaternions: the same bits on
+    // every platform.
+    let dir = af_geom::dmath::rotate_towards(af_geom::dmath::rotate_y((aim - from).normalize_or(Vec3::Z), yaw_off), Vec3::Y, LAUNCH_PITCH);
     let flight = HomingFlight {
         target: Some(target.entity),
         aim,
@@ -358,7 +360,7 @@ pub(crate) fn fly_homing(
         }
         let desired = (f.aim - b.pos).normalize_or(f.dir);
         let turn = f.turn_rate * SIM_DT;
-        f.dir = f.dir.rotate_towards(desired, turn).normalize_or(desired);
+        f.dir = af_geom::dmath::rotate_towards(f.dir, desired, turn).normalize_or(desired);
         b.pos += f.dir * step;
         b.dir = f.dir;
         f.puff_in -= SIM_DT;

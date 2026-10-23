@@ -94,9 +94,11 @@ pub fn sim_hash(world: &mut World) -> u64 {
     for (e, b, o, p, f, hp) in buildings.iter(world) {
         rows.push((e, 1, b.kind.0, o.0 .0, p.0.x.to_bits(), p.0.y.to_bits(), f.0.to_bits(), hp.map_or(0, |h| h.hp.to_bits())));
     }
-    let mut nodes = world.query_filtered::<(Entity, &ResourceNode, &Position), Without<Dead>>();
-    for (e, n, p) in nodes.iter(world) {
-        rows.push((e, 2, n.kind.0, 0, p.0.x.to_bits(), p.0.y.to_bits(), n.remaining.to_bits(), 0));
+    // A node's facing too: it is an obstacle's box, so a map generated a
+    // bit apart shows at once rather than when someone walks into it.
+    let mut nodes = world.query_filtered::<(Entity, &ResourceNode, &Position, Option<&Facing>), Without<Dead>>();
+    for (e, n, p, f) in nodes.iter(world) {
+        rows.push((e, 2, n.kind.0, 0, p.0.x.to_bits(), p.0.y.to_bits(), n.remaining.to_bits(), f.map_or(0, |f| f.0.to_bits())));
     }
     rows.sort_unstable();
     h.u32(rows.len() as u32);
