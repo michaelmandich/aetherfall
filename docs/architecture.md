@@ -19,9 +19,9 @@ that turns sim state into boxes, so "real graphics" later means replacing
 | `af_economy` | placement, construction, production queues, research/ages/techs, upgrades, trickle, victory | af_core |
 | `af_fog` | per-team visibility/exploration | af_core |
 | `af_ai` | computer players (only via `PlayerCommand`s) | af_core |
-| `af_input` | camera, picking, selection, control groups, commands, placement modes, hotkeys | af_core |
-| `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over | af_core |
-| `af_render` | box visuals for terrain, entities, weapons, FX, bars, selection, fog, ghosts; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
+| `af_input` | camera, picking, selection, control groups, commands (each marked where it lands), placement modes, hotkeys, the unit paths toggle | af_core |
+| `af_ui` | skirmish menu, HUD, command card, minimap, notices, game over, the unit paths button; a painted skin with card-game press effects | af_core |
+| `af_render` | box visuals for terrain, entities, weapons, FX, bars, selection, fog, ghosts, click markers and placement slams, the selected units' routes; animated glTF models for the units and static glTF models for the buildings and nodes listed in the visual registry (`assets/visuals/*.ron`) | af_core, serde, ron |
 | `aetherfall` | the binary: wiring, CLI, headless harness, screenshot mode | all |
 
 Crates never depend on each other sideways; they communicate only through
@@ -103,7 +103,9 @@ file `crates/af_core/src/ext/<crate>.rs` (never editing other af_core files).
 
 `Update`: `ClientSet::Pointer` (UI hit-test) -> `Input` -> `Ui` -> `Render`.
 Shared client state lives in af_core resources: `CursorWorld`, `InputMode`,
-`CameraRig`, `DragSelect`, `LocalPlayer`, and the `Selected` marker.
+`CameraRig`, `DragSelect`, `LocalPlayer`, `ShowPaths` and `RoutesShown`
+(below), and the `Selected` marker; click markers are client entities
+(`ClickPing` with a `ClickMark`).
 
 ### UI skin and press feedback
 
@@ -167,6 +169,8 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   seconds). The floating hover tip follows the stand-in mouse of a
   scripted run (`--hover LABEL --cursor X,Y`).
 
+### Click markers and the placement slam
+
 **Click markers** (`ClickPing` contract). Every order the local player
 gives spawns a client entity (never a unit) carrying a `ClickPing` (point,
 colour, life) and a `ClickMark` (`af_core::ext::input`: the `OrderMark`
@@ -188,9 +192,10 @@ everything else blended, the fog overlay included: a click into fog or
 unexplored black shows in full (only a unit route's stroke, a gizmo,
 shows across one). af_input and af_map also despawn leftover
 pings when a match ends.
-A foundation of the local player (`Added<UnderConstruction>`, seen in an
-`Update` system, never inside the sim tick) gets a placement slam, a
-top-level `RenderScene` effect.
+
+**Placement slam.** A foundation of the local player
+(`Added<UnderConstruction>`, seen in an `Update` system, never inside the
+sim tick) gets a placement slam, a top-level `RenderScene` effect.
 
 ### Unit routes
 

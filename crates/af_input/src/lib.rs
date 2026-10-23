@@ -14,7 +14,9 @@
 //!    Delete, pause, speed, unit paths (P, and Shift while held:
 //!    [`ShowPaths`](af_core::ext::input::ShowPaths));
 //! 4. selection: click / shift / ctrl / double-click / drag-box (`DragSelect`);
-//! 5. orders: right-click `Smart`, then clicks that complete an `InputMode`;
+//! 5. orders: right-click `Smart`, then clicks that complete an `InputMode`,
+//!    each marked where it lands: a click marker (`ClickMark::ping`, a
+//!    client entity af_render dresses) in the order's colour;
 //! 6. placement preview (`PlacementPreview`) and pruning of selected
 //!    entities that went out of sight.
 //!

@@ -12,8 +12,9 @@
 //!      previous one;
 //!   2. one system per order family drives `MoveGoal` / `AttackTarget` and
 //!      does the work: `travel` (Move, Follow), `fight` (Attack,
-//!      AttackMove, Patrol, Hold), `gather` (Gather, ReturnCargo), `build`
-//!      (Build, Repair);
+//!      AttackMove, Patrol, Hold; consecutive patrols are one looping
+//!      route, `af_core::ext::behavior::patrol_points`), `gather` (Gather,
+//!      ReturnCargo), `build` (Build, Repair);
 //!   3. `heal`, then `idle` (stances, retaliation) for units without a
 //!      task, then the `Idle` marker;
 //!   4. `activity`: the shared `Activity` (gathering in which style,

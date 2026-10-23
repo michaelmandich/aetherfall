@@ -14,9 +14,12 @@
 //!   HUD; [`MinimapGeometry`] maps the minimap to the world.
 //!
 //! The UI acts on the game only through af_core: it pushes
-//! `PlayerCommand`s into `CommandInbox`, sets `InputMode` for targeted
-//! commands and building placement, edits the `Selected` markers, moves
-//! `CameraRig::focus`, and appends `Notices`.
+//! `PlayerCommand`s into `CommandInbox` (spawning a click marker,
+//! `ClickPing` with a `ClickMark`, for each command given on the
+//! minimap), sets `InputMode` for targeted commands and building
+//! placement, edits the `Selected` markers, moves `CameraRig::focus`,
+//! flips `ShowPaths::on` (the Paths button, which reads af_render's
+//! `RoutesShown`), and appends `Notices`.
 
 pub mod card;
 pub mod format;
