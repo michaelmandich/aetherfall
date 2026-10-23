@@ -8,8 +8,8 @@
 //!   picking hover map, so af_input ignores world clicks on the HUD.
 //! * `GameState::Menu`: [`menu`], the skirmish setup screen and its camera.
 //! * `GameState::Playing`, `ClientSet::Ui`: the HUD — top bar, idle
-//!   workers, notices, selection panel, command card + tooltip, minimap,
-//!   drag box, pause and game-over overlays.
+//!   workers, notices, the Paths toggle, selection panel, command card +
+//!   tooltip, minimap, drag box, pause and game-over overlays.
 //! * [`card`], [`tooltip`] and [`format`] are the pure models behind the
 //!   HUD; [`MinimapGeometry`] maps the minimap to the world.
 //!
