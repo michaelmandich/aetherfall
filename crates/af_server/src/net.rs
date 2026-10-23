@@ -57,6 +57,9 @@ pub fn accept_pending(listener: &TcpListener, next_id: &mut ConnId, events: &Sen
 }
 
 fn start_connection(id: ConnId, stream: TcpStream, events: Sender<Event>) -> io::Result<()> {
+    // On Windows an accepted socket inherits the listener's non-blocking
+    // mode, and the reader thread would fail its first read at once.
+    stream.set_nonblocking(false)?;
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(IDLE_TIMEOUT))?;
     let addr = stream.peer_addr().map_or_else(|_| "?".to_string(), |a| a.to_string());
