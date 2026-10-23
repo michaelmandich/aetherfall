@@ -156,12 +156,15 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   it gold, sweep a shine across it and throw a ring and sparks from its
   centre (on a root node over the HUD, at most 64 particles alive); other
   orders get a lighter squash and flash; a refused press shakes and
-  flashes red. A press that turns the card's page (a build page, More,
-  Back) lays the pressed slot out anew, so it plays on the new page
-  instead: its buttons appear squashed and spring out with a faint flash,
-  a column at a time. Plain buttons squash when clicked. Scale and shake are
-  `UiTransform`s, so nothing is laid out again, and nothing runs for a
-  button at rest.
+  flashes red and is never sent: one the rules forbid now, or a train,
+  research or upgrade that every selected building's production queue is
+  too full for (a slot like that looks unaffordable, "Production queue
+  is full" in its tip). A press that turns the card's page (a build
+  page, More, Back) lays the pressed slot out anew, so it plays on the
+  new page instead: its buttons appear squashed and spring out with a
+  faint flash, a column at a time. Plain buttons squash when clicked.
+  Scale and shake are `UiTransform`s, so nothing is laid out again, and
+  nothing runs for a button at rest.
 * **Checking it:** `cargo run -p af_ui --example ui_preview [-- hud ...]
   --screenshot shot.png`, or the game with `--script` to catch a press
   part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`; with

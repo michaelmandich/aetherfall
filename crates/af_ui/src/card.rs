@@ -403,6 +403,20 @@ pub fn action_state(data: &GameData, player: &PlayerState, building: Option<Buil
     }
 }
 
+/// What af_economy says when every queue a press could go into is full.
+pub const QUEUE_FULL: &str = "Production queue is full";
+
+/// Whether `action` goes into the selected buildings' production queues
+/// (their lengths in `queued`) and every one of them is full
+/// (`ProductionQueue::MAX`), so the sim would refuse it. A Shift-train of
+/// five that only partly fits still goes in.
+pub fn queues_full(action: CardAction, queued: impl IntoIterator<Item = usize>) -> bool {
+    let mut queued = queued.into_iter().peekable();
+    matches!(action, CardAction::Train(_) | CardAction::Research(_) | CardAction::Upgrade { .. })
+        && queued.peek().is_some()
+        && queued.all(|n| n >= ProductionQueue::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +649,23 @@ mod tests {
         assert!(CardAction::Build(house).is_active(&InputMode::Place { kind: house, facing: 0.0 }));
         assert!(CardAction::Build(house).is_active(&InputMode::PlaceWall { kind: house, start: None }));
         assert!(!CardAction::Stop.is_active(&InputMode::Normal));
+    }
+
+    #[test]
+    fn only_queues_full_everywhere_refuse_a_production_press() {
+        let full = ProductionQueue::MAX;
+        let train = CardAction::Train(UnitTypeId(0));
+        assert!(queues_full(train, [full]));
+        assert!(queues_full(train, [full, full + 1]));
+        // One building with room takes it (a Shift-train of five that only
+        // partly fits included).
+        assert!(!queues_full(train, [full, full - 1]));
+        assert!(!queues_full(train, [0]));
+        assert!(!queues_full(train, []), "no queue to refuse it");
+        assert!(queues_full(CardAction::Research(TechId(0)), [full]));
+        assert!(queues_full(CardAction::Upgrade { to: BuildingTypeId(0) }, [full]));
+        // Nothing else goes into a queue.
+        assert!(!queues_full(CardAction::Stop, [full]));
+        assert!(!queues_full(CardAction::Build(BuildingTypeId(0)), [full]));
     }
 }
