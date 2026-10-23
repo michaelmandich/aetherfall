@@ -184,7 +184,10 @@ impl Pointed {
 /// or an own field, build an allied foundation, repair an own damaged
 /// building or machine, bring cargo home to an own drop site that takes
 /// it (marked as gathering), follow an allied unit, else move to the
-/// point. A selection of buildings only sets its rally there.
+/// point. A move onto an allied building (the units stop beside it) is
+/// marked round the building too: at the point, under its roof, the
+/// marker would be hidden. A selection of buildings only sets its rally
+/// there.
 fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
     if !crew.units {
         return (OrderMark::Rally, pointed.is_some());
@@ -198,17 +201,17 @@ fn smart_mark(crew: Crew, pointed: Option<Pointed>) -> (OrderMark, bool) {
         return if crew.gathers && !t.claim { hug(OrderMark::Gather) } else { (OrderMark::Move, false) };
     }
     if t.building && t.allied {
-        return if t.foundation {
-            if crew.builds { hug(OrderMark::Build) } else { (OrderMark::Move, false) }
+        return hug(if t.foundation {
+            if crew.builds { OrderMark::Build } else { OrderMark::Move }
         } else if t.own && t.field && crew.gathers {
-            hug(OrderMark::Gather)
+            OrderMark::Gather
         } else if t.own && t.damaged && crew.repairs {
-            hug(OrderMark::Repair)
+            OrderMark::Repair
         } else if t.own && crew.cargo & t.drop_mask != 0 {
-            hug(OrderMark::Gather)
+            OrderMark::Gather
         } else {
-            (OrderMark::Move, false)
-        };
+            OrderMark::Move
+        });
     }
     if t.unit && t.allied {
         // Allied units are followed; a damaged own machine is repaired.
@@ -452,6 +455,7 @@ mod tests {
         let field = Pointed { building: true, field: true, ..own };
         let damaged_hall = Pointed { building: true, damaged: true, ..own };
         let hall = Pointed { building: true, ..own };
+        let allied_hall = Pointed { own: false, ..hall };
         // A town centre taking food and wood; a damaged one.
         let drop_site = Pointed { drop_mask: 0b11, ..hall };
         let damaged_drop_site = Pointed { damaged: true, ..drop_site };
@@ -469,16 +473,20 @@ mod tests {
             (workers, Some(claimed_node), (OrderMark::Move, false)),
             (workers, Some(foundation), (OrderMark::Build, true)),
             (workers, Some(allied_foundation), (OrderMark::Build, true)),
-            (soldiers, Some(foundation), (OrderMark::Move, false)),
+            // A plain move onto an allied building is marked round it
+            // (a point marker would be under its roof).
+            (soldiers, Some(foundation), (OrderMark::Move, true)),
             (workers, Some(field), (OrderMark::Gather, true)),
             (workers, Some(damaged_hall), (OrderMark::Repair, true)),
-            (soldiers, Some(damaged_hall), (OrderMark::Move, false)),
-            (workers, Some(hall), (OrderMark::Move, false)),
+            (soldiers, Some(damaged_hall), (OrderMark::Move, true)),
+            (workers, Some(hall), (OrderMark::Move, true)),
+            (soldiers, Some(hall), (OrderMark::Move, true)),
+            (soldiers, Some(allied_hall), (OrderMark::Move, true)),
             (carrying, Some(drop_site), (OrderMark::Gather, true)),
-            (workers, Some(drop_site), (OrderMark::Move, false)),
-            (carrying_stone, Some(drop_site), (OrderMark::Move, false)),
+            (workers, Some(drop_site), (OrderMark::Move, true)),
+            (carrying_stone, Some(drop_site), (OrderMark::Move, true)),
             (carrying, Some(damaged_drop_site), (OrderMark::Repair, true)),
-            (carrying, Some(allied_drop_site), (OrderMark::Move, false)),
+            (carrying, Some(allied_drop_site), (OrderMark::Move, true)),
             (workers, Some(machine), (OrderMark::Repair, true)),
             (soldiers, Some(machine), (OrderMark::Move, true)),
             (soldiers, Some(friend), (OrderMark::Move, true)),

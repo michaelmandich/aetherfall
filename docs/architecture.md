@@ -181,7 +181,9 @@ kind, the entity it targets, whether it was shift-queued), both made by
 `ClickMark::ping`. af_input writes them for right-click `Smart` (the kind
 guessed from what is pointed at and what the selection can do, as the sim
 resolves it per unit; cargo carried to an own drop site that takes it
-marks `Gather`; buildings alone mark a rally), targeted commands,
+marks `Gather`; a plain move onto an allied building is marked round
+it, as a point under its roof would be hidden; buildings alone mark a
+rally), targeted commands,
 placements (`Place`: the snapped footprint and facing; a wall line marks
 its last segment) and af_ui for minimap commands. af_render
 (`markers`) dresses each ping with its parts as children, plays it in real
