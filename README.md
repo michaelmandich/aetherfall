@@ -71,7 +71,7 @@ shockwave and dust roll out and chips fly.
 | Worker build pages | Z Economy, X Military, C Defence; B or Esc goes back |
 | Targeted command (Move, Attack, Patrol, Gather, Repair, Rally) | its button, then left click the target (Move, Attack, Patrol and Rally also on the minimap); Shift keeps the command armed; right click or Esc cancels |
 | Patrol route | Patrol (R), then click the far end: the unit walks there and back; Shift+click more points to make one loop it walks round and round (orders queued after a patrol are never reached) |
-| Unit paths | P, or the Paths button under Menu: show where the selected units are going (the path being walked, solid with arrows; queued orders chained on, dashed; coloured by order) and say so; hold Shift to see them meanwhile; a selected patrolling unit always shows its loop, the leg it is on lit; with more than 64 units selected, those nearest the centre of the view, and the button says how many |
+| Unit paths | P, or the Paths button under Menu: show where the selected units are going (the path being walked, solid with arrows; queued orders chained on, dashed; coloured by order) and say so; hold Shift to see them meanwhile; a selected patrolling unit always shows its loop, the leg it is on lit; with more than 64 of the selected units going somewhere (idle ones have no route), those nearest the centre of the view, and the button says how many |
 | Place a building | its button, then left click (Shift keeps placing); R rotates 45°, Shift+R 15°; right click or Esc cancels |
 | Place a wall | its button, click the start, click the end (Shift chains the next line from there); segments that do not fit are skipped |
 | Cancel a queued item | click it in the selection panel's queue |
