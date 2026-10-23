@@ -38,8 +38,11 @@ pub const PLANK: Color = Color::srgb_u8(91, 61, 39);
 /// Least contrast (WCAG ratio) of panel text against the [`PLANK`]s, the
 /// usual floor for text of this size.
 pub const MIN_CONTRAST: f32 = 4.5;
-/// Errors, alerts, unaffordable costs, a full population.
-pub const TEXT_BAD: Color = Color::srgb(1.0, 0.4, 0.34);
+/// Errors, alerts, unaffordable costs, a full population: a light coral,
+/// as light as a red must be to reach [`MIN_CONTRAST`] on the planks
+/// (4.9:1; the deeper red it was read at 3.1:1 there). On a panel, draw
+/// it with a [`text_shadow`].
+pub const TEXT_BAD: Color = Color::srgb(1.0, 0.62, 0.58);
 /// Warnings and unit status.
 pub const TEXT_WARN: Color = Color::srgb(1.0, 0.82, 0.3);
 /// Healthy bars and positive traits.
@@ -296,11 +299,16 @@ mod tests {
 
     #[test]
     fn panel_text_reads_on_the_planks_and_on_the_flat_panels() {
-        for (name, c) in [("TEXT", TEXT), ("TEXT_DIM", TEXT_DIM)] {
+        let panel_text = [("TEXT", TEXT), ("TEXT_DIM", TEXT_DIM), ("TEXT_BAD", TEXT_BAD), ("TEXT_WARN", TEXT_WARN), ("TEXT_GOOD", TEXT_GOOD), ("HIGHLIGHT", HIGHLIGHT)];
+        for (name, c) in panel_text {
             assert!(contrast(c, PLANK) >= MIN_CONTRAST, "{name} on the planks: {}", contrast(c, PLANK));
             assert!(contrast(c, PANEL_BG) >= MIN_CONTRAST, "{name} on the flat panel");
         }
         assert!(contrast(TEXT, PLANK) > contrast(TEXT_DIM, PLANK) * 1.3, "secondary text stays dimmer");
+        // Lifted, the red still reads as red: well off the cream text and
+        // the yellow warnings.
+        let bad = TEXT_BAD.to_srgba();
+        assert!(bad.red - bad.green > 0.3 && bad.red - bad.blue > 0.3, "{bad:?}");
         // Every faction's colour, and the darkest, lightest and most
         // saturated colours a player may be given.
         let data = af_core::testing::test_data();
