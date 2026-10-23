@@ -9,7 +9,7 @@ use af_render::BoxRenderPlugin;
 use af_render::assets::BoxAssets;
 use af_render::entities::{BoxVisual, VisualSig};
 use af_render::fog::{FogMemory, MemoryPool};
-use af_render::markers::{MAX_MARKERS, Marker, SLAM_SECS, Slam};
+use af_render::markers::{LIFT, MAX_MARKERS, Marker, SLAM_SECS, Slam};
 use af_render::overlay::{BarParts, OutlineParts};
 use af_render::parts::{BarSpec, min_line_width, node_scale, outline_boxes, progress_transform};
 use af_render::paths::{LegKind, MAX_ROUTES, PathOverlay};
@@ -687,9 +687,10 @@ fn markers_lie_on_water_and_mountains_and_the_land_grows_props() {
     let data = test_data();
     assert!(ground_height(&data, app.world().resource::<Nav>(), Vec2::new(8.5, 30.0)) < WATER_LEVEL, "units wade below it");
 
-    // Click markers (pings) lie on the water surface and on the rock, the
-    // markers' lift (`markers::LIFT`, 5 cm) above them.
-    let pings: Vec<Entity> = [Vec2::new(8.5, 30.0), Vec2::new(48.0, 32.0), Vec2::new(30.0, 30.0)]
+    // Click markers (pings) lie on the water surface and on the rock, on
+    // the mountain's flank tilted with the slope.
+    let flank = Vec2::new(42.0, 32.0);
+    let pings: Vec<Entity> = [Vec2::new(8.5, 30.0), Vec2::new(48.0, 32.0), Vec2::new(30.0, 30.0), flank]
         .into_iter()
         .map(|pos| app.world_mut().spawn(ClickPing { pos, time_left: 1.0, color: [1.0; 3] }).id())
         .collect();
@@ -697,9 +698,20 @@ fn markers_lie_on_water_and_mountains_and_the_land_grows_props() {
     let plane = with_commands(app, |c, d, p| spawn_unit(c, d, p.get(PlayerId(0)), flyer, Vec2::new(48.0, 32.0), 0.0));
     run_ticks(app, 2);
     let y = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation.y;
-    assert!((y(app, pings[0]) - (WATER_LEVEL + 0.05)).abs() < 1e-4);
-    assert!((y(app, pings[1]) - (peak + 0.05)).abs() < 1e-4);
-    assert!((y(app, pings[2]) - 0.05).abs() < 1e-4);
+    assert!((y(app, pings[0]) - (WATER_LEVEL + LIFT)).abs() < 1e-4);
+    assert!(y(app, pings[1]) >= peak + LIFT - 1e-4, "{} on a peak of {peak}", y(app, pings[1]));
+    assert!((y(app, pings[2]) - LIFT).abs() < 1e-4);
+    for flat in [pings[0], pings[2]] {
+        assert_eq!(app.world().get::<Transform>(flat).unwrap().rotation, Quat::IDENTITY, "level on the water and the grass");
+    }
+    let on_flank = *app.world().get::<Transform>(pings[3]).unwrap();
+    let up = on_flank.rotation * Vec3::Y;
+    assert!(surface.top_at(flank + Vec2::X * 2.0) > surface.top_at(flank) + 0.5 && up.x < -0.2, "leans back from the rock rising east: {up}");
+    for i in 0..16 {
+        let a = i as f32 / 16.0 * std::f32::consts::TAU;
+        let rim = on_flank.translation + on_flank.rotation * Vec3::new(a.cos(), 0.0, a.sin());
+        assert!(rim.y > surface.top_at(rim.xz()) - 0.05, "the ring's rim at {rim} stays out of the rock ({})", surface.top_at(rim.xz()));
+    }
     let shadow = visual(app, plane).shadow.expect("flyers cast a ground shadow");
     let local = app.world().get::<Transform>(shadow).unwrap().translation.y;
     assert!((y(app, plane) + local - (peak + 0.04)).abs() < 1e-4, "the flyer's shadow lies on the mountain");

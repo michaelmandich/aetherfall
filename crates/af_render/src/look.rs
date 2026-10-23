@@ -25,9 +25,10 @@ pub enum Shade {
     Glow,
     /// Flat colour that ignores lighting (energy effects, bars, markers, ghosts).
     Unlit,
-    /// Unlit, and always drawn after everything else blended, the fog
-    /// overlay included, so fog never dims or hides it (click markers:
-    /// feedback for the local player's own clicks, wherever they land).
+    /// Unlit, so the fog the land's shaders darken it with never dims it,
+    /// and always drawn after everything else blended (ghosts, effects),
+    /// which never hides it (click markers: feedback for the local
+    /// player's own clicks, wherever they land).
     /// Gizmos (the unit routes) draw before any of it and write depth, so
     /// a route's stroke still shows across one.
     Marker,

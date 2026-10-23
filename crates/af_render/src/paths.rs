@@ -27,7 +27,7 @@
 //!   Gizmos are only registered with Bevy's `GizmoPlugin`, so headless
 //!   apps and tests plan without drawing. Bevy draws gizmos before every
 //!   blended mesh, writing depth (the x-ray pass at the near plane), so a
-//!   stroke shows over the fog overlay and over a click marker it crosses.
+//!   stroke shows over a click marker it crosses.
 //!
 //! With [`ShowPaths`] visible (P, or Shift held), each unit's current leg
 //! is drawn from the unit through the waypoints still ahead to its live
@@ -47,7 +47,7 @@ use std::ops::Range;
 
 use af_core::ext::behavior::patrol_points;
 use af_core::ext::input::{OrderMark, RtsCamera, ShowPaths};
-use af_core::ext::render::RoutesShown;
+use af_core::ext::render::{MAX_TERRAIN_HEIGHT, RoutesShown};
 use af_core::prelude::*;
 use bevy::ecs::system::SystemParam;
 use bevy::gizmos::AppGizmoBuilder;
@@ -97,9 +97,12 @@ const FLOW_PX: f32 = 40.0;
 const MAX_DASHES: f32 = 160.0;
 const MAX_CHEVRONS: f32 = 64.0;
 /// How far past the edges of the screen routes are still drawn: the
-/// ground stands up to a metre or so off the plane the view is taken on,
-/// and a mark or chevron just off screen still pokes in (m, and px).
-const VIEW_PAD: f32 = 3.0;
+/// drawn world stands up to `MAX_TERRAIN_HEIGHT` off the plane the view
+/// is taken on (a leg straight over a mountain; seen from the game's
+/// pitch of 45 degrees or more, its points are no farther than that from
+/// where that plane sees them), and a mark or chevron just off screen
+/// still pokes in (m, and px).
+const VIEW_PAD: f32 = 3.0 + MAX_TERRAIN_HEIGHT;
 const VIEW_PAD_PX: f32 = 24.0;
 /// Where a view corner above the horizon meets the ground: this far off (m).
 const HORIZON: f32 = 1000.0;
@@ -630,7 +633,7 @@ pub(crate) struct Scratch {
 }
 
 /// The ground in view, a little widened: the quad the screen's corners
-/// see on the plane y = 0 (the drawn ground stays within a metre or so of
+/// see on the plane y = 0 (widened by [`VIEW_PAD`] for what is drawn above
 /// it), so only the stretches of a route on screen are cut into pieces.
 #[derive(Clone, Copy, Debug)]
 pub struct View {

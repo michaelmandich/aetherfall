@@ -92,8 +92,8 @@ pub const BOX_REFLECTANCE: f32 = 0.25;
 
 /// How much nearer than they are [`Shade::Marker`] materials sort among
 /// blended things (metres): more than any two things in view can differ
-/// by (the camera sees 2 km at most), so they are drawn after the rest,
-/// the fog overlay included. It nudges their depth only by a hair (Bevy
+/// by (the camera sees 2 km at most), so they are drawn after the rest
+/// (ghosts, effects). It nudges their depth only by a hair (Bevy
 /// also applies it as a constant depth-buffer bias).
 pub const MARKER_SORT_BIAS: f32 = 2000.0;
 
@@ -115,7 +115,7 @@ pub fn material_for(key: MatKey) -> StandardMaterial {
         emissive: if glow { Color::srgb(r, g, b).to_linear() * GLOW_STRENGTH } else { LinearRgba::BLACK },
         unlit: matches!(key.shade(), Shade::Unlit | Shade::Marker),
         // Markers blend even when solid, so they sort with (after) the
-        // blended fog overlay rather than being drawn before it.
+        // other blended things rather than being drawn before them.
         alpha_mode: if key.is_opaque() && !marker { AlphaMode::Opaque } else { AlphaMode::Blend },
         depth_bias: if marker { MARKER_SORT_BIAS } else { 0.0 },
         perceptual_roughness: BOX_ROUGHNESS,
@@ -254,7 +254,7 @@ mod tests {
         let lit = material_for(MatKey::new(Look::lit([0.5, 0.5, 0.5])));
         assert!(!lit.unlit && lit.emissive == LinearRgba::BLACK && lit.depth_bias == 0.0);
         // Click markers blend even when solid, and sort after everything
-        // else blended (the fog overlay).
+        // else blended.
         for alpha in [0.4, 1.0] {
             let marker = material_for(MatKey::new(Look::marker([0.3, 1.0, 0.35], alpha)));
             assert!(marker.unlit && marker.alpha_mode == AlphaMode::Blend && marker.depth_bias >= 1000.0, "{alpha}");

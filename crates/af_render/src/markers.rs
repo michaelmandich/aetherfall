@@ -24,10 +24,14 @@
 //!   an entity, a faint hug) that lingers, so a chain of them reads.
 //!
 //! Colours are the order's (`OrderMark::color`, also the ping's, and the
-//! routes' of [`crate::paths`]). Markers are drawn over the fog overlay
-//! ([`Shade::Marker`]), so a click into unexplored black shows in full;
-//! only a route's stroke crossing one shows over it (Bevy draws gizmos
-//! before every blended mesh, writing depth). Arrows, rings, flashes and
+//! routes' of [`crate::paths`]). Markers lie on the drawn world
+//! (`Ground::surface`: the ground, the water surface, a mountain's rock),
+//! tilted along a slope so it never buries them ([`lie`]). They are
+//! unlit, so the fog the land's shaders darken it with never dims them (a
+//! click into unexplored black shows in full), and drawn after every
+//! other blended thing ([`Shade::Marker`]); only a route's stroke crossing
+//! one shows over it (Bevy draws gizmos before every blended mesh,
+//! writing depth). Arrows, rings, flashes and
 //! dots grow with the camera distance so they read at any zoom
 //! ([`marker_size`]); frames and hugging rings keep the footprint's size
 //! and a readable line width. At most [`MAX_MARKERS`] play at once: a
@@ -65,8 +69,8 @@ pub const MAX_MARKERS: usize = 16;
 const DESIGN_DISTANCE: f32 = 36.0;
 /// Size of a queued marker against an ordinary one.
 const QUEUED_SIZE: f32 = 0.7;
-/// Height of a marker above the drawn ground.
-const LIFT: f32 = 0.05;
+/// Height of a marker above the drawn ground ([`lie`]).
+pub const LIFT: f32 = 0.05;
 /// Arrow length (metres at size 1).
 const ARROW_LENGTH: f32 = 0.9;
 /// The angle every arrow makes with the line of sight (radians, about 50
@@ -311,6 +315,34 @@ fn reach(spec: &MarkerSpec, inward: Vec3) -> f32 {
     }
 }
 
+/// How far out from its centre a marker lies on the ground at most: a
+/// point's ring as it appears, a hugging ring at the top of a pulse, or a
+/// hugging frame's outer corner.
+pub fn spread(spec: &MarkerSpec) -> f32 {
+    match spec.hug {
+        Hug::Point => RING_FROM * spec.size,
+        Hug::Ring(r) => hug_radius(r, spec.line) * (1.0 + RING_SWELL),
+        Hug::Frame(half) => (half + Vec2::splat(HUG_GAP + FRAME_SWELL + frame_width(half, spec.line))).length(),
+    }
+}
+
+/// How a marker spreading `reach` metres round `p` lies on the drawn
+/// world (`surface`, `Ground::surface`): its height and its tilt. Level
+/// on flat ground and water; on a slope (a mountainside, a highland's
+/// scarp) tilted to the plane through the surface `reach` out on either
+/// side, and lifted [`LIFT`] clear of the highest of those points (and of
+/// its centre) above that plane, so a ring on a mountainside is not
+/// buried in the rock uphill.
+pub fn lie(surface: impl Fn(Vec2) -> f32, p: Vec2, reach: f32) -> (f32, Quat) {
+    let r = reach.max(0.25);
+    let around = [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y].map(|d| (d * r, surface(p + d * r)));
+    let centre = surface(p);
+    let slope = Vec2::new(around[0].1 - around[1].1, around[2].1 - around[3].1) / (2.0 * r);
+    let above = around.iter().map(|(d, h)| h - (centre + slope.dot(*d))).fold(0.0, f32::max);
+    let up = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
+    (centre + above + LIFT, Quat::from_rotation_arc(Vec3::Y, up))
+}
+
 /// A flat shape (ring, disc) of `radius` at local height `y`.
 fn flat(radius: f32, y: f32) -> Transform {
     Transform::from_xyz(0.0, y, 0.0).with_scale(Vec3::splat(radius.max(0.001)))
@@ -393,6 +425,8 @@ pub struct Marker {
     color: Rgb,
     /// The entity it hugs and follows; dropped once gone or out of sight.
     target: Option<Entity>,
+    /// Its turn about the vertical (a frame's, with the footprint).
+    yaw: f32,
     arrows: Option<[Entity; 4]>,
     shadows: Option<[Entity; 4]>,
     ring: Option<Entity>,
@@ -495,7 +529,8 @@ fn spawn_layer<const N: usize>(commands: &mut Commands, painter: &mut Painter, r
     layer.transforms.map(|tf| spawn_part(commands, painter, root, mesh, look, tf))
 }
 
-/// A marker's parts, spawned as children of its ping `root`.
+/// A marker's parts, spawned as children of its ping `root` (unturned:
+/// the caller sets its `yaw`).
 fn spawn_marker(commands: &mut Commands, painter: &mut Painter, root: Entity, spec: MarkerSpec, life: f32, color: Rgb, target: Option<Entity>) -> Marker {
     let pose = marker_pose(&spec, 0.0);
     let (arrow, ring, disc, cube) = (painter.arrow(), painter.ring(), painter.disc(), painter.cube());
@@ -507,7 +542,7 @@ fn spawn_marker(commands: &mut Commands, painter: &mut Painter, root: Entity, sp
     let flash = pose.flash.map(|l| spawn_layer(commands, painter, root, &disc, flash_color(color), &l, kf)[0]);
     let dot = pose.dot.map(|l| spawn_layer(commands, painter, root, &disc, color, &l, kd)[0]);
     let frame = pose.frame.map(|l| spawn_layer(commands, painter, root, &cube, color, &l, kfr));
-    Marker { spec, life, color, target, arrows, shadows, ring, flash, dot, frame, keys }
+    Marker { spec, life, color, target, yaw: 0.0, arrows, shadows, ring, flash, dot, frame, keys }
 }
 
 /// The arrows: the marker's colour a touch lighter (their shadows set
@@ -559,12 +594,14 @@ pub(crate) fn attach_markers(
         // Only an entity hug follows its target (a placement has none).
         let follow = target.filter(|_| arrows && hug != Hug::Point);
         let centre = follow.map_or(ping.pos, |(_, (pos, ..))| pos.0);
-        let at = Vec3::new(centre.x, ground.surface(centre) + LIFT, centre.y);
-        let turn = Quat::from_rotation_y(yaw);
-        let (view, screen_right) = sight(&cameras, &rig, at);
         let size = size * if mark.queued { QUEUED_SIZE } else { 1.0 };
-        let spec = MarkerSpec { hug, arrows, queued: mark.queued, size, line, view: turn.inverse() * view, screen_right: turn.inverse() * screen_right };
-        let marker = spawn_marker(&mut commands, &mut painter, e, spec, ping.time_left.max(0.01), ping.color, follow.map(|(t, _)| t));
+        let mut spec = MarkerSpec { hug, arrows, queued: mark.queued, size, line, view: Vec3::NEG_Y, screen_right: Vec3::X };
+        let (y, tilt) = lie(|q| ground.surface(q), centre, spread(&spec));
+        let at = Vec3::new(centre.x, y, centre.y);
+        let turn = tilt * Quat::from_rotation_y(yaw);
+        let (view, screen_right) = sight(&cameras, &rig, at);
+        (spec.view, spec.screen_right) = (turn.inverse() * view, turn.inverse() * screen_right);
+        let marker = Marker { yaw, ..spawn_marker(&mut commands, &mut painter, e, spec, ping.time_left.max(0.01), ping.color, follow.map(|(t, _)| t)) };
         commands.entity(e).try_insert((Transform::from_translation(at).with_rotation(turn), Visibility::Inherited, marker));
     }
 }
@@ -594,7 +631,9 @@ pub(crate) fn animate_markers(
             match targets.get(t) {
                 Ok((at, vis)) if vis.is_none_or(|v| *v != Visibility::Hidden) => {
                     let p = at.translation.xz();
-                    tf.translation = Vec3::new(p.x, ground.surface(p) + LIFT, p.y);
+                    let (y, tilt) = lie(|q| ground.surface(q), p, spread(&m.spec));
+                    tf.translation = Vec3::new(p.x, y, p.y);
+                    tf.rotation = tilt * Quat::from_rotation_y(m.yaw);
                 }
                 // Gone, or hidden by the fog: stay where it was last seen.
                 _ => m.target = None,
@@ -866,6 +905,23 @@ pub(crate) fn animate_slams(mut commands: Commands, mut painter: Painter, time: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markers_lie_level_on_the_flat_and_along_a_slope() {
+        let (y, tilt) = lie(|_| -0.12, Vec2::new(3.0, 4.0), 1.3);
+        assert!((y - (-0.12 + LIFT)).abs() < 1e-6 && tilt.angle_between(Quat::IDENTITY) < 1e-6, "flat water");
+        // A plane rising half a metre a metre eastward: tilted to it, its
+        // centre on it.
+        let slope = |p: Vec2| 0.5 * p.x;
+        let (y, tilt) = lie(slope, Vec2::new(2.0, 0.0), 1.3);
+        assert!((y - (1.0 + LIFT)).abs() < 1e-5, "{y}");
+        let up = tilt * Vec3::Y;
+        assert!((up - Vec3::new(-0.5, 1.0, 0.0).normalize()).length() < 1e-5, "{up}");
+        // In a hollow, lifted clear of its rim.
+        let bowl = |p: Vec2| p.length_squared();
+        let (y, tilt) = lie(bowl, Vec2::ZERO, 2.0);
+        assert!((y - (4.0 + LIFT)).abs() < 1e-5 && tilt.angle_between(Quat::IDENTITY) < 1e-6, "{y}");
+    }
 
     /// A rig's camera: where it stands (as af_input's `rig_transform`
     /// places it), its line of sight to the focus, and its right.

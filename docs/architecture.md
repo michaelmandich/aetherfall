@@ -239,11 +239,13 @@ out; a ping without a `ClickMark` is drawn as a plain point marker in its
 colour. Its arrows come in along the screen's diagonals, each at the same
 angle to the camera's line of sight (so none is seen tail-on from the
 pitched camera). A marker lies on the drawn world (`Ground::surface`:
-the ground, the water surface, a mountain's rock). Its materials
-(`Shade::Marker`) are unlit, so the fog the land's shaders darken the
-world with never dims them (a click into fog or unexplored black shows
-in full), and sort after everything else blended (only a unit route's
-stroke, a gizmo, shows across one). af_input and af_map also despawn leftover
+the ground, the water surface, a mountain's rock), tilted to the slope
+under it and lifted clear of its rim (`markers::lie`, sampled as far out
+as the marker spreads), so a click on a mountainside or a scarp is not
+buried in the rock. Its materials (`Shade::Marker`) are unlit, so the
+fog the land's shaders darken the world with never dims them (a click
+into fog or unexplored black shows in full), and sort after everything
+else blended (only a unit route's stroke, a gizmo, shows across one). af_input and af_map also despawn leftover
 pings when a match ends.
 
 **Placement slam.** A foundation of the local player
@@ -296,7 +298,8 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
   copy at the near plane), so a route's stroke shows over a click
   marker it crosses. Only the
   stretches on screen are cut into pieces (`View`, the camera's view of
-  the ground, a little widened), with at most so many dashes and
+  the ground, widened by the height of the drawn mountains a straight
+  leg can cross), with at most so many dashes and
   chevrons to a stretch, so the cost follows what is on screen, not how
   long the routes are. At most `MAX_ROUTES` (64) units with a route are
   drawn (an idle or holding unit has none), those nearest the centre of
