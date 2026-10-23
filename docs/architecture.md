@@ -195,10 +195,15 @@ top-level `RenderScene` effect.
   current leg from the unit through `waypoints[next..]` to the live goal
   (straight while `Pending`, for flyers and for a goal the waypoints are
   not for yet; stopped with a cross where a partial path ends), then each
-  queued order chained on to its target, coloured by order. Entity
-  targets of other teams are placed where the local team believes they
-  are (the rally flags' `believed_rally_point`), a chase after one out of
-  sight is drawn straight, and enemy units' routes are never planned. The
+  queued order chained on to its target, coloured by order in its click
+  marker's colour (`LegKind::mark`, `OrderMark::color`: one palette, so
+  a queued order's marker and its leg agree; following a unit is a move,
+  as its click marks it). Entity targets of other teams are placed where
+  the local team believes they are (the rally flags'
+  `believed_rally_point`), a chase after one out of sight is drawn
+  straight to where it was seen (with no cross: whether its path is
+  blocked depends on where it really is), and enemy units' routes are
+  never planned. The
   pathfinder sees the whole map, so a path's turns trace what it goes
   round: only the turns the team has in sight (`in_sight`: the stretch to
   the turn and the cells round it) are drawn, and from the first one it

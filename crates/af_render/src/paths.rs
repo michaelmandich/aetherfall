@@ -46,7 +46,7 @@ use std::f32::consts::FRAC_PI_2;
 use std::ops::Range;
 
 use af_core::ext::behavior::patrol_points;
-use af_core::ext::input::{RtsCamera, ShowPaths};
+use af_core::ext::input::{OrderMark, RtsCamera, ShowPaths};
 use af_core::ext::render::RoutesShown;
 use af_core::prelude::*;
 use bevy::ecs::system::SystemParam;
@@ -158,45 +158,52 @@ pub(crate) fn gizmos_ready(store: Option<Res<GizmoConfigStore>>) -> bool {
 /// What a leg is for, which sets its colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LegKind {
+    /// Moving, or following a unit (which its click marks as a move).
     Move,
     AttackMove,
     /// Attacking (or chasing) a target.
     Attack,
     /// Gathering, or carrying the load to a drop site.
     Gather,
-    /// Building or repairing.
     Build,
+    Repair,
     Patrol,
-    Follow,
 }
 
 impl LegKind {
     /// What `order` makes its unit do (`None`: it does not go anywhere).
     pub fn of(order: &Order) -> Option<LegKind> {
         Some(match order {
-            Order::Move { .. } => LegKind::Move,
+            Order::Move { .. } | Order::Follow { .. } => LegKind::Move,
             Order::AttackMove { .. } => LegKind::AttackMove,
             Order::Attack { .. } => LegKind::Attack,
             Order::Gather { .. } | Order::ReturnCargo => LegKind::Gather,
-            Order::Build { .. } | Order::Repair { .. } => LegKind::Build,
+            Order::Build { .. } => LegKind::Build,
+            Order::Repair { .. } => LegKind::Repair,
             Order::Patrol { .. } => LegKind::Patrol,
-            Order::Follow { .. } => LegKind::Follow,
             Order::Hold => return None,
         })
     }
 
-    /// Move green, attack-move orange, attack red, gather gold, build and
-    /// repair amber, patrol cyan, follow white.
-    pub fn color(self) -> Rgb {
+    /// The click marker that gives such an order, whose colour the leg
+    /// wears, so a route and the marker at its end agree.
+    pub fn mark(self) -> OrderMark {
         match self {
-            LegKind::Move => [0.3, 1.0, 0.35],
-            LegKind::AttackMove => [1.0, 0.45, 0.12],
-            LegKind::Attack => [1.0, 0.2, 0.17],
-            LegKind::Gather => [1.0, 0.86, 0.25],
-            LegKind::Build => [0.95, 0.62, 0.25],
-            LegKind::Patrol => [0.25, 0.9, 1.0],
-            LegKind::Follow => [0.95, 0.95, 0.95],
+            LegKind::Move => OrderMark::Move,
+            LegKind::AttackMove => OrderMark::AttackMove,
+            LegKind::Attack => OrderMark::Attack,
+            LegKind::Gather => OrderMark::Gather,
+            LegKind::Build => OrderMark::Build,
+            LegKind::Repair => OrderMark::Repair,
+            LegKind::Patrol => OrderMark::Patrol,
         }
+    }
+
+    /// The order's colour, as its click marker has it ([`OrderMark::color`]):
+    /// move green, attack-move orange, attack red, gather gold, build
+    /// amber, repair blue, patrol cyan.
+    pub fn color(self) -> Rgb {
+        self.mark().color()
     }
 }
 
@@ -402,7 +409,7 @@ pub fn plan_route(
             };
         let kind = match (goal.follow, w.attacking) {
             (Some(f), Some(a)) if f == a => LegKind::Attack,
-            _ => front.and_then(LegKind::of).unwrap_or(if goal.follow.is_some() { LegKind::Follow } else { LegKind::Move }),
+            _ => front.and_then(LegKind::of).unwrap_or(LegKind::Move),
         };
         // On its beat: the leg to the next patrol point (the loop's
         // diamonds mark the points, so no ring).
@@ -1251,14 +1258,50 @@ mod tests {
 
     #[test]
     fn every_order_has_its_colour() {
-        let kinds = [LegKind::Move, LegKind::AttackMove, LegKind::Attack, LegKind::Gather, LegKind::Build, LegKind::Patrol, LegKind::Follow];
+        let kinds = [LegKind::Move, LegKind::AttackMove, LegKind::Attack, LegKind::Gather, LegKind::Build, LegKind::Repair, LegKind::Patrol];
         for (i, a) in kinds.iter().enumerate() {
             for b in &kinds[i + 1..] {
                 assert_ne!(a.color(), b.color(), "{a:?} and {b:?}");
             }
         }
         assert_eq!(LegKind::of(&Order::ReturnCargo), Some(LegKind::Gather));
-        assert_eq!(LegKind::of(&Order::Repair { target: entity(1) }), Some(LegKind::Build));
         assert_eq!(LegKind::of(&Order::Hold), None);
+    }
+
+    /// The click marker af_input gives each order (`OrderMark::of_target`
+    /// and `smart_mark`): cargo brought home marks gathering, following
+    /// an allied unit a move. Every variant is listed, so a new order must
+    /// say how it is marked.
+    fn marked(order: &Order) -> Option<OrderMark> {
+        Some(match order {
+            Order::Move { .. } | Order::Follow { .. } => OrderMark::Move,
+            Order::AttackMove { .. } => OrderMark::AttackMove,
+            Order::Attack { .. } => OrderMark::Attack,
+            Order::Gather { .. } | Order::ReturnCargo => OrderMark::Gather,
+            Order::Build { .. } => OrderMark::Build,
+            Order::Repair { .. } => OrderMark::Repair,
+            Order::Patrol { .. } => OrderMark::Patrol,
+            Order::Hold => return None,
+        })
+    }
+
+    #[test]
+    fn a_route_wears_the_colour_of_the_marker_its_order_was_given_with() {
+        let (e, at) = (entity(1), p(4.0, 2.0));
+        let every = [
+            Order::Move { target: at },
+            Order::AttackMove { target: at },
+            Order::Attack { target: e },
+            Order::Gather { target: e },
+            Order::ReturnCargo,
+            Order::Build { site: e },
+            Order::Repair { target: e },
+            Order::Patrol { a: at, b: at * 2.0 },
+            Order::Follow { target: e },
+            Order::Hold,
+        ];
+        for order in &every {
+            assert_eq!(LegKind::of(order).map(LegKind::color), marked(order).map(OrderMark::color), "{order:?}");
+        }
     }
 }
