@@ -17,6 +17,9 @@
 //! * [`sim_ids`] — entity ids for sim spawns that client spawns cannot shift
 //!   (sim code orders and staggers by `Entity`).
 //! * [`hash`] — a digest of the match state, for lockstep desync checks.
+//! * [`by_entity_index`] — the order to visit a query in when what one
+//!   entity does reaches another (never the query's own table order, which
+//!   client components change).
 //!
 //! Apps should call `app.set_error_handler(bevy::ecs::error::warn)` before
 //! adding plugins, and sim code should prefer `try_insert`/`try_despawn` on
@@ -67,6 +70,22 @@ static SEQ: AtomicU32 = AtomicU32::new(1);
 /// A fresh sequence number (MoveGoal::seq etc.).
 pub fn next_seq() -> u32 {
     SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+/// `entities` into `order` (cleared first), sorted by entity index: the
+/// order a sim system visits a query in when what one entity does reaches
+/// another (shared counters, float sums, `SimRng` draws, spawns, messages,
+/// the first come taking a place). A query's own order is its tables',
+/// which components the client puts on sim entities (`Selected`, visual
+/// markers) change, so a match must never depend on it. Live entities have
+/// distinct indices, and fresh ones are handed out in spawn order, so this
+/// is mostly the order a headless run's tables already hold (cheap to sort,
+/// and older first; `Entity`'s own order would reverse it). Keep `order` in
+/// a `Local` so it is sorted once per tick into a reused buffer.
+pub fn by_entity_index(order: &mut Vec<Entity>, entities: impl Iterator<Item = Entity>) {
+    order.clear();
+    order.extend(entities);
+    order.sort_unstable_by_key(|e| e.index_u32());
 }
 
 /// Registers the shared resources, messages and set ordering, and runs the
@@ -208,28 +227,26 @@ fn rebuild_spatial(
         index.reset(map.size);
     }
     index.clear();
-    // In entity (spawn) order, not table order (which client-only
-    // components on a unit change): `SpatialIndex::nearest` breaks ties by
-    // insertion order.
-    let mut unit_rows: Vec<_> = units.iter().collect();
-    unit_rows.sort_unstable_by_key(|row| row.0.index_u32());
-    for (e, u, o, p, f, fp, alt, st, mob) in unit_rows {
+    // Nodes (most of them spawned with the map), then buildings, then units:
+    // roughly the order their ids were handed out in, so most cells need no
+    // sorting below.
+    for (e, n, p, f, fp, blocking) in &nodes {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
-            kind: SpatialKind::Unit,
-            type_index: u.kind.0,
+            kind: SpatialKind::Node,
+            type_index: n.kind.0,
             pos: p.0,
             obb,
             radius: obb.bounding_radius(),
-            owner: Some(o.0),
-            team: players.team(o.0),
-            flying: mob.flying,
-            altitude: alt.0,
+            owner: None,
+            team: af_geom::NO_TEAM,
+            flying: false,
+            altitude: 0.0,
             height: fp.height,
-            tags: st.tags,
+            tags: TagSet::default(),
             under_construction: false,
-            blocking: false,
+            blocking,
         });
     }
     let mut building_rows: Vec<_> = buildings.iter().collect();
@@ -253,27 +270,28 @@ fn rebuild_spatial(
             blocking: true,
         });
     }
-    let mut node_rows: Vec<_> = nodes.iter().collect();
-    node_rows.sort_unstable_by_key(|row| row.0.index_u32());
-    for (e, n, p, f, fp, blocking) in node_rows {
+    for (e, u, o, p, f, fp, alt, st, mob) in &units {
         let obb = fp.obb(p.0, f.0);
         index.insert(SpatialEntry {
             entity: e,
-            kind: SpatialKind::Node,
-            type_index: n.kind.0,
+            kind: SpatialKind::Unit,
+            type_index: u.kind.0,
             pos: p.0,
             obb,
             radius: obb.bounding_radius(),
-            owner: None,
-            team: af_geom::NO_TEAM,
-            flying: false,
-            altitude: 0.0,
+            owner: Some(o.0),
+            team: players.team(o.0),
+            flying: mob.flying,
+            altitude: alt.0,
             height: fp.height,
-            tags: TagSet::default(),
+            tags: st.tags,
             under_construction: false,
-            blocking,
+            blocking: false,
         });
     }
+    // The queries yield table order, which client inserts on sim entities
+    // change: searches must visit each cell in an order of the sim's own.
+    index.sort_cells();
     let _ = &data;
 }
 

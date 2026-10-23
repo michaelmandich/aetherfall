@@ -555,6 +555,10 @@ type RequestQuery<'a> = (Entity, &'a Position, &'a Facing, &'a Mobile, &'a Owner
 /// Turn goal changes and repath wishes into paths, on the spot when no
 /// search is needed, else through the queue; ask for the next leg of a long
 /// way in time; drop state of units whose goal was removed.
+///
+/// Units with a goal come in entity index order, not table order (which client
+/// inserts on sim entities change): they take their places in the queue,
+/// the tick's share of the budget and the routes to share in turn.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_requests(
     mut queue: ResMut<PathQueue>,
@@ -564,27 +568,26 @@ pub(crate) fn collect_requests(
     spatial: Res<SpatialIndex>,
     regions: Option<Res<NavRegions>>,
     mut avoid: Local<Vec<IVec2>>,
+    mut order: Local<Vec<Entity>>,
     mut units: Query<RequestQuery, Without<Dead>>,
 ) {
     // Only path caches change here: not a grid change for anyone watching `Nav`.
     let nav = nav.bypass_change_detection();
     queue.spent = 0;
     queue.follow_grid(nav);
-    // In entity order, not table order (which client-only components on a
-    // unit change): the queue is first come first served and the tick's
-    // budget runs out on whoever asks last. Lockstep peers must agree.
-    let mut order: Vec<Entity> = units.iter().map(|u| u.0).collect();
+    order.clear();
+    for (e, _, _, _, _, goal, mut path, mut mover) in &mut units {
+        if goal.is_some() {
+            order.push(e);
+        } else if path.status != PathStatus::Idle || path.goal_seq != 0 || !path.waypoints.is_empty() {
+            // Seq 0 = no goal, so re-inserting the same MoveGoal paths again.
+            *path = PathState::default();
+            mover.wants_repath = false;
+        }
+    }
     order.sort_unstable_by_key(|e| e.index_u32());
-    for e in order {
-        let Ok((e, pos, facing, mob, owner, goal, mut path, mut mover)) = units.get_mut(e) else { continue };
-        let Some(goal) = goal else {
-            if path.status != PathStatus::Idle || path.goal_seq != 0 || !path.waypoints.is_empty() {
-                // Seq 0 = no goal, so re-inserting the same MoveGoal paths again.
-                *path = PathState::default();
-                mover.wants_repath = false;
-            }
-            continue;
-        };
+    for &e in order.iter() {
+        let Ok((e, pos, facing, mob, owner, Some(goal), mut path, mut mover)) = units.get_mut(e) else { continue };
         let new_goal = goal.seq != path.goal_seq;
         if new_goal {
             *path = PathState { goal_seq: goal.seq, status: PathStatus::Pending, ..PathState::default() };

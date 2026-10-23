@@ -53,6 +53,8 @@ pub(crate) struct ProductionScratch {
     no_room: Vec<(Entity, u64)>,
     /// Spots of the squad being set down.
     spots: Vec<Vec2>,
+    /// The buildings with something queued, by entity index.
+    order: Vec<Entity>,
 }
 
 /// Where fresh units may stand this tick: the grid, the units and buildings
@@ -98,6 +100,10 @@ type QueueView = (
 /// and, once trained, while there is no room beside its building to set its
 /// models down clear of everything: it looks again every
 /// [`NO_ROOM_RETRY_TICKS`], showing as finished meanwhile.
+///
+/// Buildings go in entity index order, not table order (which client inserts on
+/// sim entities change): the first come take the population room and the
+/// spots beside them, and spawn their units first.
 pub(crate) fn advance_queues(
     data: Res<Data>,
     nav: Res<Nav>,
@@ -121,7 +127,9 @@ pub(crate) fn advance_queues(
     scratch.placed.clear();
     // Forget the waits of buildings that stopped waiting (gone, cancelled).
     scratch.no_room.retain(|(_, at)| *at + NO_ROOM_RETRY_TICKS > clock.tick);
-    for (e, owner, pos, facing, footprint, rally, fallback, mut queue) in &mut queues {
+    af_core::by_entity_index(&mut scratch.order, queues.iter().filter(|(.., queue)| !queue.items.is_empty()).map(|(e, ..)| e));
+    for &e in scratch.order.iter() {
+        let Ok((e, owner, pos, facing, footprint, rally, fallback, mut queue)) = queues.get_mut(e) else { continue };
         let Some(item) = queue.items.front().copied() else { continue };
         let pi = owner.0.index();
         let Some(p) = players.list.get(pi) else { continue };

@@ -205,13 +205,22 @@ impl FxSpawner<'_, '_> {
     }
 }
 
-/// Moves, grows, fades and despawns cosmetic boxes.
-pub(crate) fn animate_fx(mut commands: Commands, mut count: ResMut<FxCount>, mut q: Query<(Entity, &mut FxBox, &mut Fx)>) {
+/// Moves, grows, fades and despawns cosmetic boxes. The spent ones go in
+/// entity index order, not table order (which af_render's components on every
+/// `FxBox` change): ids freed in a tick are handed out again in the order
+/// they were freed.
+pub(crate) fn animate_fx(
+    mut commands: Commands,
+    mut count: ResMut<FxCount>,
+    mut spent: Local<Vec<Entity>>,
+    mut q: Query<(Entity, &mut FxBox, &mut Fx)>,
+) {
     let mut live = 0;
+    spent.clear();
     for (e, mut b, mut fx) in &mut q {
         fx.age += SIM_DT;
         if fx.age >= fx.life {
-            commands.entity(e).try_despawn();
+            spent.push(e);
             continue;
         }
         live += 1;
@@ -224,6 +233,10 @@ pub(crate) fn animate_fx(mut commands: Commands, mut count: ResMut<FxCount>, mut
         b.size = (b.size + fx.grow * SIM_DT).max(Vec3::splat(0.01));
         let k = fx.age / fx.life;
         b.alpha = fx.alpha * (1.0 - k * k);
+    }
+    spent.sort_unstable_by_key(|e| e.index_u32());
+    for e in spent.iter() {
+        commands.entity(*e).try_despawn();
     }
     count.0 = live;
 }

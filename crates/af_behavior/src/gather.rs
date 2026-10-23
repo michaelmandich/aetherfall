@@ -132,21 +132,24 @@ pub(crate) fn node_room(half: Vec2, worker_width: f32) -> usize {
     ((perimeter / (worker_width + GATHER_SPACING)) as usize).clamp(1, MAX_WORKERS_PER_NODE)
 }
 
-pub(crate) fn run_gather_orders(mut workers: Query<Worker, (With<Unit>, Without<Dead>)>, mut harvest: Harvest, mut order: Local<Vec<Entity>>) {
+/// Workers go in entity index order, not table order (which client inserts on sim
+/// entities change): they share nodes, field slots and their owner's
+/// stock, and the first come takes the room, the last of a node and the
+/// first word of a notice.
+pub(crate) fn run_gather_orders(
+    mut workers: Query<Worker, (With<Unit>, Without<Dead>)>,
+    mut harvest: Harvest,
+    mut order: Local<Vec<Entity>>,
+) {
     harvest.recount_field_users(&workers);
     harvest.count_crowds(&workers);
-    // In entity order, not table order (which client-only components on a
-    // unit change): node room and field slots go first come first served,
-    // and what two workers take from one node sums in the order they are
-    // visited. Lockstep peers with different selections must agree.
-    order.clear();
-    order.extend(workers.iter().map(|u| u.entity));
-    order.sort_unstable_by_key(|e| e.index_u32());
-    for e in order.iter() {
-        let Ok(mut u) = workers.get_mut(*e) else { continue };
-        if !u.brain.synced(&u.orders) {
-            continue;
-        }
+    // Only synced brains gathering act (no worker changes another's brain).
+    let gathering = |u: &WorkerReadOnlyItem| {
+        u.brain.synced(u.orders) && matches!(u.orders.current(), Some(Order::Gather { .. } | Order::ReturnCargo))
+    };
+    af_core::by_entity_index(&mut order, workers.iter().filter(gathering).map(|u| u.entity));
+    for &e in order.iter() {
+        let Ok(mut u) = workers.get_mut(e) else { continue };
         match u.orders.current().copied() {
             Some(Order::Gather { target }) => harvest.gather(&mut u, target),
             Some(Order::ReturnCargo) => harvest.return_cargo(&mut u),

@@ -58,6 +58,11 @@ struct Ctx<'a> {
     now: f32,
 }
 
+/// Each unit decides on its own, so the order units come in does not
+/// matter, except to the notices: the refusals are told in entity index order
+/// once every unit has had its turn (the first of a run of equal notices is
+/// the one kept).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_fight_orders(
     sight: Sight,
     clock: Res<SimClock>,
@@ -66,14 +71,16 @@ pub(crate) fn run_fight_orders(
     mut units: Query<Fighter, (With<Unit>, Without<Dead>)>,
     targets: Query<TargetData, Without<Dead>>,
     walking: Walking,
+    mut refused: Local<Vec<Refusal>>,
 ) {
     let ctx = Ctx { sight: &sight, targets: &targets, walking: &walking, tick: clock.tick, now: clock.elapsed };
+    refused.clear();
     for mut u in &mut units {
         if !u.brain.synced(&u.orders) {
             continue;
         }
         match u.orders.current().copied() {
-            Some(Order::Attack { target }) => attack(&ctx, &mut commands, &mut notices, &mut u, target),
+            Some(Order::Attack { target }) => attack(&ctx, &mut commands, &mut refused, &mut u, target),
             Some(Order::AttackMove { target }) => {
                 if advance(&ctx, &mut commands, &mut u, target) {
                     u.orders.queue.pop_front();
@@ -95,6 +102,19 @@ pub(crate) fn run_fight_orders(
             _ => {}
         }
     }
+    refused.sort_unstable_by_key(|r| r.unit.index_u32());
+    for r in refused.iter() {
+        notify(&mut notices, r.owner, NoticeKind::Warning, "Cannot attack that target", Some(r.at), ctx.now);
+    }
+}
+
+/// A forced attack none of the unit's weapons can carry out, to be told to
+/// its owner.
+pub(crate) struct Refusal {
+    unit: Entity,
+    owner: PlayerId,
+    /// Where the target stands.
+    at: Vec2,
 }
 
 /// The patrol leg to walk along the route at the front of `orders`
@@ -114,13 +134,13 @@ fn patrol_leg(orders: &Orders, leg: usize, to: Option<Vec2>) -> usize {
 /// Forced attack: get into the firing band of a weapon that can hit the
 /// target (chasing, or backing off out of minimum range), then stand and
 /// let af_combat fire. Done when the target is gone.
-fn attack(ctx: &Ctx, commands: &mut Commands, notices: &mut Notices, u: &mut FighterItem, target: Entity) {
+fn attack(ctx: &Ctx, commands: &mut Commands, refused: &mut Vec<Refusal>, u: &mut FighterItem, target: Entity) {
     let Some(t) = ctx.targets.get(target).ok().filter(|t| t.mortal) else {
         u.orders.queue.pop_front();
         return;
     };
     let Some(en) = ctx.sight.assess(&u.seeker(ctx.tick), &t) else {
-        notify(notices, u.owner.0, NoticeKind::Warning, "Cannot attack that target", Some(t.pos.0), ctx.now);
+        refused.push(Refusal { unit: u.entity, owner: u.owner.0, at: t.pos.0 });
         u.orders.queue.pop_front();
         return;
     };
