@@ -522,9 +522,13 @@ pub struct FxBox {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Selected;
 
-/// A short-lived click marker on the ground (move/attack feedback).
-/// af_input spawns it; af_render draws it, counts `time_left` down (real
-/// time) and despawns it.
+/// A short-lived marker where an order of the local player lands, one for
+/// every order given: a client entity (never a unit), spawned together
+/// with its `ClickMark` (`af_core::ext::input`: the kind of order, what
+/// it targets, whether it was queued) by `ClickMark::ping`, from af_input
+/// (world clicks, targeted commands, placements) and af_ui (minimap
+/// commands). af_render draws it, counts `time_left` down (real time) and
+/// despawns it; af_input and af_map despawn any left when a match ends.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ClickPing {
     pub pos: Vec2,

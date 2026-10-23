@@ -1219,6 +1219,50 @@ fn presses_squash_flash_and_burst_or_shake_when_refused() {
     assert!((scale_of(&app, button) - 1.0).abs() < 1e-6, "without a squash");
 }
 
+/// A train that every selected building's full queue would refuse is
+/// refused on the card, as the sim would: a shake and a red flash, one
+/// notice and nothing sent, never the gold burst of a success; the slot
+/// looks unaffordable before it is pressed. A Shift-train that only
+/// partly fits still goes.
+#[test]
+fn a_press_every_full_queue_would_refuse_shakes_instead_of_bursting() {
+    let mut app = skinned_hud_app();
+    let peasant = test_data().unit_id("peasant").unwrap();
+    let item = QueueItem { kind: QueueKind::Unit(peasant), paid: ResAmounts::ZERO, time: 100.0 };
+    let halls: Vec<Entity> = [30.0, 50.0].map(|x| spawn_building_at(&mut app, 0, "town_center", Vec2::new(x, 40.0))).into();
+    for hall in &halls {
+        app.world_mut().get_mut::<ProductionQueue>(*hall).unwrap().items.extend(std::iter::repeat_n(item, ProductionQueue::MAX));
+    }
+    select(&mut app, &halls);
+    run_ticks(&mut app, 2);
+    let slot = slot_of(&app, CardAction::Train(peasant));
+    let button = card_slot(&mut app, slot);
+    let usable = |app: &App| app.world().get::<SkinLook>(button).unwrap().usable;
+    assert_eq!(usable(&app), Usable::Soon, "looks unaffordable");
+    app.world_mut().resource_mut::<CommandInbox>().pending.clear();
+    let before = app.world().resource::<Notices>().list.len();
+    press_slot(&mut app, slot);
+    assert!(pending(&app).is_empty(), "never sent: {:?}", pending(&app));
+    let posted: Vec<String> = app.world().resource::<Notices>().list[before..].iter().map(|n| n.text.clone()).collect();
+    assert_eq!(posted, ["Production queue is full"]);
+    assert_eq!(count::<With<Burst>>(&mut app), 0, "no burst");
+    app.update();
+    let red = glow_of(&app, button).to_srgba();
+    assert!(red.alpha > 0.3 && red.red > 2.0 * red.green, "{red:?}");
+    for _ in 0..25 {
+        app.update();
+    }
+    // Room for one: a Shift-train of five goes (the sim queues what fits).
+    app.world_mut().get_mut::<ProductionQueue>(halls[1]).unwrap().items.pop_back();
+    app.update();
+    assert_eq!(usable(&app), Usable::Yes);
+    app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ShiftLeft);
+    press_slot(&mut app, slot);
+    let cmds = pending(&app);
+    assert_eq!(cmds.iter().map(|c| c.kind.clone()).collect::<Vec<_>>(), [CommandKind::Train { unit: peasant, count: 5 }]);
+    assert_eq!(count::<With<Burst>>(&mut app), 1, "a success");
+}
+
 #[test]
 fn a_page_turn_plays_on_the_page_it_opens() {
     let mut app = skinned_hud_app();
@@ -1228,15 +1272,19 @@ fn a_page_turn_plays_on_the_page_it_opens() {
     let economy = slot_of(&app, CardAction::BuildPage(BuildCategory::Economy));
     press_slot(&mut app, economy);
     // The pressed slot is laid out again: the new page's buttons spring in
-    // instead, and the slots it leaves empty never move.
+    // instead (all of them squashed on the first frame, none at full size
+    // first), and the slots it leaves empty never move.
     let mut least = [1.0f32; crate::card::SLOTS];
     let mut moved_hidden = Vec::new();
-    for _ in 0..16 {
+    for frame in 0..16 {
         app.update();
         let shown = app.world().resource::<CardState>().slots;
         for (slot, action) in shown.iter().enumerate() {
             let e = card_slot(&mut app, slot);
             let scale = scale_of(&app, e);
+            if frame == 0 && action.is_some() {
+                assert!(scale < 0.95, "slot {slot} ({action:?}) appears squashed: {scale}");
+            }
             least[slot] = least[slot].min(scale);
             if action.is_none() && app.world().get::<UiTransform>(e) != Some(&UiTransform::IDENTITY) {
                 moved_hidden.push(slot);

@@ -26,8 +26,12 @@
 //!   those nearest the centre of the view ([`RoutesShown`] tells the HUD).
 //!   Gizmos are only registered with Bevy's `GizmoPlugin`, so headless
 //!   apps and tests plan without drawing. Bevy draws gizmos before every
-//!   blended mesh, writing depth (the x-ray pass at the near plane), so a
-//!   stroke shows over a click marker it crosses.
+//!   blended mesh, writing depth, so a lit stroke shows over a click
+//!   marker it crosses. The x-ray pass is drawn by its own camera
+//!   ([`XrayCamera`]), after the whole scene and with a depth buffer of its
+//!   own: in the main view its near-plane depth would hide the lit strokes
+//!   whenever Bevy happened to queue it first. That camera wakes only while
+//!   routes are planned ([`wake_xray_camera`]).
 //!
 //! With [`ShowPaths`] visible (P, or Shift held), each unit's current leg
 //! is drawn from the unit through the waypoints still ahead to its live
@@ -49,6 +53,7 @@ use af_core::ext::behavior::patrol_points;
 use af_core::ext::input::{OrderMark, RtsCamera, ShowPaths};
 use af_core::ext::render::{MAX_TERRAIN_HEIGHT, RoutesShown};
 use af_core::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::gizmos::AppGizmoBuilder;
 use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoConfigStore, GizmoLineConfig, GizmoLineJoint};
@@ -146,15 +151,68 @@ const SAME_POINT: f32 = 0.05;
 pub struct PathGizmos;
 
 /// The same strokes drawn faint over everything (the x-ray pass), so a
-/// route behind a building or a hill still reads.
+/// route behind a building or a hill still reads. Only the
+/// [`XrayCamera`] sees them ([`XRAY_LAYER`]).
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct PathXrayGizmos;
+
+/// The render layer of the x-ray pass, which nothing else is on.
+pub const XRAY_LAYER: usize = 1;
+
+/// The camera that draws the x-ray pass: a child of af_input's RTS camera
+/// (so it sees from where that camera does, with its projection and
+/// multisampling), rendered after it onto the same window without
+/// clearing it, and seeing only [`XRAY_LAYER`]. Its depth buffer starts
+/// cleared, so the x-ray strokes' near-plane depth never reaches the main
+/// view, where it would hide the lit strokes it doubles.
+///
+/// A camera costs every frame, asleep or not drawing anything (its own
+/// pass over every mesh, the sun's shadow cascades included, and its
+/// render passes: about a millisecond in a big match), so it sleeps
+/// (inactive) while no route is planned ([`wake_xray_camera`]). Bevy draws
+/// the UI with the last camera: awake, that is this one (after the RTS
+/// camera, [`XRAY_AWAKE`]), so the HUD is drawn over the x-ray strokes;
+/// asleep it sorts first ([`XRAY_ASLEEP`]) and the UI is the RTS camera's.
+#[derive(Component)]
+pub struct XrayCamera;
+
+/// The x-ray camera's order awake and asleep (the RTS camera's is 0).
+pub const XRAY_AWAKE: isize = 1;
+pub const XRAY_ASLEEP: isize = -1;
 
 /// Register the route gizmos (an app with Bevy's `GizmoPlugin`).
 pub fn register_gizmos(app: &mut App) {
     let line = GizmoLineConfig { width: LINE_PX, joints: GizmoLineJoint::Round(4), ..default() };
-    app.insert_gizmo_config(PathGizmos, GizmoConfig { line: line.clone(), depth_bias: DEPTH_BIAS, ..default() })
-        .insert_gizmo_config(PathXrayGizmos, GizmoConfig { line, depth_bias: -1.0, ..default() });
+    let xray = GizmoConfig { line: line.clone(), depth_bias: -1.0, render_layers: RenderLayers::layer(XRAY_LAYER), ..default() };
+    app.insert_gizmo_config(PathGizmos, GizmoConfig { line, depth_bias: DEPTH_BIAS, ..default() }).insert_gizmo_config(PathXrayGizmos, xray);
+}
+
+/// Give each new RTS camera its [`XrayCamera`], asleep (despawned with it).
+pub(crate) fn attach_xray_camera(mut commands: Commands, cameras: Query<(Entity, &Projection, Option<&Msaa>), Added<RtsCamera>>) {
+    for (rts, projection, msaa) in &cameras {
+        commands.spawn((
+            Name::new("Route x-ray camera"),
+            XrayCamera,
+            Camera3d::default(),
+            Camera { order: XRAY_ASLEEP, is_active: false, clear_color: ClearColorConfig::None, ..default() },
+            projection.clone(),
+            msaa.copied().unwrap_or_default(),
+            RenderLayers::layer(XRAY_LAYER),
+            Transform::IDENTITY,
+            ChildOf(rts),
+        ));
+    }
+}
+
+/// Wake the [`XrayCamera`] while routes are planned, else let it sleep.
+pub(crate) fn wake_xray_camera(overlay: Res<PathOverlay>, mut cameras: Query<&mut Camera, With<XrayCamera>>) {
+    let awake = !(overlay.plan.legs.is_empty() && overlay.plan.loops.is_empty());
+    for mut camera in &mut cameras {
+        if camera.is_active != awake {
+            camera.is_active = awake;
+            camera.order = if awake { XRAY_AWAKE } else { XRAY_ASLEEP };
+        }
+    }
 }
 
 /// Run condition: the route gizmos are registered (a windowed app).
@@ -1270,8 +1328,41 @@ mod tests {
             let pull = depth_pull(d, 0.5, DEPTH_BIAS);
             assert!(pull > 0.03 && pull < 0.5, "{pull} m at {d} m: units standing on a route must still hide it");
         }
-        // The x-ray pass draws at the near plane, over everything.
+        // The x-ray pass draws at the near plane, over everything its own
+        // camera draws (only the x-ray strokes).
         assert!((depth_pull(150.0, 0.5, -1.0) - 149.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_xray_camera_sees_from_the_rts_camera_and_wakes_only_for_routes() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<PathOverlay>();
+        let projection = Projection::from(PerspectiveProjection { fov: 0.7, near: 0.5, far: 2000.0, ..default() });
+        let rts = world.spawn((RtsCamera, Camera3d::default(), projection, Msaa::Sample4)).id();
+        let mut attach = Schedule::default();
+        attach.add_systems(attach_xray_camera);
+        attach.run(&mut world);
+        attach.run(&mut world);
+        let mut xray = world.query_filtered::<(Entity, &ChildOf, &RenderLayers, &Projection, &Msaa, &Transform), With<XrayCamera>>();
+        let found: Vec<_> = xray.iter(&world).map(|(e, parent, layers, projection, msaa, at)| (e, parent.parent(), layers.clone(), projection.clone(), *msaa, *at)).collect();
+        assert_eq!(found.len(), 1, "one for the RTS camera, once");
+        let (camera, parent, layers, projection, msaa, at) = found[0].clone();
+        assert_eq!((parent, layers, msaa, at), (rts, RenderLayers::layer(XRAY_LAYER), Msaa::Sample4, Transform::IDENTITY));
+        assert!(matches!(projection, Projection::Perspective(p) if (p.fov, p.near) == (0.7, 0.5)), "the RTS camera's projection");
+        let state = |world: &World| world.get::<Camera>(camera).map(|c| (c.is_active, c.order)).unwrap();
+        // Asleep before the RTS camera, so the UI is the RTS camera's.
+        assert_eq!(state(&world), (false, XRAY_ASLEEP));
+        const { assert!(XRAY_ASLEEP < 0 && XRAY_AWAKE > 0) };
+        world.run_system_once(wake_xray_camera).unwrap();
+        assert_eq!(state(&world), (false, XRAY_ASLEEP), "nothing planned");
+        let mut overlay = world.resource_mut::<PathOverlay>();
+        overlay.plan.straight(p(0.0, 0.0), p(5.0, 0.0), LegKind::Move);
+        world.run_system_once(wake_xray_camera).unwrap();
+        assert_eq!(state(&world), (true, XRAY_AWAKE), "after the RTS camera, the UI drawn over its strokes");
+        world.resource_mut::<PathOverlay>().plan.clear();
+        world.run_system_once(wake_xray_camera).unwrap();
+        assert_eq!(state(&world), (false, XRAY_ASLEEP));
     }
 
     #[test]

@@ -153,10 +153,22 @@ pub fn flash(kind: PressKind, t: f32) -> f32 {
 }
 
 /// When a page turn starts on a button in card column `column`, for a
-/// turn at real time `now`: the first column already squashed (the new
-/// buttons appear small and spring out), each next one a little later.
+/// turn at real time `now`: timed so that the first column's spring is let
+/// go at once and each next one's a little later. Until its spring is let
+/// go a button holds squashed ([`button_scale`]): the new page's buttons
+/// appear small, never at full size first.
 pub fn turn_start(now: f32, column: usize) -> f32 {
     now - SQUASH_TIME + column as f32 * TURN_RIPPLE
+}
+
+/// Scale of a button `t` s into a press of `kind` ([`press_scale`]); the
+/// buttons of a page turn hold squashed until their spring is let go
+/// ([`turn_start`]), however long that is.
+pub fn button_scale(kind: PressKind, t: f32) -> f32 {
+    if kind == PressKind::Turn && t < SQUASH_TIME {
+        return 1.0 - kind.depth();
+    }
+    press_scale(t, kind.depth())
 }
 
 /// How far across the button the shine of a full press is (0 to 1), and
@@ -243,7 +255,7 @@ pub(crate) fn animate_presses(
             fx.playing = None;
         }
         let shift = if kind == PressKind::Refused { shake(t) } else { 0.0 };
-        let next = UiTransform { translation: Val2::px(shift, 0.0), scale: Vec2::splat(press_scale(t, kind.depth())), ..UiTransform::IDENTITY };
+        let next = UiTransform { translation: Val2::px(shift, 0.0), scale: Vec2::splat(button_scale(kind, t)), ..UiTransform::IDENTITY };
         transform.set_if_neq(next);
         let Some((mut shine_at, mut image)) = parts.and_then(|p| p.shine).and_then(|s| shines.get_mut(s).ok()) else { continue };
         let across = shine(t).filter(|_| kind == PressKind::Full && !done);
@@ -454,7 +466,7 @@ mod tests {
         // Every part of a press is over by its duration.
         for kind in [PressKind::Full, PressKind::Light, PressKind::Turn, PressKind::Refused, PressKind::Plain] {
             let d = kind.duration();
-            assert_eq!((press_scale(d, kind.depth()), shake(d), flash(kind, d)), (1.0, 0.0, 0.0), "{kind:?}");
+            assert_eq!((button_scale(kind, d), shake(d), flash(kind, d)), (1.0, 0.0, 0.0), "{kind:?}");
         }
         assert!(shine(PressKind::Full.duration()).is_none());
     }
@@ -510,13 +522,21 @@ mod tests {
 
     #[test]
     fn a_page_turn_ripples_across_the_card() {
-        // The first column appears squashed and springs out at once ...
-        let t0 = 1.0 - turn_start(1.0, 0);
-        assert!((press_scale(t0, PressKind::Turn.depth()) - (1.0 - PressKind::Turn.depth())).abs() < 1e-4);
-        // ... the last starts a little later, and the whole card is still
-        // within half a second.
-        let t4 = 1.0 - turn_start(1.0, 4);
-        assert!(t4 < t0 && press_scale(t4, PressKind::Turn.depth()) > press_scale(t0, PressKind::Turn.depth()));
+        let squashed = 1.0 - PressKind::Turn.depth();
+        // The scale of the button in `column` `dt` s after a turn at 1 s.
+        let at = |column: usize, dt: f32| button_scale(PressKind::Turn, 1.0 + dt - turn_start(1.0, column));
+        // Every column appears squashed, none at full size first ...
+        for column in 0..crate::card::COLS {
+            assert!((at(column, 0.0) - squashed).abs() < 1e-4, "column {column} starts at {}", at(column, 0.0));
+            // ... and holds so until its spring is let go.
+            let release = column as f32 * TURN_RIPPLE;
+            assert!((0..20).map(|i| release * i as f32 / 20.0).all(|dt| at(column, dt) <= squashed + 1e-4), "column {column} pops");
+        }
+        // It springs out a column at a time: each one is back to full size
+        // later than the one before, and the whole card within half a second.
+        let back = |column: usize| (0..500).map(|i| i as f32 * 0.001).find(|dt| at(column, *dt) >= 1.0).unwrap();
+        let backs: Vec<f32> = (0..crate::card::COLS).map(back).collect();
+        assert!(backs.windows(2).all(|w| w[0] < w[1]), "{backs:?}");
         const { assert!(SETTLE_TIME - SQUASH_TIME + 4.0 * TURN_RIPPLE < 0.5) };
         assert!(flash(PressKind::Turn, 0.0) < flash(PressKind::Light, 0.0), "a faint flash");
         assert_eq!(PressKind::Turn.duration(), SETTLE_TIME);

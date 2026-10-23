@@ -7,7 +7,9 @@
 //! In the skin a slot wears its action's family ([`skin::card_skin`]),
 //! its hotkey and queued count sit on the frame's two corner plaques, and
 //! a press (mouse or hotkey) plays its [`fx`] feedback; a press that turns
-//! the card's page plays on the new page's slots instead.
+//! the card's page plays on the new page's slots instead. A press the sim
+//! would refuse (one the rules forbid now, or one that every selected
+//! building's queue is too full for) shakes, posts why and is never sent.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -221,10 +223,10 @@ pub(super) fn spawn_tooltip(root: &mut ChildSpawnerCommands) {
                         chip.spawn((text("", FONT_SMALL, TEXT), CostChipText(i), Pickable::IGNORE));
                     });
             }
-            row.spawn((text("", FONT_SMALL, TEXT_DIM), TooltipText::Time, Pickable::IGNORE));
+            row.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), TooltipText::Time, Pickable::IGNORE));
         });
         tip.spawn((text("", FONT_SMALL, TEXT), TooltipText::Body, Pickable::IGNORE));
-        tip.spawn((text("", FONT_SMALL, TEXT_DIM), TooltipText::Shift, Pickable::IGNORE));
+        tip.spawn((text("", FONT_SMALL, TEXT_DIM), theme::text_shadow(), TooltipText::Shift, Pickable::IGNORE));
         tip.spawn((text("", FONT_SMALL, theme::TEXT_BAD), TooltipText::Reason, Pickable::IGNORE));
     });
 }
@@ -360,8 +362,13 @@ fn card_input(
     let press = Press { data: &data, player, sel: &sel, shift: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]), now: clock.elapsed };
     for slot in (0..SLOTS).filter(|s| hit[*s]) {
         let Some(action) = card.slots[slot] else { continue };
-        if let Err(reason) = card::action_state(&data, player, sel.card.building, action) {
-            let why = tooltip::reason_text(&data, player, sel.card.building, action, reason);
+        let refused = match card::action_state(&data, player, sel.card.building, action) {
+            Err(reason) => Some(tooltip::reason_text(&data, player, sel.card.building, action, reason)),
+            // No queue it could go into has room: the sim would refuse it.
+            Ok(()) if card::queues_full(action, queue_lengths(&sel, &queues)) => Some(card::QUEUE_FULL.to_string()),
+            Ok(()) => None,
+        };
+        if let Some(why) = refused {
             notices.push(Some(player.id), NoticeKind::Warning, why, None, press.now);
             presses.slots[slot] = Some(PressKind::Refused);
             continue;
@@ -372,6 +379,11 @@ fn card_input(
         }
         execute(action, &press, &mut card, &mut mode, &mut inbox, &queues);
     }
+}
+
+/// How many items each selected building of the card's type has queued.
+fn queue_lengths<'a>(sel: &'a SelectionInfo, queues: &'a Query<&ProductionQueue>) -> impl Iterator<Item = usize> + 'a {
+    sel.buildings.iter().filter_map(|e| queues.get(*e).ok()).map(|q| q.items.len())
 }
 
 fn execute(action: CardAction, p: &Press, card: &mut CardState, mode: &mut InputMode, inbox: &mut CommandInbox, queues: &Query<&ProductionQueue>) {
@@ -428,6 +440,9 @@ fn execute(action: CardAction, p: &Press, card: &mut CardState, mode: &mut Input
 #[derive(Clone, Copy, Default)]
 struct SlotLook {
     state: Option<Result<(), Reason>>,
+    /// Usable but for room in the queues ([`card::queues_full`]): shown
+    /// like an unaffordable one, as it may be soon.
+    full: bool,
     active: bool,
     count: u32,
 }
@@ -460,6 +475,7 @@ fn refresh_card(
     for (look, action) in looks.iter_mut().zip(card.slots) {
         let Some(action) = action else { continue };
         look.state = Some(card::action_state(&data, player, sel.card.building, action));
+        look.full = card::queues_full(action, queue_lengths(&sel, &queues));
         look.active = action.is_active(&mode) || matches!(action, CardAction::Stance(s) if Some(s) == stance);
         look.count = match action {
             CardAction::Train(u) => queued(QueueKind::Unit(u)),
@@ -473,6 +489,7 @@ fn refresh_card(
         let (Some(state), Some(action)) = (look.state, card.slots[slot.0]) else { continue };
         family.set_if_neq(SkinButton(skin::card_skin(action, card.menu, |b| card::build_category(&data, player.faction, b))));
         let usable = match state {
+            Ok(()) if look.full => Usable::Soon,
             Ok(()) => Usable::Yes,
             Err(r) if r.is_soft() => Usable::Soon,
             Err(_) => Usable::No,
@@ -484,14 +501,16 @@ fn refresh_card(
             // The skin draws it (`skin::skin_looks`).
             continue;
         }
-        let base = if state.is_ok() { theme::group_color(action.group()) } else { theme::BUTTON_DISABLED };
+        let base = if usable == Usable::Yes { theme::group_color(action.group()) } else { theme::BUTTON_DISABLED };
         bg.set_if_neq(BackgroundColor(theme::shade(base, *interaction)));
         border.set_if_neq(BorderColor::all(if look.active { theme::HIGHLIGHT } else { theme::PANEL_BORDER }));
     }
     for (label, mut color) in &mut labels {
-        let c = match looks[label.0].state {
+        let look = looks[label.0];
+        let c = match look.state {
             Some(Err(r)) if r.is_soft() => SOFT_DISABLED_TEXT,
             Some(Err(_)) => TEXT_DIM,
+            Some(Ok(())) if look.full => SOFT_DISABLED_TEXT,
             _ => TEXT,
         };
         set_color(&mut color, c);
@@ -558,6 +577,7 @@ fn update_tooltip(
     players: Option<Res<Players>>,
     data: Res<Data>,
     slots: Query<(&CardSlot, &Interaction)>,
+    queues: Query<&ProductionQueue>,
     mut panel: Query<&mut Node, (With<TooltipPanel>, Without<CostChipNode>)>,
     mut texts: Query<(&TooltipText, &mut Text), Without<CostChipText>>,
     mut chips: Query<(&CostChipNode, &mut Node), Without<TooltipPanel>>,
@@ -570,6 +590,9 @@ fn update_tooltip(
         let action = card.slots[slot]?;
         let mut t = tooltip::for_action(&data, player, sel.card.building, action);
         t.title = format!("{}  [{}]", t.title, HOTKEY_LABELS[slot]);
+        if t.reason.is_none() && card::queues_full(action, queue_lengths(&sel, &queues)) {
+            t.reason = Some(card::QUEUE_FULL.to_string());
+        }
         Some(t)
     });
     if *shown == tip {

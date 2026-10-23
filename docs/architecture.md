@@ -233,12 +233,15 @@ medieval skin (`af_ui::skin`); one look serves every age for now.
   it gold, sweep a shine across it and throw a ring and sparks from its
   centre (on a root node over the HUD, at most 64 particles alive); other
   orders get a lighter squash and flash; a refused press shakes and
-  flashes red. A press that turns the card's page (a build page, More,
-  Back) lays the pressed slot out anew, so it plays on the new page
-  instead: its buttons appear squashed and spring out with a faint flash,
-  a column at a time. Plain buttons squash when clicked. Scale and shake are
-  `UiTransform`s, so nothing is laid out again, and nothing runs for a
-  button at rest.
+  flashes red and is never sent: one the rules forbid now, or a train,
+  research or upgrade that every selected building's production queue is
+  too full for (a slot like that looks unaffordable, "Production queue
+  is full" in its tip). A press that turns the card's page (a build
+  page, More, Back) lays the pressed slot out anew, so it plays on the
+  new page instead: its buttons appear squashed and spring out with a
+  faint flash, a column at a time. Plain buttons squash when clicked.
+  Scale and shake are `UiTransform`s, so nothing is laid out again, and
+  nothing runs for a button at rest.
 * **Checking it:** `cargo run -p af_ui --example ui_preview [-- hud ...]
   --screenshot shot.png`, or the game with `--script` to catch a press
   part-way (`"3 key Q; 3.05 shot a.png; 3.15 shot b.png"`; with
@@ -255,7 +258,9 @@ kind, the entity it targets, whether it was shift-queued), both made by
 `ClickMark::ping`. af_input writes them for right-click `Smart` (the kind
 guessed from what is pointed at and what the selection can do, as the sim
 resolves it per unit; cargo carried to an own drop site that takes it
-marks `Gather`; buildings alone mark a rally), targeted commands,
+marks `Gather`; a plain move onto an allied building is marked round
+it, as a point under its roof would be hidden; buildings alone mark a
+rally), targeted commands,
 placements (`Place`: the snapped footprint and facing; a wall line marks
 its last segment) and af_ui for minimap commands. af_render
 (`markers`) dresses each ping with its parts as children, plays it in real
@@ -282,7 +287,8 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
 
 * **Toggle:** `ShowPaths { on, held }` (`af_core::ext::input`): af_input
   initialises it (never reset between matches: a preference), flips `on`
-  with P (with a notice) and sets `held` while Shift is down; af_ui's
+  with P (with a notice; without a local player P does nothing, as the
+  button is hidden then) and sets `held` while Shift is down; af_ui's
   "Paths" button under Menu flips `on` and shows it (while on, a gold
   label and the skin's steady gold glow).
 * **Overlay** (`af_render::paths`, `RenderStep::Overlay`): `plan_paths`
@@ -319,10 +325,19 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
   chevrons on real time (they run while paused), lifted off the ground
   by a small depth bias (`DEPTH_BIAS`: Bevy scales it with the distance,
   5 to 43 cm over the zoom range, so units standing on a route still
-  hide it), and a faint always-on-top copy so routes behind buildings
-  still read. Gizmos draw before every blended mesh and write depth (the
-  copy at the near plane), so a route's stroke shows over a click
-  marker it crosses. Only the
+  hide it). These lit strokes draw before every blended mesh and write
+  depth, so a route shows over a click marker it crosses. A faint copy
+  over everything (the x-ray pass) keeps routes behind buildings
+  readable; it is drawn by a camera of its own
+  (`paths::XrayCamera`: a child of the RTS camera that sees only the
+  x-ray gizmos' render layer, rendered after it onto the window with a
+  depth buffer of its own). In the main view its near-plane depth hid
+  the lit strokes whenever Bevy queued it first, and that order shifts
+  as blended meshes come and go. The camera is active only while routes
+  are planned (`wake_xray_camera`: a camera costs close to a millisecond
+  a frame in a big match even with nothing to draw); while it is, it is
+  the last camera, so Bevy draws the UI with it, over the strokes, and
+  asleep it sorts first and the UI is the RTS camera's. Only the
   stretches on screen are cut into pieces (`View`, the camera's view of
   the ground, widened by the height of the drawn mountains a straight
   leg can cross), with at most so many dashes and

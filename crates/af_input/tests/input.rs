@@ -735,7 +735,8 @@ fn right_click_markers_show_the_order_it_becomes() {
         (Vec2::new(30.0, 30.0), Some(foundation), OrderMark::Build, true),
         (Vec2::new(30.0, 60.0), Some(damaged), OrderMark::Repair, true),
         (Vec2::new(92.0, 60.0), Some(soldier), OrderMark::Move, true),
-        (Vec2::new(100.0, 100.0), Some(hall), OrderMark::Move, false),
+        // Nothing to do at the hall: a move beside it, marked round it.
+        (Vec2::new(100.0, 100.0), Some(hall), OrderMark::Move, true),
         (Vec2::new(70.0, 70.0), None, OrderMark::Move, false),
     ];
     for (at, on, kind, hugs) in cases {
@@ -748,12 +749,12 @@ fn right_click_markers_show_the_order_it_becomes() {
     (cargo.carrying, cargo.amount) = (Some(ResourceId(takes.trailing_zeros() as u8)), 5.0);
     let mark = right_click(&mut m, Vec2::new(100.0, 100.0), Some(hall));
     assert_eq!((mark.kind, mark.target), (OrderMark::Gather, Some(hall)), "returning cargo");
-    // A soldier cannot gather or build: it walks there.
+    // A soldier cannot gather or build: it walks there, marked round the
+    // foundation it stops beside.
     m.tap(KeyCode::Escape);
     m.select(&[soldier]);
-    for (at, on) in [(Vec2::new(60.0, 90.0), node), (Vec2::new(30.0, 30.0), foundation)] {
-        assert_eq!(right_click(&mut m, at, Some(on)), ClickMark::new(OrderMark::Move, None, false));
-    }
+    assert_eq!(right_click(&mut m, Vec2::new(60.0, 90.0), Some(node)), ClickMark::new(OrderMark::Move, None, false));
+    assert_eq!(right_click(&mut m, Vec2::new(30.0, 30.0), Some(foundation)), ClickMark::new(OrderMark::Move, Some(foundation), false));
     // Buildings alone set their rally.
     m.tap(KeyCode::Escape);
     m.select(&[hall]);
@@ -1435,6 +1436,16 @@ fn p_toggles_unit_paths_and_shift_shows_them_while_held() {
     m.step();
     m.step();
     assert!(paths(&m).on, "kept after leaving the match");
+}
+
+/// A spectator has no routes to show (the Paths button is hidden too), so
+/// P neither flips the setting nor says it did.
+#[test]
+fn p_does_nothing_for_a_spectator() {
+    let mut m = Match::new(true);
+    m.tap(KeyCode::KeyP);
+    assert_eq!(*m.app.world().resource::<ShowPaths>(), ShowPaths::default());
+    assert!(m.notices().iter().all(|t| !t.starts_with("Unit paths")), "{:?}", m.notices());
 }
 
 #[test]

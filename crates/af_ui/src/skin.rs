@@ -173,7 +173,8 @@ pub struct SkinGlow;
 pub enum Usable {
     #[default]
     Yes,
-    /// Not now: missing resources or population room (it may be soon).
+    /// Not now: missing resources, population room or room in the
+    /// production queues (it may be soon).
     Soon,
     /// Not available (tech, age, limit, ...).
     No,
