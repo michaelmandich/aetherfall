@@ -38,6 +38,8 @@ fn main() {
     let mut every = 30u64;
     let mut dump: Option<u64> = None;
     let mut mark: Option<u64> = None;
+    let mut trace: Option<Entity> = None;
+    let mut trace_from = 0u64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_else(|| panic!("{arg} needs a value"));
@@ -49,6 +51,8 @@ fn main() {
             "--every" => every = value().parse().expect("--every TICKS"),
             "--dump" => dump = Some(value().parse().expect("--dump TICK")),
             "--mark" => mark = Some(value().parse().expect("--mark SALT")),
+            "--trace" => trace = Some(Entity::from_bits(value().parse().expect("--trace ENTITY_BITS"))),
+            "--from" => trace_from = value().parse().expect("--from TICK"),
             other => panic!("unknown argument `{other}`"),
         }
     }
@@ -61,8 +65,11 @@ fn main() {
     let ticks = dump.unwrap_or((minutes * 60.0 * SIM_HZ as f64) as u64);
     loop {
         let tick = app.world().resource::<SimClock>().tick;
-        if every > 0 && tick % every == 0 && dump.is_none() {
+        if every > 0 && tick % every == 0 && dump.is_none() && trace.is_none() {
             println!("{tick} {:016x}", sim_hash(app.world_mut()));
+        }
+        if let Some(e) = trace.filter(|_| tick >= trace_from) {
+            println!("{tick} {}", trace_line(app.world(), e));
         }
         if tick >= ticks || app.world().resource::<GameOutcome>().ended {
             break;
@@ -75,6 +82,23 @@ fn main() {
     if dump.is_some() {
         print_world(app.world_mut(), &data);
     }
+}
+
+/// One unit's movement state as raw bits (`--trace`): where two machines'
+/// lines first differ, the value that differs points at the system.
+fn trace_line(world: &World, e: Entity) -> String {
+    let Ok(entity) = world.get_entity(e) else { return "gone".into() };
+    let v2 = |v: Vec2| format!("{:08x},{:08x}", v.x.to_bits(), v.y.to_bits());
+    let pos = entity.get::<Position>().map(|p| v2(p.0));
+    let vel = entity.get::<Velocity>().map(|v| v2(v.0));
+    let face = entity.get::<Facing>().map(|f| format!("{:08x}", f.0.to_bits()));
+    let goal = entity.get::<MoveGoal>().map(|g| format!("{} arrive {:08x} seq {}", v2(g.target), g.arrive.to_bits(), g.seq));
+    let path = entity.get::<PathState>().map(|p| {
+        let points: Vec<String> = p.waypoints.iter().map(|w| v2(*w)).collect();
+        format!("{:?} next {} [{}]", p.status, p.next, points.join(" "))
+    });
+    let order = entity.get::<Orders>().and_then(|o| o.current().cloned());
+    format!("pos {pos:?} vel {vel:?} face {face:?}\n    goal {goal:?}\n    path {path:?}\n    order {order:?}")
 }
 
 /// Give a salt-picked half of the units, buildings and nodes the marker and
