@@ -60,8 +60,16 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   `atan2`, `powf` or `Vec2::from_angle` (the platform's libm differs in the
   last bit); it uses `af_geom::dmath`, so a Windows, Mac and Raspberry Pi
   simulation of the same match agree bit for bit. Square roots, rounding
-  and arithmetic are exact everywhere. `af_core::hash::sim_hash` digests a
-  match for the lockstep desync check.
+  and arithmetic are exact everywhere. `bevy::math::ops` (map generation
+  uses it) and glam's own trigonometry go through `libm` as well: the
+  workspace turns on `bevy_math/libm`, and `dmath`'s
+  `bevy_ops_are_libm` test fails without it. glam's quaternions
+  (`Quat`, `rotate_towards`) run on SSE2 or NEON and stay out of sim
+  code (`dmath::rotate_y`, `dmath::rotate_towards`). `af_core::hash::sim_hash`
+  digests a match for the lockstep desync check, node facings included.
+  `cargo run --release -p af_sim --example sim_hashes` prints a seeded
+  match's hashes to diff two machines (`--mark` for query order,
+  `--trace` and `--dump` to find what parted).
 * What a unit is busy with: `Activity` (af_core `components.rs`), written
   only by af_behavior at the end of `SimSet::Orders`: `Gather(WorkStyle)`
   (at the node or field), `Build`, `Repair` (at the target), `Heal`,
