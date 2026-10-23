@@ -204,7 +204,8 @@ sim tick) gets a placement slam, a top-level `RenderScene` effect.
 
 * **Toggle:** `ShowPaths { on, held }` (`af_core::ext::input`): af_input
   initialises it (never reset between matches: a preference), flips `on`
-  with P (with a notice) and sets `held` while Shift is down; af_ui's
+  with P (with a notice; without a local player P does nothing, as the
+  button is hidden then) and sets `held` while Shift is down; af_ui's
   "Paths" button under Menu flips `on` and shows it (while on, a gold
   label and the skin's steady gold glow).
 * **Overlay** (`af_render::paths`, `RenderStep::Overlay`): `plan_paths`

@@ -272,13 +272,14 @@ pub(crate) fn delete_selected(keys: Res<ButtonInput<KeyCode>>, own: OwnSelection
 
 /// P shows or hides the selected units' routes ([`ShowPaths`]) and says
 /// which in a notice; while Shift is held (queued orders being given) they
-/// show whatever P says.
+/// show whatever P says. Without a local player (spectating) there are no
+/// routes to show, and P does nothing, as the HUD hides the Paths button.
 pub(crate) fn toggle_paths(keys: Res<ButtonInput<KeyCode>>, local: Res<LocalPlayer>, mut paths: ResMut<ShowPaths>, mut issuer: Issuer) {
     let held = shift_held(&keys);
     if paths.held != held {
         paths.held = held;
     }
-    if keys.just_pressed(KeyCode::KeyP) && !ctrl_or_alt_held(&keys) {
+    if local.0.is_some() && keys.just_pressed(KeyCode::KeyP) && !ctrl_or_alt_held(&keys) {
         paths.on = !paths.on;
         issuer.notice(local.0, NoticeKind::Info, if paths.on { "Unit paths shown (P)" } else { "Unit paths hidden (P)" });
     }

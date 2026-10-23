@@ -1354,6 +1354,16 @@ fn p_toggles_unit_paths_and_shift_shows_them_while_held() {
     assert!(paths(&m).on, "kept after leaving the match");
 }
 
+/// A spectator has no routes to show (the Paths button is hidden too), so
+/// P neither flips the setting nor says it did.
+#[test]
+fn p_does_nothing_for_a_spectator() {
+    let mut m = Match::new(true);
+    m.tap(KeyCode::KeyP);
+    assert_eq!(*m.app.world().resource::<ShowPaths>(), ShowPaths::default());
+    assert!(m.notices().iter().all(|t| !t.starts_with("Unit paths")), "{:?}", m.notices());
+}
+
 #[test]
 fn foreign_selection_is_dropped_in_the_fog() {
     let mut m = Match::new(false);
