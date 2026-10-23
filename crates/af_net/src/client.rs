@@ -26,6 +26,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use af_core::ext::map::MapOptions;
 use af_core::ext::net::*;
 use af_core::hash::sim_hash;
 use af_core::prelude::*;
@@ -458,10 +459,11 @@ fn poll_link(
                     }
                     session.status = NetStatus::Failed(reason);
                 } else {
-                    session.status = if session.status == NetStatus::Online || session.status == NetStatus::Connecting {
-                        NetStatus::Failed(reason)
-                    } else {
-                        NetStatus::Offline
+                    session.status = match &session.status {
+                        NetStatus::Online | NetStatus::Connecting => NetStatus::Failed(reason),
+                        // A refusal just before the close already says why.
+                        NetStatus::Failed(why) => NetStatus::Failed(why.clone()),
+                        NetStatus::Offline => NetStatus::Offline,
                     };
                     session.lobby = None;
                     session.account = None;
@@ -512,6 +514,10 @@ fn poll_link(
                     session.result = None;
                     session.lockstep = LockstepView::default();
                     commands.insert_resource(match_setup(&data, &start));
+                    // The match start carries no map options, so every peer
+                    // (and a ranked referee, which inserts none) plays the
+                    // default map, whatever the last skirmish here chose.
+                    commands.insert_resource(MapOptions::default());
                     commands.insert_resource(Multiplayer { match_id: start.match_id, ranked: start.ranked });
                     commands.insert_resource(Lockstep::new(&start));
                     // The server's clock runs the match: the fixed clock takes
