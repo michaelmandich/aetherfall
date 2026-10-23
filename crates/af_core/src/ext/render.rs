@@ -56,9 +56,10 @@ pub fn terrain_ground(def: &TerrainDef) -> f32 {
 
 /// How many of the local player's selected units have their routes drawn
 /// by af_render's path overlay (at most so many, those nearest the centre
-/// of the view): `drawn` of the `wanted` whose routes would show (all of
-/// them with the paths shown, else the patrolling ones). Kept up to date
-/// by af_render each frame of a match; af_ui says so when some are left out.
+/// of the view): `drawn` of the `wanted` that have a route to show (with
+/// the paths shown, those going somewhere or with an order queued; else
+/// the patrolling ones). Kept up to date by af_render each frame of a
+/// match; af_ui says so when some are left out.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RoutesShown {
     pub drawn: usize,

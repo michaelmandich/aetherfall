@@ -22,10 +22,12 @@
 //!   archetypes stay as they are), cost nothing while no route is planned
 //!   and stay cheap for a big army: only the stretches on screen are cut
 //!   into pieces ([`View`]), with at most so many dashes and chevrons to a
-//!   stretch, and at most [`MAX_ROUTES`] units are drawn, those nearest
-//!   the centre of the view ([`RoutesShown`] tells the HUD). Gizmos are
-//!   only registered with Bevy's `GizmoPlugin`, so headless apps and tests
-//!   plan without drawing.
+//!   stretch, and at most [`MAX_ROUTES`] units with a route are drawn,
+//!   those nearest the centre of the view ([`RoutesShown`] tells the HUD).
+//!   Gizmos are only registered with Bevy's `GizmoPlugin`, so headless
+//!   apps and tests plan without drawing. Bevy draws gizmos before every
+//!   blended mesh, writing depth (the x-ray pass at the near plane), so a
+//!   stroke shows over the fog overlay and over a click marker it crosses.
 //!
 //! With [`ShowPaths`] visible (P, or Shift held), each unit's current leg
 //! is drawn from the unit through the waypoints still ahead to its live
@@ -529,8 +531,15 @@ pub(crate) fn plan_paths(
     }
     sightings.retain(|t, _| believed.contains_key(t));
     let full = show.is_some_and(|s| s.visible());
-    for (e, owner, pos, orders, _, _, _, _, selected) in &units {
-        if selected && owner.0 == me && (full || matches!(orders.current(), Some(Order::Patrol { .. }))) {
+    for (e, owner, pos, orders, _, goal, _, _, selected) in &units {
+        // Only units with a route take a place among the drawn: with the
+        // paths shown, one going somewhere or with an order queued (an idle
+        // or holding unit draws nothing), else one on patrol.
+        let routed = match orders.current() {
+            Some(Order::Patrol { .. }) => true,
+            front => full && (goal.is_some() || front.is_some_and(|o| !matches!(o, Order::Hold))),
+        };
+        if selected && owner.0 == me && routed {
             drawn.push((pos.0.distance_squared(rig.focus), e));
         }
     }

@@ -758,3 +758,33 @@ fn a_big_selection_draws_the_routes_nearest_the_view() {
     assert!((0..MAX_ROUTES).all(|i| starts.contains(&at(i))), "the nearest {MAX_ROUTES}: {starts:?}");
     assert_eq!(*app.world().resource::<RoutesShown>(), RoutesShown { drawn: MAX_ROUTES, wanted: 70 });
 }
+
+/// Selected units with nowhere to go draw nothing, so they take none of
+/// the [`MAX_ROUTES`] places: a big selection standing about the view's
+/// centre leaves the routes of the few walking farther off drawn.
+#[test]
+fn idle_units_in_a_big_selection_leave_the_routes_to_those_walking() {
+    let mut w = setup();
+    let app = &mut w.app;
+    app.world_mut().insert_resource(ShowPaths { on: true, held: false });
+    app.world_mut().resource_mut::<CameraRig>().focus = Vec2::new(0.0, 40.0);
+    let peasant = app.world().resource::<Data>().unit_id("peasant").unwrap();
+    let at = |i: usize| Vec2::new(2.0 + 0.8 * i as f32, 40.0);
+    let army: Vec<Entity> = (0..70).map(|i| with_commands(app, |c, d, p| spawn_unit(c, d, &p.list[0], peasant, at(i), 0.0))).collect();
+    run_ticks(app, 1);
+    // The 64 nearest the focus stand idle (one holding); the 6 beyond walk.
+    for (i, e) in army.iter().enumerate() {
+        if i < MAX_ROUTES {
+            let hold: &[Order] = if i == 0 { &[Order::Hold] } else { &[] };
+            app.world_mut().entity_mut(*e).insert((Orders { queue: hold.iter().copied().collect() }, Selected));
+        } else {
+            let goal = at(i) + Vec2::new(0.0, 10.0);
+            send(app, *e, &[Order::Move { target: goal }], goal);
+        }
+    }
+    run_ticks(app, 1);
+    let mut starts: Vec<Vec2> = legs(app).iter().map(|(points, _)| points[0]).collect();
+    starts.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(starts, (MAX_ROUTES..70).map(at).collect::<Vec<_>>());
+    assert_eq!(*app.world().resource::<RoutesShown>(), RoutesShown { drawn: 6, wanted: 6 }, "the HUD counts only routes");
+}
