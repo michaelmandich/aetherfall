@@ -169,7 +169,10 @@ and pushes `NetAction`s; af_net (which af_ui never sees) does the talking.
   the units and changes them, so the bench passes its layout as a
   parameter and the fast tests read no environment. The table:
   `cargo test -p aetherfall --test chokepoints chokepoint_report -- --ignored --nocapture`
-  (`AF_CHOKE_JITTER=<seed>` runs it on that jittered layout).
+  (`AF_CHOKE_JITTER=<seed>` runs it on that jittered layout); the same
+  with `chokepoint_sweep` sums every scenario up over jittered seeds 1 to
+  40 on every core (`AF_CHOKE_SEEDS=<first>..<last>` others): judge a
+  movement change on that, not on one layout.
 
 ## Client model
 

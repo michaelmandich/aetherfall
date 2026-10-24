@@ -17,19 +17,35 @@
 //!    passes only push out, so a dense crowd cannot amplify the sidesteps
 //!    into big jumps;
 //!
-//!    Of two walkers meeting head-on (any owners), the younger *gives way*
-//!    for the tick, unless the other gave way lately (within
-//!    [`GIVE_WAY_MEMORY`]): then that one gives way again, whatever their
-//!    ages, so a file that gave way to a column goes on giving way to the
-//!    rest of it instead of the right of way flipping with every new pair
-//!    that meets. Every walker following close behind one that gives way,
-//!    in its lane, gives way too: they yield to the walker they give way to
-//!    and step aside, and each yields to the one ahead of it in its file as
-//!    that one is backed into it, so the walker walks the whole file back
-//!    out of a gap one unit wide (between two farms, two trees) instead of
-//!    the pair, or a pair of columns, deadlocking in it, or the front of the
-//!    file being squeezed between the walker and its own followers. A unit
-//!    giving way that is braced and in the walker's lane (the gap is too
+//!    Walkers crossing head-on (heading at each other on their way to
+//!    opposite sides, any owners) make one *crowd* with every walker close
+//!    behind one of them going its way (its column, in its lane or the
+//!    next), and the crowd decides once, for the tick, which of its two
+//!    ways through it *gives way*: every walker going that way does. Not
+//!    pair by pair: two pairs of one crowd deciding apart can leave a pair
+//!    in which both give way, so neither backs off and the crowd jams. The
+//!    way that gave way the latest gives way again (within
+//!    [`GIVE_WAY_MEMORY`], whatever the ages), so a column that gave way to
+//!    another goes on giving way to the rest of it instead of the right of
+//!    way flipping as walkers come and go; else the way with fewer walkers
+//!    in a passage ([`in_passage`]), which has less to back out of it;
+//!    else the way whose eldest walker is the younger. They yield to the
+//!    walkers they give way to and step aside, and each yields to the one
+//!    ahead of it in its file as that one is backed into it, so the walkers
+//!    walk the whole file back out of a gap (between two farms, two trees,
+//!    a channel in a cliff) instead of the columns deadlocking in it, or
+//!    the front of the file being squeezed between the walkers and its own
+//!    followers. In a passage, one giving way in a walker's lane, and its
+//!    file behind it, *stand* for the tick (their steps undone): a column
+//!    giving way that walked on into the walkers would hold them up however
+//!    softly it gives, and a long one jams the passage. One that gives way
+//!    *waits* while the way it gives way to moves on (see below). Two
+//!    walkers heading at each other on their way to the same side (two of
+//!    a crowd coming at the mouth of a gap from either side of it) do not
+//!    cross: of those out of a crowd crossing, the younger gives way, unless
+//!    only the other gave way lately, and so does its file behind it, in
+//!    its lane, and it slips in behind the other. A unit giving way that is
+//!    braced and in the walker's lane (the gap is too
 //!    narrow to pass beside it) is pushed straight back along the walker's
 //!    heading, a little per pass, rather than squeezed sideways into a jam
 //!    past it, even once the two stand side by side in the gap; one only
@@ -59,11 +75,14 @@
 //! (`Mover::waiting`). A crowd queueing at a gap keeps its orders however
 //! long the queue takes, instead of giving up within seconds and standing
 //! idle in and around the gap for good; a queue whose front is stuck is
-//! stuck too, and gives up as before. And a walker touching an arrived
-//! groupmate counts as arrived (crowd arrival) only outside a passage
-//! ([`in_passage`]), or with its goal in one: on its way through a gap to a
-//! point past it, it would stop in the gap the rest of the crowd still
-//! needs.
+//! stuck too, and gives up as before. A walker giving way while the walkers
+//! it gives way to move on (one of them, in a crowd crossing) waits too: a
+//! column standing aside for another keeps its orders until that one has
+//! passed, and gives up once that is held up itself. And a walker touching
+//! an arrived groupmate counts as arrived (crowd arrival) only outside a
+//! passage ([`in_passage`]), or with its goal in one: on its way through a
+//! gap to a point past it, it would stop in the gap the rest of the crowd
+//! still needs.
 //!
 //! Then the final word on obstacles: a ground unit's centre never ends on
 //! terrain it cannot enter, and a unit never ends wedged into a static
@@ -119,7 +138,7 @@ const SKIN: f32 = 0.002;
 const IDLE_RESIST: f32 = 0.1;
 /// Resistance factor of a walker giving way (see the module docs).
 const GIVE_WAY_RESIST: f32 = 0.1;
-/// Ticks a walker that gave way goes on giving way to walkers it meets
+/// Ticks a walker that gave way goes on giving way to walkers crossing it
 /// head-on, whatever their ages (see the module docs).
 const GIVE_WAY_MEMORY: u8 = 60;
 /// A walker that got no more than this share of its steps through lately
@@ -132,8 +151,6 @@ const IN_FILE: f32 = 0.5;
 /// A unit this much of the two half-widths to one side of another walks in
 /// its file (in its lane), farther in the next lane.
 const SAME_LANE: f32 = 0.75;
-/// Most units down a file that give way behind the one met head-on.
-const MAX_FILE: usize = 8;
 /// Two wall pushes this alike (cosine) count as one wall.
 const SAME_WALL: f32 = 0.9;
 /// A push this much against a wall's push (cosine) drives a unit back into it.
@@ -144,6 +161,9 @@ const MAX_FILE_CONTACTS: u8 = 3;
 /// ...and only while both are at most this wide (half-width, metres): riders,
 /// infantry and workers, not giants and engines.
 const FILE_HALF_WIDTH: f32 = 0.5;
+/// Most units down a file that give way behind two converging, or stand
+/// behind one giving way in a passage in a walker's lane.
+const MAX_FILE: usize = 8;
 /// A braced unit giving way is pushed back along the other's heading by up
 /// to this much per solver pass (metres).
 const BACK_OUT: f32 = 0.1;
@@ -262,10 +282,13 @@ struct Body {
     yields: bool,
     /// Walking, but giving way this tick (see the module docs).
     gives_way: bool,
-    /// Gave way lately (`Mover::give_way`): of a head-on pair, it gives way again.
-    gave_way: bool,
+    /// Ticks it goes on giving way (`Mover::give_way`: [`GIVE_WAY_MEMORY`]
+    /// when it gave way last tick, 0 when not lately): of a crowd crossing
+    /// head-on, the way through it that gave way the latest gives way again.
+    gave_way: u8,
     /// Pressed this tick against a walker ahead of it going its way that
-    /// moves on: waiting its turn (`Mover::waiting`).
+    /// moves on, or giving way to walkers that move on: waiting its turn
+    /// (`Mover::waiting`).
     waits: bool,
     /// Moves on: more than [`QUEUE_FLOW`] of steering's steps went through
     /// lately (`Mover::flow`), or it waited its turn last tick.
@@ -521,6 +544,8 @@ pub(crate) struct CollisionScratch {
     /// place) of every unit standing by (see [`stands_by`]), by owner.
     groups: Vec<(PlayerId, i32, i32)>,
     standing: Vec<(PlayerId, Vec2)>,
+    /// The crowds of walkers crossing head-on (see [`mark_giving_way`]).
+    crowds: Crowds,
     /// Per-obstacle visit stamps (a box sits in several hash cells).
     static_seen: Vec<u32>,
     static_stamp: u32,
@@ -582,7 +607,7 @@ pub(crate) fn resolve_collisions(
             resist: 4.0 * fp.half.x * fp.half.y * factor + 1e-4,
             yields,
             gives_way: false,
-            gave_way: mover.give_way > 0,
+            gave_way: mover.give_way,
             waits: false,
             moves_on: mover.flow > QUEUE_FLOW || mover.waiting,
             heading: mover.intended.normalize_or_zero(),
@@ -632,7 +657,7 @@ pub(crate) fn resolve_collisions(
     s.ground_contacts.invalidate();
     s.air_contacts.invalidate();
     s.ground_contacts.refresh(&s.ground, origin, size);
-    mark_giving_way(&mut s.ground, &s.ground_contacts.pairs);
+    mark_giving_way(&mut s.ground, &s.ground_contacts.pairs, &mut s.crowds, |b| in_passage(&nav, b.pos, b.mobility));
     let overlapped = mark_overlapped(&mut s.ground, &s.ground_contacts.pairs);
     let parting = s.solve_ground(&nav, &reg);
     record(&mut stats, &s.ground, &parting, overlapped, clock.elapsed);
@@ -1580,7 +1605,7 @@ fn resolve_pair(bodies: &mut [Body], a: usize, b: usize, softness: f32, sidestep
     note_crowd(bodies, a, b);
     note_crowd(bodies, b, a);
     for (u, v) in [(a, b), (b, a)] {
-        if queues_behind(&bodies[u], &bodies[v]) {
+        if queues_behind(&bodies[u], &bodies[v]) || waits_for(&bodies[u], &bodies[v]) {
             bodies[u].waits = true;
         }
     }
@@ -1594,6 +1619,13 @@ fn resolve_pair(bodies: &mut [Body], a: usize, b: usize, softness: f32, sidestep
 fn queues_behind(body: &Body, ahead: &Body) -> bool {
     let rel = ahead.pos - body.pos;
     walking(body) && walking(ahead) && ahead.moves_on && body.heading.dot(ahead.heading) >= IN_FILE && rel.dot(body.heading) > 0.0 && rel.dot(ahead.heading) > 0.0
+}
+
+/// `body` gives way to `walker`, which moves on: it waits for the column
+/// it gives way to to pass (see the module docs).
+#[inline]
+fn waits_for(body: &Body, walker: &Body) -> bool {
+    walker.moves_on && yields_to(body, walker)
 }
 
 /// How hard `body` resists being moved along `push` by `other` this pass:
@@ -1745,32 +1777,166 @@ fn start_depth(a: &Body, b: &Body) -> f32 {
     a.start_frame(a.start).mtv(&b.start_frame(b.start)).map_or(0.0, |m| m.length())
 }
 
+/// One way through a crowd of walkers crossing head-on (see [`Crowds`]).
+#[derive(Clone, Copy, Debug)]
+struct Side {
+    /// The most ticks one of its walkers goes on giving way (the latest
+    /// one of them gave way; 0: none did lately).
+    gave_way: u8,
+    /// Its walkers standing in a passage.
+    in_passage: u32,
+    /// `born` of its eldest walker.
+    eldest: u64,
+    /// One of its walkers moves on (see [`Body::moves_on`]).
+    moves_on: bool,
+}
+
+impl Default for Side {
+    fn default() -> Self {
+        Side { gave_way: 0, in_passage: 0, eldest: u64::MAX, moves_on: false }
+    }
+}
+
+/// The crowds of walkers crossing head-on this tick: the walkers linked by
+/// crossing (two ways) or by walking one behind the other (one way), each
+/// crowd with its two ways through it. Scratch of [`mark_giving_way`].
+#[derive(Default)]
+struct Crowds {
+    /// Union-find over the bodies: each one's link toward the root of its
+    /// crowd, and whether it walks the other way from the one linked to.
+    links: Vec<(u32, bool)>,
+    /// Each body's root and way (whether it walks the other way from the root).
+    roots: Vec<(u32, bool)>,
+    /// Per root: its crowd has walkers crossing head-on.
+    meets: Vec<bool>,
+    /// Per body: it walks in a crowd crossing head-on, and it does so in a passage.
+    member: Vec<bool>,
+    passage: Vec<bool>,
+    /// Per root: its two ways, the root's own first.
+    sides: Vec<[Side; 2]>,
+    /// Per body: it gives way in a passage in the lane of a walker coming
+    /// at it, or behind one that does, in its file: it stands this tick.
+    stands: Vec<bool>,
+}
+
+impl Crowds {
+    /// The root of `i`'s crowd, and whether `i` walks the other way from it.
+    fn root(&mut self, i: usize) -> (usize, bool) {
+        let (mut r, mut flip) = (i, false);
+        while self.links[r].0 as usize != r {
+            flip ^= self.links[r].1;
+            r = self.links[r].0 as usize;
+        }
+        // Link every body on the way straight to the root.
+        let (mut j, mut way) = (i, flip);
+        while self.links[j].0 as usize != r {
+            let (next, step) = self.links[j];
+            self.links[j] = (r as u32, way);
+            way ^= step;
+            j = next as usize;
+        }
+        (r, flip)
+    }
+
+    /// `a` and `b` are in one crowd, walking opposite ways or the same way.
+    /// The first link between two crowds holds; one that contradicts the
+    /// ways already linked (three walkers each meeting the others head-on)
+    /// is left out.
+    fn join(&mut self, a: usize, b: usize, opposite: bool) {
+        let ((ra, wa), (rb, wb)) = (self.root(a), self.root(b));
+        if ra != rb {
+            let (keep, under) = (ra.min(rb), ra.max(rb));
+            self.links[under] = (keep as u32, wa ^ wb ^ opposite);
+        }
+    }
+}
+
 /// Decide who gives way this tick (see the module docs), from the
-/// candidate pairs: the younger of two walkers meeting head-on, then, down
-/// its file, the walkers following close behind it in its lane.
-fn mark_giving_way(bodies: &mut [Body], pairs: &[(u32, u32)]) {
+/// candidate pairs: in every crowd of walkers crossing head-on, every walker
+/// going one way through it. Which way: the one that gave way the latest
+/// (the most ticks one of its walkers goes on giving way); else the one with
+/// fewer walkers in a passage (`in_passage`: which have farther to back out
+/// of it); else the one whose eldest walker is the younger. Of two walkers
+/// out of such a crowd coming at each other on their way to the same side
+/// (at the mouth of a gap from either side of it), the younger gives way,
+/// unless only the other gave way lately, and its file behind it with it.
+fn mark_giving_way(bodies: &mut [Body], pairs: &[(u32, u32)], crowds: &mut Crowds, in_passage: impl Fn(&Body) -> bool) {
+    let n = bodies.len();
+    crowds.links.clear();
+    crowds.links.extend((0..n as u32).map(|i| (i, false)));
     for &(a, b) in pairs {
         let (a, b) = (a as usize, b as usize);
         for i in [a, b] {
             bodies[i].contacts = bodies[i].contacts.saturating_add(1);
         }
-        if head_on(&bodies[a], &bodies[b]) {
-            // One that gave way lately gives way again: a file keeps giving
-            // way to the column it met until that column has passed.
-            let young = match (bodies[a].gave_way, bodies[b].gave_way) {
-                (true, false) => a,
-                (false, true) => b,
-                _ if younger(&bodies[a], &bodies[b]) => a,
-                _ => b,
-            };
-            bodies[young].gives_way = true;
+        if crossing(&bodies[a], &bodies[b]) {
+            crowds.join(a, b, true);
+        } else if walks_behind(&bodies[a], &bodies[b]) || walks_behind(&bodies[b], &bodies[a]) {
+            crowds.join(a, b, false);
         }
+    }
+    crowds.roots.clear();
+    for i in 0..n {
+        let (r, way) = crowds.root(i);
+        crowds.roots.push((r as u32, way));
+    }
+    crowds.meets.clear();
+    crowds.meets.resize(n, false);
+    for &(a, b) in pairs {
+        if crossing(&bodies[a as usize], &bodies[b as usize]) {
+            crowds.meets[crowds.roots[a as usize].0 as usize] = true;
+        }
+    }
+    crowds.member.clear();
+    crowds.member.extend(bodies.iter().zip(&crowds.roots).map(|(b, (r, _))| crowds.meets[*r as usize] && walking(b)));
+    crowds.passage.clear();
+    crowds.passage.extend(bodies.iter().zip(&crowds.member).map(|(b, member)| *member && in_passage(b)));
+    crowds.sides.clear();
+    crowds.sides.resize(n, [Side::default(); 2]);
+    for (i, body) in bodies.iter().enumerate().filter(|(i, _)| crowds.member[*i]) {
+        let (r, way) = crowds.roots[i];
+        let side = &mut crowds.sides[r as usize][usize::from(way)];
+        side.gave_way = side.gave_way.max(body.gave_way);
+        side.in_passage += u32::from(crowds.passage[i]);
+        side.eldest = side.eldest.min(body.born);
+        side.moves_on |= body.moves_on;
+    }
+    for (i, body) in bodies.iter_mut().enumerate().filter(|(i, _)| crowds.member[*i]) {
+        let (r, way) = crowds.roots[i];
+        let [own, other] = crowds.sides[r as usize];
+        // Does the root's own way give way?
+        let root_way = if own.gave_way != other.gave_way {
+            own.gave_way > other.gave_way
+        } else if own.in_passage != other.in_passage {
+            own.in_passage < other.in_passage
+        } else {
+            own.eldest > other.eldest
+        };
+        body.gives_way = root_way != way;
+        // It waits for the other way to pass while that moves on.
+        let passing = if root_way { other } else { own };
+        body.waits |= body.gives_way && passing.moves_on;
+    }
+    // Two of a crowd converging on one way, out of crowds crossing: one
+    // gives way to the other (it slips in behind it), and its file with it.
+    for &(a, b) in pairs {
+        let (a, b) = (a as usize, b as usize);
+        if crowds.member[a] || crowds.member[b] || !head_on(&bodies[a], &bodies[b]) {
+            continue;
+        }
+        let young = match (bodies[a].gave_way > 0, bodies[b].gave_way > 0) {
+            (true, false) => a,
+            (false, true) => b,
+            _ if younger(&bodies[a], &bodies[b]) => a,
+            _ => b,
+        };
+        bodies[young].gives_way = true;
     }
     for _ in 0..MAX_FILE {
         let mut spread = false;
         for &(a, b) in pairs {
             for (ahead, behind) in [(a as usize, b as usize), (b as usize, a as usize)] {
-                if bodies[ahead].gives_way && !bodies[behind].gives_way && follows(&bodies[behind], &bodies[ahead]) {
+                if bodies[ahead].gives_way && !crowds.member[ahead] && !bodies[behind].gives_way && !crowds.member[behind] && follows(&bodies[behind], &bodies[ahead]) {
                     bodies[behind].gives_way = true;
                     spread = true;
                 }
@@ -1780,6 +1946,41 @@ fn mark_giving_way(bodies: &mut [Body], pairs: &[(u32, u32)]) {
             break;
         }
     }
+    // Who gives way in the lane of a walker crossing it stands, and so does
+    // its file behind it: it does not walk into the walker, nor its
+    // followers into it.
+    crowds.stands.clear();
+    crowds.stands.resize(n, false);
+    for &(a, b) in pairs {
+        for (u, v) in [(a as usize, b as usize), (b as usize, a as usize)] {
+            if crowds.passage[u] && yields_to(&bodies[u], &bodies[v]) && in_lane(&bodies[u], &bodies[v]) {
+                crowds.stands[u] = true;
+            }
+        }
+    }
+    for _ in 0..MAX_FILE {
+        let mut spread = false;
+        for &(a, b) in pairs {
+            for (ahead, behind) in [(a as usize, b as usize), (b as usize, a as usize)] {
+                if crowds.stands[ahead] && !crowds.stands[behind] && crowds.member[behind] && bodies[behind].gives_way && follows(&bodies[behind], &bodies[ahead]) {
+                    crowds.stands[behind] = true;
+                    spread = true;
+                }
+            }
+        }
+        if !spread {
+            break;
+        }
+    }
+    for (body, _) in bodies.iter_mut().zip(&crowds.stands).filter(|(_, stands)| **stands) {
+        body.pos = body.start;
+    }
+}
+
+/// `body` stands in `walker`'s lane (too close to its line to pass beside it).
+#[inline]
+fn in_lane(body: &Body, walker: &Body) -> bool {
+    walker.heading.perp_dot(body.pos - walker.pos).abs() < (body.half.x + walker.half.x) * SAME_LANE
 }
 
 /// `a` is a younger unit than `b` (got its movement state later). Not the
@@ -1805,6 +2006,25 @@ fn head_on(a: &Body, b: &Body) -> bool {
         && a.heading.dot(b.heading) <= HEAD_ON
         && rel.dot(a.heading) > 0.0
         && -rel.dot(b.heading) > 0.0
+}
+
+/// Two walkers heading at each other on their way to opposite sides: they
+/// cross. Not two of a crowd coming at the mouth of a gap from either side
+/// of it, on their way through it.
+#[inline]
+fn crossing(a: &Body, b: &Body) -> bool {
+    head_on(a, b)
+        && match (a.heading_to, b.heading_to) {
+            (Some(ga), Some(gb)) => (ga - a.pos).dot(gb - b.pos) < 0.0,
+            _ => true,
+        }
+}
+
+/// `behind` walks the same way as `ahead`, behind it (in its lane or the
+/// next): one column.
+#[inline]
+fn walks_behind(behind: &Body, ahead: &Body) -> bool {
+    walking(behind) && walking(ahead) && behind.heading.dot(ahead.heading) >= IN_FILE && (ahead.pos - behind.pos).dot(behind.heading) > 0.0
 }
 
 /// `behind` walks the same way as `ahead`, lined up behind it (not in the
@@ -2084,7 +2304,7 @@ mod tests {
             resist: 0.36 * if idle { IDLE_RESIST } else { 1.0 },
             yields: idle,
             gives_way: false,
-            gave_way: false,
+            gave_way: 0,
             waits: false,
             moves_on: false,
             heading,
@@ -2519,25 +2739,127 @@ mod tests {
         assert_eq!(contacts.pairs, [(0, 1)]);
     }
 
-    /// The younger of two walkers meeting head-on gives way, with the walker
-    /// filing in behind it in its lane, but not one passing in the next lane
-    /// or one already past.
-    #[test]
-    fn the_younger_of_a_head_on_pair_and_its_file_give_way() {
-        let mut bodies = vec![
-            body(1, Vec2::new(0.0, 0.0), Vec2::Y, 0),   // walks north
-            body(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1), // walks south into it (an enemy)
-            body(3, Vec2::new(0.05, 1.24), -Vec2::Y, 1), // files in behind 2
-            body(4, Vec2::new(0.9, 1.3), -Vec2::Y, 1),  // in the next lane
-            body(5, Vec2::new(0.0, -0.62), -Vec2::Y, 0), // behind 1, walking away
-        ];
-        // The candidate pairs: bodies whose bounds come within the contact margin.
+    /// The candidate pairs among worker-sized `bodies`: those whose bounds
+    /// come within the contact margin.
+    fn candidates(bodies: &[Body]) -> Vec<(u32, u32)> {
         let near = |a: &Body, b: &Body| (a.pos - b.pos).abs().max_element() < 0.6 + CONTACT_MARGIN;
-        let pairs: Vec<(u32, u32)> = (0..5u32).flat_map(|a| (a + 1..5).map(move |b| (a, b))).filter(|&(a, b)| near(&bodies[a as usize], &bodies[b as usize])).collect();
-        mark_giving_way(&mut bodies, &pairs);
-        let giving: Vec<bool> = bodies.iter().map(|b| b.gives_way).collect();
-        assert_eq!(giving, [false, true, true, false, false]);
+        let n = bodies.len() as u32;
+        (0..n).flat_map(|a| (a + 1..n).map(move |b| (a, b))).filter(|&(a, b)| near(&bodies[a as usize], &bodies[b as usize])).collect()
+    }
+
+    /// Who gives way among `bodies` (all in a passage, or none), and the
+    /// crowds found.
+    fn give_way(bodies: &mut [Body], pairs: &[(u32, u32)], passage: bool) -> Crowds {
+        let mut crowds = Crowds::default();
+        mark_giving_way(bodies, pairs, &mut crowds, |_| passage);
+        crowds
+    }
+
+    /// A walker that has just stepped `heading` * 0.05 m (its tick began
+    /// that far back).
+    fn stepped(id: u32, pos: Vec2, heading: Vec2, team: u8) -> Body {
+        Body { start: pos - heading * 0.05, ..body(id, pos, heading, team) }
+    }
+
+    /// Of a crowd crossing head-on, every walker going one way through it
+    /// gives way, the walker filing in behind the one met and the one beside
+    /// that in the next lane too, but not one already past. Out in the open
+    /// the younger way does (its eldest is the younger), and nobody stands.
+    /// In a passage the way with fewer walkers in it does (the lone walker),
+    /// unless the other gave way the latest; and the one met in the walker's
+    /// lane stands (its step this tick undone), and so does its file behind
+    /// it, but not the one in the next lane, which can pass.
+    #[test]
+    fn a_crowd_crossing_head_on_gives_way_one_way_through_it() {
+        let crowd = |gave_way: u8| {
+            vec![
+                stepped(1, Vec2::new(0.0, 0.0), Vec2::Y, 0),                         // walks north
+                Body { gave_way, ..stepped(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1) }, // walks south into it (an enemy)
+                stepped(3, Vec2::new(0.05, 1.24), -Vec2::Y, 1),                      // files in behind 2
+                stepped(4, Vec2::new(0.9, 1.3), -Vec2::Y, 1),                        // beside 3, in the next lane
+                stepped(5, Vec2::new(0.0, -0.62), -Vec2::Y, 0),                      // behind 1, walking away
+            ]
+        };
+        let run = |gave_way: u8, passage: bool| {
+            let mut bodies = crowd(gave_way);
+            let pairs = candidates(&bodies);
+            give_way(&mut bodies, &pairs, passage);
+            let giving: Vec<bool> = bodies.iter().map(|b| b.gives_way).collect();
+            let standing: Vec<bool> = bodies.iter().map(|b| b.pos == b.start).collect();
+            (giving, standing, bodies)
+        };
+        let (giving, standing, bodies) = run(0, false);
+        assert_eq!(giving, [false, true, true, true, false], "in the open");
         assert!(yields_to(&bodies[1], &bodies[0]) && !yields_to(&bodies[0], &bodies[1]));
+        assert_eq!(standing, [false; 5], "in the open");
+        let (giving, standing, _) = run(0, true);
+        assert_eq!((giving, standing), (vec![true, false, false, false, false], vec![true, false, false, false, false]), "in a passage");
+        let (giving, standing, _) = run(GIVE_WAY_MEMORY, true);
+        assert_eq!((giving, standing), (vec![false, true, true, true, false], vec![false, true, true, false, false]), "in a passage, 2 gave way last tick");
+    }
+
+    /// Two files crossing in two lanes, ages interleaved so that each pair
+    /// meeting head-on would pick a different way (the eldest of all walks
+    /// east behind a younger east walker, who meets an elder west walker):
+    /// the crowd decides once, so the whole west file gives way and no pair
+    /// meets with both giving way, which would leave neither backing off.
+    #[test]
+    fn no_two_crossing_in_one_crowd_both_give_way() {
+        let mut bodies = vec![
+            Body { born: 3, ..body(1, Vec2::new(0.0, 0.0), Vec2::X, 0) },     // east, in lane A
+            Body { born: 2, ..body(2, Vec2::new(0.62, 0.0), -Vec2::X, 1) },   // west, meets it
+            Body { born: 1, ..body(3, Vec2::new(-0.62, 0.7), Vec2::X, 0) },   // east, lane B, behind 1
+            Body { born: 4, ..body(4, Vec2::new(0.0, 0.7), -Vec2::X, 1) },    // west, lane B, meets 3
+        ];
+        let pairs = candidates(&bodies);
+        // Pair by pair, the younger of each would give way: 1 of (1, 2), but 4 of (3, 4).
+        assert!(younger(&bodies[0], &bodies[1]) && younger(&bodies[3], &bodies[2]));
+        let crowds = give_way(&mut bodies, &pairs, false);
+        assert_eq!(crowds.roots.iter().map(|r| r.0).collect::<Vec<_>>(), [0; 4], "one crowd");
+        let giving: Vec<bool> = bodies.iter().map(|b| b.gives_way).collect();
+        assert_eq!(giving, [false, true, false, true], "the west file, whose eldest is the younger");
+        for &(a, b) in &pairs {
+            let (a, b) = (&bodies[a as usize], &bodies[b as usize]);
+            assert!(!(head_on(a, b) && a.gives_way && b.gives_way), "{} and {} both give way", a.entity, b.entity);
+        }
+    }
+
+    /// Two walkers coming at each other on their way to the same side (at
+    /// the mouth of a gap from either side of it, on their way through it)
+    /// do not cross: the younger gives way and slips in behind the other,
+    /// but neither is of a crowd crossing, so neither stands, nor waits,
+    /// even in a passage. Heading for goals on opposite sides, they cross.
+    #[test]
+    fn two_converging_on_one_way_do_not_cross() {
+        let goal = Vec2::new(20.0, 0.25);
+        let (up, down) = (Vec2::new(0.4, 0.9165), Vec2::new(0.4, -0.9165));
+        let converging = || {
+            vec![
+                Body { heading_to: Some(goal), moves_on: true, ..stepped(1, Vec2::new(0.0, 0.0), up, 0) },
+                Body { heading_to: Some(goal), moves_on: true, ..stepped(2, Vec2::new(0.1, 0.62), down, 0) },
+            ]
+        };
+        let mut bodies = converging();
+        assert!(head_on(&bodies[0], &bodies[1]) && !crossing(&bodies[0], &bodies[1]));
+        give_way(&mut bodies, &[(0, 1)], true);
+        assert!(!bodies[0].gives_way && bodies[1].gives_way, "the younger");
+        assert!(bodies.iter().all(|b| b.pos != b.start && !b.waits), "nobody stands or waits");
+        let mut bodies = converging();
+        bodies[1].heading_to = Some(Vec2::new(-20.0, 0.25));
+        assert!(crossing(&bodies[0], &bodies[1]));
+        give_way(&mut bodies, &[(0, 1)], true);
+        assert!(bodies[1].gives_way && bodies[1].pos == bodies[1].start && bodies[1].waits, "crossing in a passage");
+    }
+
+    /// Who gives way in a crowd crossing waits (it is not stuck) while the
+    /// way it gives way to moves on, and not once that is held up itself.
+    #[test]
+    fn who_gives_way_waits_while_the_other_way_moves_on() {
+        for moves_on in [true, false] {
+            let mut bodies = vec![Body { moves_on, ..body(1, Vec2::ZERO, Vec2::Y, 0) }, Body { moves_on: true, ..body(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1) }];
+            give_way(&mut bodies, &[(0, 1)], false);
+            assert!(bodies[1].gives_way && bodies[1].waits == moves_on && !bodies[0].waits, "the walker moves on: {moves_on}");
+        }
     }
 
     /// Age decides which of two walkers meeting head-on gives way, not the
@@ -2552,7 +2874,7 @@ mod tests {
             if younger_first {
                 (bodies[0].born, bodies[1].born) = (2, 1);
             }
-            mark_giving_way(&mut bodies, &[(0, 1)]);
+            give_way(&mut bodies, &[(0, 1)], false);
             let young = usize::from(!younger_first);
             assert!(bodies[young].gives_way && !bodies[1 - young].gives_way, "younger listed first: {younger_first}");
         }
@@ -2565,7 +2887,7 @@ mod tests {
             Body { entity: young, born: 1, ..body(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1) },
         ];
         bodies.sort_unstable_by_key(|b| b.entity);
-        mark_giving_way(&mut bodies, &[(0, 1)]);
+        give_way(&mut bodies, &[(0, 1)], false);
         let giving: Vec<Entity> = bodies.iter().filter(|b| b.gives_way).map(|b| b.entity).collect();
         assert_eq!(giving, [young], "spawned first: {old}, then {young}");
     }
@@ -2633,21 +2955,25 @@ mod tests {
 
     /// Of two walkers meeting head-on, one that gave way lately gives way
     /// again although it is the elder, and the walker filing in behind it
-    /// with it; when both or neither did, the younger gives way.
+    /// with it; when both did, the one that gave way the latest does; when
+    /// both did last tick, or neither lately, the younger gives way.
     #[test]
-    fn a_walker_that_gave_way_lately_gives_way_again() {
-        let meet = |gave: [bool; 2]| {
+    fn the_way_that_gave_way_the_latest_gives_way_again() {
+        let meet = |gave: [u8; 2]| {
             let mut bodies = vec![
                 Body { gave_way: gave[0], ..body(1, Vec2::new(0.0, 0.0), Vec2::Y, 0) },
                 Body { gave_way: gave[1], ..body(2, Vec2::new(0.0, 0.62), -Vec2::Y, 1) },
                 body(3, Vec2::new(0.05, -0.62), Vec2::Y, 0), // files in behind 1
             ];
-            mark_giving_way(&mut bodies, &[(0, 1), (0, 2)]);
+            give_way(&mut bodies, &[(0, 1), (0, 2)], false);
             bodies.iter().map(|b| b.gives_way).collect::<Vec<_>>()
         };
-        assert_eq!(meet([true, false]), [true, false, true], "the elder gave way lately");
-        assert_eq!(meet([false, false]), [false, true, false]);
-        assert_eq!(meet([true, true]), [false, true, false]);
+        let last_tick = GIVE_WAY_MEMORY;
+        assert_eq!(meet([last_tick, 0]), [true, false, true], "the elder gave way lately");
+        assert_eq!(meet([last_tick, 20]), [true, false, true], "the elder gave way the latest");
+        assert_eq!(meet([20, last_tick]), [false, true, false]);
+        assert_eq!(meet([0, 0]), [false, true, false]);
+        assert_eq!(meet([last_tick, last_tick]), [false, true, false]);
     }
 
     /// A unit giving way yields to the unit ahead of it in its file when
@@ -2700,6 +3026,10 @@ mod tests {
         assert!(!queues_behind(&behind, &moving_on(2, Vec2::new(0.55, 0.0), Vec2::ZERO)), "standing");
         assert!(!queues_behind(&behind, &moving_on(2, Vec2::new(0.55, 0.0), -Vec2::X)), "oncoming");
         assert!(!queues_behind(&behind, &body(2, Vec2::new(0.55, 0.0), Vec2::X, 0)), "stuck");
+        // One giving way to an oncoming walker that moves on waits for it to pass.
+        let mut bodies = vec![moving_on(1, Vec2::ZERO, Vec2::X), Body { gives_way: true, ..moving_on(2, Vec2::new(0.55, 0.1), -Vec2::X) }];
+        resolve_pair(&mut bodies, 0, 1, 1.0, false);
+        assert!(bodies[1].waits && !bodies[0].waits, "giving way");
         // Converging at 60 degrees, each ahead of the other along its own heading.
         let (up, down) = (Vec2::new(0.866, 0.5), Vec2::new(0.866, -0.5));
         let (a, b) = (moving_on(1, Vec2::ZERO, up), moving_on(2, Vec2::new(0.0, 0.6), down));

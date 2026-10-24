@@ -117,14 +117,16 @@ pub(crate) struct Mover {
     pub aim: Option<Aim>,
     /// Searches started for the current goal (names each for `find_path_sliced`).
     pub searches: u32,
-    /// Ticks the unit goes on giving way to walkers it meets head-on (the
-    /// collision solver sets it while the unit gives way, and counts it
-    /// down after): a file that gave way to a column keeps giving way to
-    /// the rest of that column, whatever their ages.
+    /// Ticks the unit goes on giving way to walkers crossing it head-on
+    /// (the collision solver sets it while the unit gives way, and counts
+    /// it down after): a column that gave way to another keeps giving way
+    /// to the rest of it, whatever their ages; of a crowd crossing, the
+    /// way that gave way the latest gives way again.
     pub give_way: u8,
     /// The collision solver found the unit waiting its turn this tick:
     /// pressed against a walker ahead of it going its way that moves on (a
-    /// queue at a gap). Not being stuck (see `track_progress`).
+    /// queue at a gap), or giving way to walkers that move on (a column
+    /// standing aside for another). Not being stuck (see `track_progress`).
     pub waiting: bool,
 }
 

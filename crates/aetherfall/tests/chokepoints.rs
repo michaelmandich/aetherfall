@@ -47,7 +47,16 @@
 //! unit moved up to [`JITTER`] from its spot, the same way for the same
 //! seed. A variant of each scenario, to tell a change that helps from one
 //! that happens to suit the exact layout; the gate runs seeds
-//! [`JITTER_SEEDS`] (a sweep over seeds 1 to 40 is a shell loop).
+//! [`JITTER_SEEDS`]. The sweep runs every scenario (or those `AF_CHOKE`
+//! lists) on seeds 1 to 40 (`AF_CHOKE_SEEDS=<first>..<last>` others), on
+//! every core, and sums each scenario up over them: the layouts that lost
+//! units or orders, the units not through and orders failed, the mean
+//! times to half and nine tenths through, and the worst layouts (about
+//! 35 s wall for the whole bench on 20 threads):
+//!
+//! ```text
+//! cargo test -p aetherfall --test chokepoints chokepoint_sweep -- --ignored --nocapture
+//! ```
 
 use std::f32::consts::FRAC_PI_2;
 use std::fmt::Write as _;
@@ -810,6 +819,77 @@ fn chokepoint_report() {
     println!("\n{}", table(&outcomes));
 }
 
+/// Every scenario (or those `AF_CHOKE` lists) on the jittered layouts
+/// `AF_CHOKE_SEEDS` names (`<first>..<last>`, both included; 1..40
+/// without it), on `AF_CHOKE_THREADS` threads (a core each without it),
+/// each run on its own: per scenario, the layouts that lost units or
+/// orders, the units not through and orders failed summed over all of
+/// them, mean times, and the worst layouts; then every layout's result.
+#[test]
+#[ignore = "measurement: cargo test -p aetherfall --test chokepoints chokepoint_sweep -- --ignored --nocapture"]
+fn chokepoint_sweep() {
+    let only = std::env::var("AF_CHOKE").ok();
+    let seeds = std::env::var("AF_CHOKE_SEEDS").ok().and_then(|v| v.split_once("..").and_then(|(a, b)| Some((a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?))));
+    let (first, last) = seeds.unwrap_or((1, 40));
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = std::env::var("AF_CHOKE_THREADS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(cores).max(1);
+    let names: Vec<&'static str> = SCENARIOS.iter().map(|(name, _)| *name).filter(|name| only.as_deref().is_none_or(|_| listed("AF_CHOKE", name))).collect();
+    let jobs: Vec<(u32, &'static str)> = (first..=last).flat_map(|seed| names.iter().map(move |name| (seed, *name))).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let started = std::time::Instant::now();
+    let mut runs: Vec<(u32, Outcome)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    while let Some(&(seed, name)) = jobs.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
+                        done.push((seed, run(name, None, Some(seed))));
+                    }
+                    done
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().expect("a jittered run")).collect()
+    });
+    runs.sort_by_key(|(seed, o)| (names.iter().position(|n| *n == o.name), *seed));
+    let mut s = format!("seeds {first}..={last}, {:.0} s wall\n\n", started.elapsed().as_secs_f32());
+    let _ = writeln!(s, "| scenario | layouts losing units | layouts failing orders | not through | failed | short | stuck | mean t50 s | mean t90 s | max overlap m | worst layouts (through/total, failed) |");
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|---|---|---|---|");
+    for name in &names {
+        let of: Vec<&(u32, Outcome)> = runs.iter().filter(|(_, o)| o.name == *name).collect();
+        let missing = |o: &Outcome| o.total - o.through;
+        let mut worst: Vec<&&(u32, Outcome)> = of.iter().filter(|(_, o)| missing(o) > 0 || o.failed > 0).collect();
+        worst.sort_by_key(|(seed, o)| (std::cmp::Reverse(missing(o) + o.failed), *seed));
+        let listed: Vec<String> = worst.iter().take(6).map(|(seed, o)| format!("{seed}: {}/{}, {}", o.through, o.total, o.failed)).collect();
+        // Mean over the layouts that got there; `*` when some did not.
+        let mean = |t: fn(&Outcome) -> Option<f32>| {
+            let got: Vec<f32> = of.iter().filter_map(|(_, o)| t(o)).collect();
+            let mean = got.iter().sum::<f32>() / got.len().max(1) as f32;
+            format!("{mean:.1}{}", if got.len() < of.len() { "*" } else { "" })
+        };
+        let _ = writeln!(
+            s,
+            "| {name} | {} | {} | {} | {} | {} | {} | {} | {} | {:.3} | {} |",
+            of.iter().filter(|(_, o)| missing(o) > 0).count(),
+            of.iter().filter(|(_, o)| o.failed > 0).count(),
+            of.iter().map(|(_, o)| missing(o)).sum::<usize>(),
+            of.iter().map(|(_, o)| o.failed).sum::<usize>(),
+            of.iter().map(|(_, o)| o.short).sum::<usize>(),
+            of.iter().map(|(_, o)| o.stuck).sum::<usize>(),
+            mean(|o| o.t50),
+            mean(|o| o.t90),
+            of.iter().map(|(_, o)| o.max_overlap).fold(0.0, f32::max),
+            listed.join("; "),
+        );
+    }
+    let _ = writeln!(s, "\nper layout (through/total failed):");
+    for name in &names {
+        let line: Vec<String> = runs.iter().filter(|(_, o)| o.name == *name).map(|(seed, o)| format!("{seed}:{}/{}{}", o.through, o.total, if o.failed > 0 { format!("f{}", o.failed) } else { String::new() })).collect();
+        let _ = writeln!(s, "{name}: {}", line.join(" "));
+    }
+    println!("\n{s}");
+}
+
 /// In every scenario (crowds pressing into gaps one cell wide, two hostile
 /// crowds crossing in a channel, a ram, infantry and knights squeezing
 /// through a slot between houses...), no tick ends with two units
@@ -842,17 +922,19 @@ struct Bar {
 /// fails and it stands in the way: the last two of the crowd squeeze past
 /// it, so mixed_sizes takes 16.6 s where it took about 12 s while the ram
 /// failed where it stood (before the region-aware path service). The
-/// times leave about a third over what the bench measures. Before the
-/// collision solver let crowds file through (slipping round corners of the
-/// terrain, waiting their turn in a queue, a file going on giving way to
-/// the column it met), 3 of 40 got through the cliff gap, 11 of 40 across
-/// the channel, 9 of 24 across the one-cell gap, and 106 orders failed
-/// over the bench.
+/// times leave about a third over what the bench measures: the crowds
+/// crossing head-on take 20.9 s (the channel) and 15.2 s (the one-cell
+/// gap), where they took 23.4 s and 17.5 s while each pair meeting head-on
+/// decided apart which of it gave way. Before the collision solver let
+/// crowds file through (slipping round corners of the terrain, waiting
+/// their turn in a queue, a file going on giving way to the column it
+/// met), 3 of 40 got through the cliff gap, 11 of 40 across the channel, 9
+/// of 24 across the one-cell gap, and 106 orders failed over the bench.
 const BARS: [Bar; 8] = [
     Bar { name: "one_way_cliff_gap_1", through: 40, failed: 0, short: 0, secs: 32.0 },
     Bar { name: "one_way_building_gap", through: 40, failed: 0, short: 0, secs: 28.0 },
-    Bar { name: "head_on_gap_2_enemies", through: 40, failed: 0, short: 0, secs: 52.0 },
-    Bar { name: "head_on_gap_1_allies", through: 24, failed: 0, short: 0, secs: 25.0 },
+    Bar { name: "head_on_gap_2_enemies", through: 40, failed: 0, short: 0, secs: 28.0 },
+    Bar { name: "head_on_gap_1_allies", through: 24, failed: 0, short: 0, secs: 20.0 },
     Bar { name: "wide_funnel", through: 60, failed: 0, short: 0, secs: 45.0 },
     Bar { name: "idle_plug", through: 30, failed: 0, short: 0, secs: 16.0 },
     Bar { name: "goal_just_past_exit", through: 39, failed: 0, short: 1, secs: 20.0 },
@@ -891,7 +973,8 @@ fn chokepoint_crowds_get_through() {
 
 /// The jittered layouts [`chokepoint_crowds_get_through_other_layouts`]
 /// runs: the first twelve seeds as they come, not picked for passing
-/// (seed 7 is the head-on channel's worst).
+/// (seeds 3 and 4 lost the head-on channel 10 orders while each pair
+/// meeting head-on decided apart which of it gave way).
 const JITTER_SEEDS: std::ops::RangeInclusive<u32> = 1..=12;
 
 /// What a scenario may come to summed over the [`JITTER_SEEDS`] layouts:
@@ -906,19 +989,22 @@ struct JitterBar {
 /// over what the bench measures, and one more where it measures none,
 /// but for the one-cell cliff gap, which loses no unit and no order on
 /// any of 40 layouts. What they allow today: the ram's order failing on
-/// every layout, a unit or two of the crowd ordered just past the exit
-/// stopping at the mouth on some, and the hostile crowds crossing in the
-/// channel jamming on a few (seed 7 loses 14 orders), as a give-way pair
-/// can end up both giving way. A change that suits the default layout
-/// but loses more elsewhere fails here, though the default bars pass.
+/// every layout, and a unit or two of the crowd ordered just past the exit
+/// stopping at the mouth on some. The crowds crossing head-on lose no unit
+/// and no order on these layouts, and one order over 40 (where each pair
+/// meeting head-on decided apart which of it gave way, two pairs of one
+/// crowd could leave a pair both giving way, and the channel jammed: 10
+/// orders failed here and 39 over 40 layouts). A change that suits the
+/// default layout but loses more elsewhere fails here, though the default
+/// bars pass.
 const JITTER_BARS: [JitterBar; 8] = [
     JitterBar { name: "one_way_cliff_gap_1", missing: 0, failed: 0 },
     JitterBar { name: "one_way_building_gap", missing: 1, failed: 1 },
-    JitterBar { name: "head_on_gap_2_enemies", missing: 17, failed: 20 },
-    JitterBar { name: "head_on_gap_1_allies", missing: 2, failed: 2 },
+    JitterBar { name: "head_on_gap_2_enemies", missing: 1, failed: 1 },
+    JitterBar { name: "head_on_gap_1_allies", missing: 1, failed: 1 },
     JitterBar { name: "wide_funnel", missing: 1, failed: 1 },
     JitterBar { name: "idle_plug", missing: 1, failed: 2 },
-    JitterBar { name: "goal_just_past_exit", missing: 17, failed: 1 },
+    JitterBar { name: "goal_just_past_exit", missing: 15, failed: 1 },
     JitterBar { name: "mixed_sizes", missing: 17, failed: 20 },
 ];
 
