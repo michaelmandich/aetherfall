@@ -20,7 +20,8 @@
 //!   way round a wood or a wall is progress too.
 //!
 //! Time spent waiting for the path service, or waiting its turn in a queue
-//! behind walkers that move on (`Mover::waiting`), does not count.
+//! behind walkers that move on or giving way to walkers that move on
+//! (`Mover::waiting`), does not count.
 
 use af_core::prelude::af_geom::wrap_angle;
 use af_core::prelude::*;

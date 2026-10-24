@@ -13,7 +13,7 @@
 //! | | `collect_requests` | new goals and repath wishes: a goal out of the unit's region swapped for the reachable point nearest it; a path at once when no search is needed (flyers, straight lines, a groupmate's search or route), else `Pending` + queue; a unit that got stuck asks for a way round the units near it; one near the end of a leg of a long way asks for the next |
 //! | | `service_paths` | budgeted A*, the players' lines in turn, each request first offered the routes found before it; long ways planned on the coarse route graph and searched leg by leg; a search the tick's budget cuts short goes on next tick |
 //! | `Movement` | `steer` | arrival, waypoints, avoidance, turning (as far as there is room), terrain speed |
-//! | | `resolve_collisions` | SAT push-out vs units, obstacles, terrain, map edge; then the final word on pairs: none ends the tick overlapping past 0.05 m, or deeper than it began, and an overlap a tick began with is parted within a few ticks without big jumps; notes who waits its turn in a queue |
+//! | | `resolve_collisions` | SAT push-out vs units, obstacles, terrain, map edge; then the final word on pairs: none ends the tick overlapping past 0.05 m, or deeper than it began, and an overlap a tick began with is parted within a few ticks without big jumps; each crowd crossing head-on decides once which way through it gives way; notes who waits its turn in a queue, or for a column it gives way to |
 //! | | `track_progress` | `Velocity`, stuck detection (waiting its turn in a queue that moves on is not being stuck) |
 //!
 //! Contract: reads `MoveGoal` (af_behavior, af_economy), writes `PathState`,
